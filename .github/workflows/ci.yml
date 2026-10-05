@@ -1,0 +1,119 @@
+name: CI
+
+# 这个仓库的核心声称是「文档说的，代码真的做到了」。
+# 那些声称落成了 `run_checks.py` 的 B1–B17 —— 没有 CI 的话，没有任何机器在守它们。
+#
+# 所以这里跑的**不是「测试通过」**，是「声明成立」：
+#   · 单元测试 + 注入验伪证明行为没变、且每条检查都真的能红
+#   · `run_checks` 证明 17 条否证检查无命中
+#   · `cli all` 证明四条流程的护栏（M3 / F3 / **空转**）都在
+#   · 最后一条证明**语料来自仓库内** —— 见下面那条注释，这是本仓库最容易漏的形状
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: ${{ matrix.os }} · Python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # 一条腿挂了不要掐掉别的腿 —— 要看清是哪个平台 / 哪个版本的问题。
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.13", "3.14"]
+
+    # 中文输出必须有 utf-8 才能打出来。
+    #
+    # Windows runner 的 `python` 默认 `sys.stdout.encoding` 是 **cp1252**，
+    # 而这里每一条都会打中文（检查名 / `过` / `命中` / `跳过`）。撞上去的表现是
+    # `UnicodeEncodeError` → 退出码 1 —— **和「有检查命中了」长得一模一样**。
+    #
+    # 这一层管的是**这个 workflow 里所有步骤**，包括下面那些内联的 heredoc ——
+    # 它们不走我们的模块，各入口自己的编码设置罩不到。
+    env:
+      PYTHONIOENCODING: utf-8
+      PYTHONUTF8: "1"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      # 本仓库声称「零第三方依赖」。
+      # 所以这里**故意不装任何包** —— 下面每一条都只用标准库。
+      # 哪天有人加了个 import 第三方的，这一步之后立刻就会红。
+      - name: 确认零依赖（不装任何包）
+        run: python -c "import sys; print('Python', sys.version)"
+
+      - name: 流程 C · 构建验收 B1–B17（退出码 0 = 全部声明成立）
+        run: python -m ldv.run_checks
+
+      - name: 流程 A+B+D · 四条流程的护栏
+        run: python -m ldv.cli all
+
+      - name: 每条检查都必须能红（基线绿 + 注入红，成对验）
+        run: python -m ldv.tests.test_injections
+
+      - name: 单元测试
+        run: python -m ldv.tests.run_tests
+
+      # ⚠️ 这一条**故意不是**「跑一下看它崩不崩」。
+      #
+      # `run_checks` 在「语料找不到」时**报跳过、退出码仍是 0**。
+      # 也就是说：一个**根本没有语料**的仓库，和这个仓库，
+      # 上面那几条的退出码**一模一样**。这正是本仓库一直在防的形状
+      # （「空转与通过长得一模一样」）—— 只不过它这次出现在**流程**上。
+      #
+      # 所以判据必须是「语料真的解析到了、而且解析到的是**仓库里**那份」，
+      # 不是「命令没报错」。检查器里的兜底链也照这条写的：
+      # `LDV_CORPUS` → `ldv/corpus/nodes/` → `<仓库根>/corpus/nodes/`，
+      # 全落空才报跳过。
+      - name: 语料必须来自仓库内（不是「跳过」）
+        shell: bash
+        run: |
+          python - <<'PY'
+          from ldv.checks._fixtures import find_corpus, load
+
+          root = find_corpus()
+          if root is None:
+              raise SystemExit("::error::语料没找到 —— 上面那些「过」是在空转")
+
+          # 必须在仓库目录内。仓库外的路径 = 别人 clone 下来会不一样。
+          import pathlib
+          repo = pathlib.Path.cwd().resolve()
+          if repo not in root.resolve().parents:
+              raise SystemExit(f"::error::语料在仓库外：{root}（仓库根 {repo}）")
+
+          got = load()
+          if got is None:
+              raise SystemExit("::error::语料目录在，但装载失败")
+          nodes, edges, dangling = got
+
+          # ⚠️ `edges` 是 `节点 → 出边集合` 的**字典**，`len(edges)` 是**节点数**。
+          # 边数得把每个集合加起来 —— 写成 `len(edges)` 会印出一个
+          # 看起来像「36 条边」的数，而真值是 47。数字必须印它自己的意思。
+          n_edges = sum(len(v) for v in edges.values())
+          print(f"语料命中：{root}")
+          print(f"节点 {len(nodes)} · 图边 {n_edges} 条 · 悬挂 {len(dangling)}")
+          if not nodes:
+              raise SystemExit("::error::语料是空的")
+          if n_edges == 0:
+              raise SystemExit("::error::一条边都没有 —— 图语料退化了")
+          PY
+
+      # 两个对照工具是**读数**，不是判据 —— 它们照实打印单变量对照表。
+      # 放在这里是为了让「接口押定」这件事在 CI 里也留一份证据。
+      - name: 读数 · `§I4` 的 k 叉对照
+        run: python -m ldv.tools.measure_fanout
+
+      - name: 读数 · `§I4` 带上父方向的三级对照
+        run: python -m ldv.tools.measure_parent

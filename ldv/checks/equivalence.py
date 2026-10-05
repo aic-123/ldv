@@ -1,0 +1,207 @@
+"""B17 —— 叶 = **不可分等价类**（`§K2` 判空的下界）。
+
+    python -m ldv.run_checks            # 三个插件都跑
+
+---
+
+## 这条检查回答的是什么（`C8` §7 第 2 步）
+
+第 1 步（`checks/divergence.py`）把问题定住了：三个方向**没有一个**能在后添 ≥2 项时
+与全量同构，而且差异**不在尺度**。第 2 步问的是 `§K2` 的**第三个选项**
+（ART 的 `Path Compression`）：不建那一层，但把「区分的键」并进父方向的 payload ——
+**三个方向里哪几个能这么做？**
+
+**实测答案：一个都不能，而且原因是可证的。**
+
+    方向      判空点数   其中「域内有差异」   最大等价类   最大叶容量   叶数   等价类数
+    ─────────────────────────────────────────────────────────────────────────────
+    keyset       7             0              10          10        13      13
+    sequence     8             0              10          10        11      11
+    reach        0             —               1           1        36      36
+
+四个结论，逐条都是决策依据：
+
+**① 判空点上**没有**区分信息可搬** —— 项在该方向的**语义下就是同一个东西**。
+   `keyset` 的 7 个判空点，成员**键集完全相同**；`sequence` 的 8 个，**序列完全相同**。
+   ⇒ 不是「payload 表示不了」，是**没有东西可表示**。
+
+**② 所以「代价必须落到叶容量」不是前提，是定理。**
+   等价项在任何 payload 上都给同一答案 ⇒ 它们永远落在同一个叶
+   ⇒ `最大叶容量 ≥ 最大等价类`；而判空点上它们是等价的 ⇒ 叶不比分得更细
+   ⇒ `最大叶容量 ≤ 最大等价类`。两边合起来是**等式** —— 那就是该方向能表达的
+   **分辨率下界**，任何 payload 设计都越不过去。
+
+**③ ART 的 `Path Compression` 之所以有用，是因为它的键是字符串。**
+   被跳过的单子节点链上那些字符**本来就是区分的** —— 信息从未丢失，只是没建节点，
+   所以把它**存下来**是**恢复**。我们的判空点上没有这样的信息，所以存无可存。
+
+**④ 而且 (c) 在 A / C 上**已经实现了**。**
+   `split` 用的 `common`（keyset 的 `∩ keysets`）/ `p_star`（sequence 的组内 LCP）
+   就是**沿树吸收的那一段** —— 那正是 path compression 的等价物。
+   剩下的判空是**不可约**的部分，不是没做。
+
+⇒ **`§K2` 的第三个选项在本设计里不需要做**（`C8` §7 第 2 步到此结束）。
+   要降叶容量，只剩第 3 步那条路：**改方向本身**（让 `hit` 用上更多信息），
+   而那不是 `§K2` 的选项，是**换一个方向**。
+
+---
+
+## 为什么这条检查不是「度量」
+
+`可搬的判空点 = 0` 看起来像个读数，但它**能红**：
+插件在**能分开**的一组项上谎报「分不开」时它就 > 0。所以它是**判据**，进退出码。
+（一个永远报 0 的读数才是度量；这一条有明确的、能构造出来的反例。）
+
+## ★ 为什么不能只用「叶容量」这个度量来守它
+
+实测（`test_injections.py` 的 B17 注入）：插件在 ≤4 项的组上谎报「分不开」之后 ——
+
+    叶容量 最大 **10 → 10**（**没变**！）      判空点 7 → 8
+    叶数   13 → 8                            可搬的判空点 0 → **3** ← 缺陷在这里露出来
+
+叶容量没变，是因为最大的那个等价类（10 项）本来就在另一个方向上，
+局部合并只是把几个**小**类并起来，够不到最大值。
+⇒ **叶容量是「最坏情况」的数，它对局部退化不敏感**；
+  而这条检查看的是**成分**（每个叶里有没有混进不同的类），所以抓得到。
+这正是「判据与度量分工」的一个具体例子：**度量报趋势，判据守成分。**
+
+## 两条断言，缺一不可
+
+    (a) 叶 ⊆ 等价类    叶里不许混进两个**能分开**的项（插件谎报「分不开」）
+    (b) 等价类 ⊆ 叶    同一个等价类不许被拆到两个叶里（划分比该方向更细）
+
+(a) 单独成立是不够的：一个把所有项都塞进一个叶的内核，只要那些项恰好互相等价就过。
+两条合起来才是**等式** `叶容量 = 最大等价类` —— 那也是该方向的**分辨率下界**：
+
+    等价项对任何 payload 都给同一答案 ⇒ 必落同一个叶 ⇒ 叶容量 **≥** 最大等价类
+    每个叶都是单个等价类              ⇒ 叶容量 **≤** 最大等价类
+    ────────────────────────────────────────────────────────────────────
+    ⇒ 等式。任何 payload 设计都越不过去。
+
+⚠️ **(b) 的注入在**内核**那一侧，不在插件那一侧。** 原因：等价项在任何 payload 上
+   **代价都相同**，所以内核只要「平手时按方向定序」它们就必然同侧 ——
+   要拆开它们，得让内核在**平手时按别的东西定序**（比如「哪边桶空放哪边」）。
+   ⇒ 这是**内核**的性质，不是插件的。`run_tests.test_equivalence` 两条都注了。
+
+## 与 `B15` 同一条纪律：退化形态要报「跳过」，不报「过」
+
+`reach` 的等价类**全是单点**（本语料是 DAG，没有环）⇒ 两条断言都**恒真**。
+那时这条检查什么都没检查，所以报「**跳过**」——
+「空转与通过长得一模一样」在这条检查上的形态。
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from ..core.tri import Tri
+from ._framework import Report
+
+
+def _leaves(kernel: Any) -> list[Any]:
+    return [d for d in kernel.all_directions() if not kernel.children_of(d)]
+
+
+def _class_sizes(classes: dict[str, frozenset[str]]) -> list[int]:
+    return sorted({len(c) for c in set(classes.values())}, reverse=True)
+
+
+def _split_classes(kernel: Any, leaves: list[Any],
+                   classes: dict[str, frozenset[str]]) -> list[frozenset[str]]:
+    """被拆到多个叶里的等价类 —— (b) 那一半的读数。"""
+    leaf_of: dict[str, str] = {}
+    for d in leaves:
+        for i in kernel.members_of(d):
+            leaf_of[i] = d.did
+    by_class: dict[frozenset[str], set[str]] = {}
+    for i, c in classes.items():
+        by_class.setdefault(c, set()).add(leaf_of.get(i, "<未落叶>"))
+    return [c for c, ls in by_class.items() if len(ls) > 1]
+
+
+def b17_leaf_is_equivalence_class(kernel: Any, classes: dict[str, frozenset[str]],
+                                  rep: Report) -> None:
+    """叶必须**恰好**是一个不可分等价类（两条断言合起来 = 等式）。
+
+    `classes` 由 `_fixtures.equiv_classes()` 造 —— **外生**，不调插件。
+    """
+    leaves = _leaves(kernel)
+    if not leaves:
+        rep.add("B17", "叶 = 不可分等价类", Tri.UNEXPANDED,
+                "没有任何叶（结构没建起来）—— 判不了，不是通过")
+        return
+
+    sizes = _class_sizes(classes)
+    if not sizes or sizes[0] < 2:
+        rep.add("B17", "叶 = 不可分等价类", Tri.UNEXPANDED,
+                f"每个等价类都是单点（{len(set(classes.values()))} 个类）"
+                f"⇒ 两条断言都恒真，本方向退化。**跳过 ≠ 通过**")
+        return
+
+    bad: list[str] = []
+
+    # (a) 叶 ⊆ 等价类 —— 判空点上不许有能分开的项
+    mixed = 0
+    for d in leaves:
+        ms = sorted(kernel.members_of(d))
+        if not ms:
+            continue
+        cls = {classes[i] for i in ms if i in classes}
+        if len(cls) > 1:
+            mixed += 1
+            if len(bad) < 2:
+                bad.append(f"{d.did} 的叶里混了 {len(cls)} 个等价类"
+                           f"（{len(ms)} 项）：{ms[:4]}")
+
+    # (b) 等价类 ⊆ 叶 —— 同一个类不许被拆开
+    torn = _split_classes(kernel, leaves, classes)
+    if torn:
+        bad.append(f"{len(torn)} 个等价类被拆到多个叶："
+                   f"{[sorted(c)[:2] for c in torn[:2]]}")
+
+    caps = [len(kernel.members_of(d)) for d in leaves]
+    cap_max = max(caps) if caps else 0
+    floor = sizes[0]
+    rep.add("B17", "叶 = 不可分等价类（叶容量 = 分辨率下界）",
+            Tri.NO if bad else Tri.YES,
+            "；".join(bad[:2]) if bad
+            else f"{len(leaves)} 个叶 = {len(set(classes.values()))} 个等价类；"
+                 f"最大叶容量 {cap_max} = 最大等价类 {floor}"
+                 f"（该方向的分辨率**已到下界**）")
+
+
+def absorption_profile(kernel: Any, classes: dict[str, frozenset[str]]) -> dict[str, Any]:
+    """`C8` §7 第 2 步的读数：**判空点上有没有可搬的区分信息**。
+
+    一个判空点「可搬」⟺ 它的成员在该方向语义下**不属于同一个等价类**
+    （即插件在能分开的组上判了「分不开」）。正确插件上这个数必须是 0。
+    """
+    rows: list[dict[str, Any]] = []
+    tried = getattr(kernel, "_tried", {})           # noqa: SLF001
+    for did, members in sorted(tried.items()):
+        ms = sorted(members)
+        cls = {classes[i] for i in ms if i in classes}
+        rows.append({"方向": did, "成员": len(ms), "等价类数": len(cls),
+                     "可搬": len(cls) > 1})
+    sizes = _class_sizes(classes)
+    leaves = _leaves(kernel)
+    caps = [len(kernel.members_of(d)) for d in leaves]
+    return {
+        "判空点": len(rows),
+        "可搬的判空点": sum(1 for r in rows if r["可搬"]),
+        "最大叶容量": max(caps) if caps else 0,
+        "最大等价类": sizes[0] if sizes else 0,
+        "叶数": len(leaves),
+        "等价类数": len(set(classes.values())),
+        "被拆开的等价类": len(_split_classes(kernel, leaves, classes)),
+    }
+
+
+def render_absorption(prof: dict[str, Any], label: str = "") -> str:
+    """一行读数。**与判据分开**：这是「第 2 步实测到了什么」的证据行。"""
+    head = f"不可分等价类（{label}）" if label else "不可分等价类"
+    return (f"{head}：{prof['等价类数']} 个等价类 / {prof['叶数']} 个叶"
+            f"｜最大叶容量 {prof['最大叶容量']} = 最大等价类 {prof['最大等价类']}"
+            f"（分辨率下界）"
+            f"｜判空点 {prof['判空点']} 个，其中**域内有差异（可搬）** "
+            f"{prof['可搬的判空点']} 个")
