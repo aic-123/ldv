@@ -19,7 +19,10 @@
 
 拿不准的量（假阳率 / 叶容量 / 进步量 / 耗时）**只披露、不判过**。
 
-⚠️ 全量（3907 项）跑 ② 要**二十分钟级**（`B8` n 次插入 + `B15` 3 次整建），
+⚠️ 全量（3907 项）跑 ② 要**四十分钟以上** —— 实测跑 41 分 24 秒没结束（主动停掉）。
+   那是**整趟** `--no-probes` 的量级，不是某一条的量级（见「耗时」一节：
+   全量 reach 逐块实测里最大的三块是 `B15` 309.7 s、内核两次建 181.8 s、
+   一块 `cover` 度量 115.8 s）。
    所以默认只在 ≤ `CHEAP_N` 项上跑，全量要 `LDV_INTAKE_CHECKS=1`。
    小切片上跑时记得同时下调 ① 的门槛：`LDV_INTAKE_MIN_NODES=200`。
 
@@ -113,8 +116,11 @@ NAME = "openalex-citations"
 MIN_NODES = int(os.environ.get("LDV_INTAKE_MIN_NODES", "3000"))
 
 #: ② 在多大的语料上**默认**跑。`--no-probes` 之后，281 项只要 6 s；
-#: 但 3907 项上 `B8`（n 次插入）+ `B15`（3 次整建）仍是**二十分钟级** ——
+#: 但 3907 项上整趟**四十分钟以上**（实测 41 分 24 秒没结束）——
 #: 所以全量要显式打开（`LDV_INTAKE_CHECKS=1`）。
+#: ⚠️ **别把四十分钟归给某一条**：全量 reach 逐块实测里 `B15` 309.7 s、
+#:    内核两次建 181.8 s、一块 `cover` 度量 115.8 s，分散在好几处
+#:    （`outputs/_measure_fullscale_blocks.py`）。要指名道姓得先逐块计时。
 #: ⚠️ 这里**不用** `--cap`：它连判据一起截，会把 `B17` 那条红藏掉（见模块开头）。
 CHEAP_N = int(os.environ.get("LDV_INTAKE_CHEAP_N", "400"))
 
@@ -277,10 +283,10 @@ def main() -> int:
 
     # ── ② `run_checks` 红集合 vs 冻结基线 ─────────────────────────────────
     if not (os.environ.get("LDV_INTAKE_CHECKS") == "1" or n1 <= CHEAP_N):
-        SKIP.append(f"② `run_checks` 红集合（{n1} 项 —— `B8`+`B15` 是二十分钟级；"
+        SKIP.append(f"② `run_checks` 红集合（{n1} 项 —— 整趟四十分钟以上；"
                     f"`LDV_INTAKE_CHECKS=1` 打开）")
-        print(f"  ⊘ 跳过：② 在 {n1} 项上要二十分钟级（`B8` n 次插入 + `B15` 3 次整建），"
-              f"`LDV_INTAKE_CHECKS=1` 打开")
+        print(f"  ⊘ 跳过：② 在 {n1} 项上整趟要四十分钟以上（281 项上 6.05 s；"
+              f"3907 项实测 41 分 24 秒没跑完），`LDV_INTAKE_CHECKS=1` 打开")
     else:
         print("  跑 `run_checks --no-probes`（判据全跑，贵的探针不跑）…", flush=True)
         reds, out = run_checks_red(d)
