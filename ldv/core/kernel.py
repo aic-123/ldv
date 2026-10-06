@@ -51,6 +51,8 @@ from .direction import (
     # ⚠️ `EVENT_INVALIDATED` **故意没在这里用**：§M2 情形③（「不再被强制」）
     #    需要「删除」流程才可达，本轮只做了插入。事件种类保留在账本里
     #    （`§K4` 的区分靠它），等删除流程落地时再接上。
+    EVENT_OUT_OF_SCOPE,
+    EVENT_STAYED,
     EVENT_UNSPLITTABLE,
     EVENT_USAGE,
     EVENT_WITNESS_UPDATED,
@@ -206,6 +208,19 @@ class Kernel:
     def members_of(self, d: Direction) -> frozenset[str]:
         return frozenset(self._members.get(d.did, ()))
 
+    @property
+    def placed(self) -> frozenset[str]:
+        """**真的放进了结构**的项 —— 与 `items` 不是一回事。
+
+        `§10.2` 出路 (1) 之后，内核会**认识**一些它**没放进结构**的项
+        （落在根覆盖之外的那些，见 `_outside_root`）。两者必须分得开 ——
+        合并成一个数就等于把「知道」与「收下了」当成一件事。
+        """
+        out: set[str] = set()
+        for mem in self._members.values():
+            out |= mem
+        return frozenset(out)
+
     def is_expanded(self, d: Direction) -> bool:
         return d.did in self._expanded
 
@@ -215,6 +230,68 @@ class Kernel:
         「见证含 x 的方向」在内核里等于「x 在插入时走过的那些方向」。
         """
         return tuple(self._path.get(item_id, ()))
+
+    # --- 证明「不收」的方向（§10.2 出路 (1) / (4)） -------------------------
+
+    def _refuses(self, d: Direction, item_id: str) -> bool:
+        """d 是否**证明**不收这个项 —— 用 `§I1 命中` 的**单元素查询**问。
+
+        ⚠️ **只有「否」才是否证**：
+
+            否          这是**证明** ⇒ 项按定义不在这个方向的覆盖里
+            是          允许是假阳（§K8）⇒ 不作数
+            未展开      「不知道」不许被当成「不在」⇒ 不作数
+
+        方向与 §K8 完全一致：**否**是证明，**是**是允许的假阳。
+
+        ## 为什么用 `命中` 而不是新加一个「覆盖谓词」
+
+        `命中` 已经**就是**那个谓词 —— `ideal = {x}` 的单元素查询问的就是
+        「这个方向里有没有 x」。所以这条规则**不新增接口方法** ⇒ 不用重验 §I1–§I7。
+        （清单里这一项原来是全表唯一可能要重验的；这样落地就不用。）
+
+        ⚠️ **它偏保守**：`是` 与 `未展开` 都放行，所以只有「有证明」才拦。
+           这条的不对称与 §K8 同向 —— 拦错了会**少放**，放错了才是**假阴**。
+
+        ⚠️ **它对某些插件是空转的**：`keyset.hit` 对单元素 `ideal` 恒答「是」
+           （它的「否」只在 `req`/`forb` 与查询冲突时下，而单元素查询两者都空）
+           ⇒ 对 A 这条永远不拦。**空转本身不是缺陷**（A 的健全性本来就 0/328），
+           但要**说清**：拦得住拦不住取决于插件敢不敢对单元素查询下「否」。
+        """
+        try:
+            return call_hit(self.plugin, d,
+                            Query(ideal=frozenset({item_id}))) is Tri.NO
+        except Exception:  # noqa: BLE001 - 插件是外部代码
+            return False        # 插件炸了**不许**当成「不在」—— 那是往假阴偏
+
+    def stayed_of(self, d: Direction) -> frozenset[str]:
+        """**留在这一层**的项 —— 每个子方向都证明不收它（§10.2 出路 (4)）。
+
+        直接从账本读，不另存一份 —— 单一真相源（§K4 只追加）。
+        """
+        return frozenset(e.detail.get("item", "")
+                         for e in self.ledger
+                         if e.kind == EVENT_STAYED and e.did == d.did)
+
+    def _outside_root(self, item_id: str) -> bool:
+        """根是否**证明**这个项落在它的覆盖之外 —— 见 `_refuses`。
+
+        ## 它为什么挂在**根**上
+
+        Bε-tree 靠一条不变量把「待处理的项不许丢」钉住：**待处理的项必须落在
+        查询路径上**。查询是从根沿 `劈开` 往下走的 ⇒ **根**在**每一条**查询路径上，
+        所以这是唯一能保证「记了账就一定会被看见」的位置。
+
+        ## 与出路 (4) 的关系：这是「无处可停」的那一支
+
+        下降时每一步只进入「没有证明不收它」的子方向；**所有**子方向都证明不收 ⇒
+        项**留在父方向**（出路 (4)）。根没有父 ⇒ 无处可停 ⇒ 只能**不放进结构**，
+        并记一条 `out_of_scope`。⇒ 两条是**同一条规则**的两个分支，
+        区别只在「有没有地方可以停」。
+        """
+        if self._root is None:
+            return False
+        return self._refuses(self._root, item_id)
 
     # --- 展开（按需，§M2） -------------------------------------------------
 
@@ -420,11 +497,26 @@ class Kernel:
 
         ⇒ `B15` 守的是**批建**的可复现性。维护的历史相关性是**当前实现的
           性质**，**不是**「增量」的固有代价（`C8` N3 有反例）。
+
+        ## ★ 落在**根覆盖之外**的项：记一条事件，**不塞进结构**
+
+        见 `_outside_root`。要点：只有 `命中(根, {x}) = 否` 才算数 ——
+        那是**证明**，不是猜测。这样「最外层意图之外」从一个**静默的错位**
+        变成一条**显式、可数**的账（`stats()['根覆盖之外']`）。
+
+        ⚠️ 代价是**范围**，不是正确性：那些项在这条方向上检不出来，
+           但它们**在账上**。这正是这一条的全部价值 ——
+           把一个静默的状态换成一条显式的记录。
         """
         if item is not None:
             self.items[item_id] = item
         if item_id not in self.items:
             raise KeyError(item_id)
+        if self._outside_root(item_id):
+            self.ledger.append(EVENT_OUT_OF_SCOPE, self.root.did, item=item_id,
+                               reason="§I1：根对单元素查询判「否」⇒ 按证明落在根覆盖之外")
+            self._path[item_id] = ()
+            return ()
         path: list[str] = []
         d = self.root
         while True:
@@ -442,7 +534,24 @@ class Kernel:
                     break
                 # 落下去之后长出了新层 ⇒ 这一项也得往下走。
                 # 每层子方向的成员是父的**真子集**（另一侧非空），所以一定终止。
-            nxt = min(kids, key=lambda k: (call_penalty(self.plugin, k, self.items[item_id]), k.did))
+            # ★ 只进入「没有**证明**不收它」的子方向（§10.2 出路 (4)）。
+            #   见 `_refuses`：`是` 与 `未展开` 都放行，只有「否」是证明。
+            ok = [k for k in kids if not self._refuses(k, item_id)]
+            if not ok:
+                # 每个子方向都证明不收它 ⇒ **停在这一层**，项留在父方向。
+                #
+                # 为什么不拒绝（出路 (3) 的读法）：拒绝会让项从**成员集**里消失，
+                # 而 `B1` 的 ground truth 正是「成员 ∩ 查询」——
+                # 于是「健全性变绿」会**部分来自数据变少**。留在父方向则：
+                # 项仍可检索（父的 `命中` 说「是」）、`B1` 的 ground truth 不动，
+                # 代价只落在**划分**上（`B4` 要收窄成「漏的恰好是账上那些」）。
+                # 外部印证：X-tree 的 supernode ——
+                #   "created during insertion **only if there is no other possibility**"
+                self.ledger.append(EVENT_STAYED, d.did, item=item_id,
+                                   reason="§10.2 出路 (4)：每个子方向都证明不收它 ⇒ 留在这一层",
+                                   kids=tuple(k.did for k in kids))
+                break
+            nxt = min(ok, key=lambda k: (call_penalty(self.plugin, k, self.items[item_id]), k.did))
             d = nxt
         for did in path:
             self._members.setdefault(did, set()).add(item_id)
@@ -622,18 +731,79 @@ class Kernel:
         `方向 = 有子层 + 叶` 恒成立，所以这两个数可以互相验。
         ⚠️ 这个键原来叫「已展开」，但它把**叶**也算进去了 —— 名不副实。
 
+        ## 「认识」与「纳入」也要分开报（§10.2 出路 (1)）
+
+        `认识 = len(items)`、`纳入 = len(placed)`。两者之差就是**根覆盖之外**的项数 ——
+        那些项内核**认识**、但**没有收进结构**。代价落在**范围**上（在这条方向上
+        检不出来），所以它必须是个**能被看见的数**：不然「根覆盖之外」就退化成
+        一个没人知道的静默状态 —— 那正是这一条要消灭的东西。
+
+        ⚠️ 三者要一起看：`认识 = 纳入 + 根覆盖之外`。任一条不成立就是记账错了。
+
+        ## 再一个数：**滞留**（§10.2 出路 (4)）
+
+        `滞留` = 「每个子方向都**证明**不收它 ⇒ 留在父方向」的项数。
+        它与 `根覆盖之外` 是**两条不同的代价**，必须分开报：
+
+            根覆盖之外   项**不在**任何方向的覆盖里（根下「否」）⇒ **范围**损失
+            滞留         项**在**父的覆盖里，但**没有子方向**表达得出来 ⇒ **划分**代价
+                         （项仍可检索 —— 父的 `命中` 说「是」）
+
+        合并成一个数就把「声称盖不住」与「这一层表达不出来」当成一件事。
+        ⇒ 滞留的代价落在**划分**上：`B4` 要收窄成
+          「不重，且**漏的恰好是账上那些**」（见 `checks/contract.py`）。
+
         ## 字面 §K2 还有一个**可验**的后果：不存在空壳方向
 
         判空**不建** ⇒ 每个方向都是被真的分配过成员的 ⇒ `members(d) ≠ ∅` 恒成立。
         旧实现每判空一次物化**两个**空壳，于是 `方向数 = 活方向数 + 2 × 判空次数`。
         ⇒ 这两条是一组「改前会红」的判据（`run_tests.test_emergence` ② 里查了它们）：
         `每个方向的成员集非空`，以及 `方向 = 有子层 + 叶`（不许多出那两个）。
+
+        ## ★ 分辨率要看「**项停在哪儿**」，不能只看叶（这是 `叶容量` 的一个洞）
+
+        `叶容量` 的定义是「叶里最多几项」—— 它默认**每一项都走到了叶**。
+        §10.2 出路 (4) 之后这个前提**不成立**：项可以停在**内部**节点上。
+
+            实测（`sequence`，先建 2 维护 34）：
+                叶容量      **2**     ← 看起来分辨率很高
+                最大停留数  **34**    ← 真相：34 项堆在**根**上，根是内部节点
+            同一份结构，`叶容量` 报 2 而真实扫描量是 34 —— **一个数骗人，一个数不骗**。
+
+        ⇒ 所以补一个 `最大停留数`：
+
+            `停(d) = |members(d) \\ ∪ members(子)|`     ← 停在 d 上、没再往下走的项
+            `最大停留数 = max_d 停(d)`
+
+        **它是 `叶容量` 的推广**：项都走到叶时，叶的 `停` 就是它的成员数，
+        内部节点的 `停` 是 0 ⇒ 两者**相等**（批建路径上实测相同）。
+
+        ⚠️ **不能用 `Cone(x)` 的末位来算** —— 锥是**插入时**记下的，
+           而某个方向**后来**才劈开时，已在它里面的项会被重新分配，
+           锥却不会跟着延长 ⇒ 算出来会把「早就走到叶的项」当成「停在内部节点」。
+           ⇒ 必须**从成员集现算**（`停(d)` 的定义）。
+        ⇒ 两条**恒等式**（可验，见 `run_tests`）：
+           `Σ_d 停(d) == 纳入`、`Σ_{d 非叶} 停(d) == 滞留（账上）`。
         """
         dirs = list(self._dirs.values())
         leaves = [d for d in dirs if not self._children.get(d.did)]
         caps = [len(self._members.get(d.did, ())) for d in leaves]
+        # ★ 停留数：从**成员集现算**，不用 `Cone(x)`（见上）。
+        stop: dict[str, int] = {}
+        for d in dirs:
+            mine = set(self._members.get(d.did, ()))
+            kids = self._children.get(d.did, ())
+            if not kids:
+                stop[d.did] = len(mine)
+            else:
+                union: set[str] = set()
+                for k in kids:
+                    union |= self._members.get(k, set())
+                stop[d.did] = len(mine - union)
         fans = [len(k) for k in self._children.values()]
         unsplit = [e for e in self.ledger if e.kind == EVENT_UNSPLITTABLE]
+        oos = [e for e in self.ledger if e.kind == EVENT_OUT_OF_SCOPE]
+        stayed = [e for e in self.ledger if e.kind == EVENT_STAYED]
         return {
             "方向": len(self._dirs),
             "有子层": len(self._children),
@@ -641,9 +811,21 @@ class Kernel:
             "§K2 判空": len(self._tried),
             "判空·声明": sum(1 for e in unsplit if e.detail.get("by") == "plugin"),
             "判空·切不动": sum(1 for e in unsplit if e.detail.get("by") == "kernel"),
+            # ★ 「认识」与「收下了」分开报（§10.2 出路 (1)）。
+            #   代价落在**范围**上，所以必须是个能被看见的数 ——
+            #   不然「根覆盖之外」就退化成一个没人知道的静默状态。
+            "认识": len(self.items),
+            "纳入": len(self.placed),
+            "根覆盖之外": len(oos),
+            # ★ 「范围损失」与「划分代价」也分开报（§10.2 出路 (4)）。
+            "滞留": len(stayed),
             "最大扇出": max(fans) if fans else 0,
             "最大叶容量": max(caps) if caps else 0,
             "平均叶容量": round(sum(caps) / len(caps), 2) if caps else 0.0,
+            # ★ 分辨率的**推广** —— 项停在内部节点时，`叶容量` 看不见（见上）。
+            "最大停留数": max(stop.values()) if stop else 0,
+            "停在叶上": sum(stop[d.did] for d in leaves),
+            "停在内部": sum(stop[d.did] for d in dirs if self._children.get(d.did)),
             "事件": len(self.ledger),
             "使用记录": len(self.usage),
         }

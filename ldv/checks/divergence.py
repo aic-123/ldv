@@ -39,6 +39,24 @@
 
 ---
 
+## ★ 参照侧必须按**同一个项集**重建（不是拿全集当参照）
+
+`§10.2` 出路 (1) 落地之后，「认识」与「**纳入**」成了两件事：
+落在**根覆盖之外**的项内核认识、但**不塞进结构**（`Kernel._outside_root`）。
+`reach` 的增量侧因此**合法地**少纳入一些项 —— 实测 `k=2` 时根只盖住 8 / 36 项。
+
+⇒ 这时候再拿**全集**当参照，比的就是「项多寡」—— 正是本模块要防的那件事。
+⇒ 所以每个 k 的参照侧是 `build(纳入项集)`：**同一个项集**的一次建完。
+
+    实测（36 项语料，reach）：k=2 增量侧纳入 8 项 ⇒ 参照侧也是那 8 项
+    ⇒ 「同构」问的是「这 8 项上，先建后添与一次建完一不一样」——
+      那才是「增量 ≡ 全量」的原意。
+
+⚠️ 顺带：`全量`（36 项）那一栏仍然报全集，因为它是**参照的参照**。
+   两者要分开看 —— 把「根覆盖之外」并进「不同构」就等于把**范围**当成**结构**。
+
+---
+
 ## ★ 比较器自检：它必须**能报出两个值**
 
 一个永远报「不同构」的度量，和一个永远报「同构」的度量，
@@ -105,7 +123,10 @@ def _scan_points(n: int, ks: tuple[int, ...]) -> list[int]:
 
 def _stat(kernel: Any) -> dict[str, Any]:
     st = kernel.stats()
-    return {"方向数": st["方向"], "最大叶容量": st["最大叶容量"], "叶": st["叶"]}
+    return {"方向数": st["方向"], "最大叶容量": st["最大叶容量"], "叶": st["叶"],
+            # ★ `叶容量` **看不见**停在内部节点的项（§10.2 出路 (4)）；
+            #   `最大停留数` 才是分辨率。两者在批建路径上相等 —— 见 `kernel.stats()`。
+            "最大停留数": st["最大停留数"], "滞留": st["滞留"]}
 
 
 def _diff(ref: frozenset, got: frozenset) -> dict[str, int]:
@@ -115,10 +136,13 @@ def _diff(ref: frozenset, got: frozenset) -> dict[str, int]:
 
 def divergence_profile(build: Any, nodes: dict[str, Any], all_ids: list[str],
                        ks: tuple[int, ...] = DEFAULT_KS) -> dict[str, Any]:
-    """扫描 `k`，比对「先建 k 再维护」与「一次建完」的结构。
+    """扫描 `k`，比对「先建 k 再维护」与「**同项集**一次建完」的结构。
 
     `build(subset_ids)` 由 `_fixtures.make_builder` 造。
     返回的东西**全部是度量**，没有一项该进退出码。
+
+    ⚠️ 参照侧是 `build(纳入项集)`，**不是** `build(全部项)` —— 见模块开头。
+       拿全集当参照，会在「根覆盖之外」存在时把**范围**读成**结构**。
     """
     ids = sorted(all_ids)
     full, _ = build(ids)
@@ -139,17 +163,23 @@ def divergence_profile(build: Any, nodes: dict[str, Any], all_ids: list[str],
     pts = _scan_points(n, ks)
     for k in pts:
         inc = build_incremental(build, nodes, ids[:k], ids[k:])
-        # ⚠️ 项集必须一致 —— 否则比的是「项多寡」，不是「结构」。
-        same_universe = set(inc.items) == set(full.items)
-        sig = _shape(inc)
-        iso = sig == ref
+        placed = sorted(inc.placed)
+        # ⚠️ 参照侧用**同一个项集**重建 —— 否则比的是项多寡（见模块开头）。
+        ref_k, _ = build(placed)
+        sig, sig_ref = _shape(inc), _shape(ref_k)
+        iso = sig == sig_ref
         if iso and first_iso is None:
             first_iso = k
         rows[k] = {
             "同构": iso,
-            "项集一致": same_universe,
+            # 参照侧按 `placed` 建 ⇒ 这一条现在是**构造上成立**的；
+            # 留着它是为了让「度量坏了」这件事仍然能被看见（若哪天不成立）。
+            "项集一致": set(placed) == set(ref_k.placed),
+            "根覆盖之外": len(set(inc.items) - set(placed)),
+            "纳入": len(placed),
             **_stat(inc),
-            "差": _diff(ref, sig),
+            "参照": _stat(ref_k),
+            "差": _diff(sig_ref, sig),
         }
 
     return {
@@ -174,14 +204,27 @@ def render_divergence(prof: dict[str, Any], label: str = "") -> str:
     rows = prof["各 k"]
     marks = " ".join(f"k={k}:{'✓' if r['同构'] else '✗'}" for k, r in rows.items())
     bad_universe = [k for k, r in rows.items() if not r["项集一致"]]
+    out_of_scope = [k for k, r in rows.items() if r["根覆盖之外"]]
     f = prof["全量"]
     iso = prof["最早同构的 k"]
     tail = (f"最早同构的 k={iso}" if iso is not None
             else f"扫描到 k={max(rows) if rows else '-'} **全部不同构**")
     warn = (f"；⚠️ k={bad_universe} 的**项集不一致**（度量坏了，不是被测对象坏了）"
             if bad_universe else "")
+    scope = (f"；§10.2 出路 (1)：k={out_of_scope} 有项落在**根覆盖之外**"
+             f"（不塞进结构）⇒ 参照侧按**同一项集**重建"
+             if out_of_scope else "")
+    # ★ 滞留：项**停在内部节点** ⇒ `叶容量` 看不见这部分代价（见 `kernel.stats()`）。
+    #   它不是「度量坏了」，是「分辨率要换个尺子看」—— 所以必须报出来。
+    stayed = {k: r["滞留"] for k, r in rows.items() if r["滞留"]}
+    blind = [k for k, r in rows.items() if r["滞留"] and r["最大停留数"] > r["最大叶容量"]]
+    stay = (f"；§10.2 出路 (4)：k={sorted(stayed)} 有项**留在父方向**"
+            f"（各 k 滞留数 {stayed}）；其中 k={blind} 的"
+            f"`叶容量` **小于** `最大停留数` ⇒ 那部分代价叶容量看不见"
+            if stayed else "")
     return (f"{head}：全量 {f['方向数']} 方向 / 叶容量 {f['最大叶容量']}"
-            f"｜{marks}｜{tail}{warn}"
+            f" / 停留数 {f['最大停留数']}"
+            f"｜{marks}｜{tail}{warn}{scope}{stay}"
             f"（度量，不进退出码）")
 
 

@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from ..core.tri import Tri
 
 # §7 表格里逐条写死的编号 —— 用来查「有没有漏注册」
-EXPECTED_CODES = tuple(f"B{i}" for i in range(1, 18))
+EXPECTED_CODES = tuple(f"B{i}" for i in range(1, 20))
 
 
 @dataclass

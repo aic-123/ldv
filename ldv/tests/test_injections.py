@@ -21,6 +21,17 @@
 
 ---
 
+## 但「全绿」自己也得有个**范围**
+
+上面的「每条检查都验过了」是个**全称句** —— 它说的是「**声明的每一个编号**」。
+新加一条检查、忘了配注入，套件照样报「全绿」，而那个「全绿」对新增的编号
+**一个字节的信息都没有**。同一句话，范围悄悄缩了，读起来一模一样。
+
+⇒ 所以套件自己第 0 条就是**注册表自检**：`CASES` 的键 ∪ 副判据的编号，
+必须**恰好等于** `run_checks` 声明要跑的那批（两个方向都报）。见 `_registry_gap`。
+
+---
+
 ## 注入要**改在最靠近判据的地方**
 
 比如 `B1`（假阴）注入的是**返回假「否」的插件**，不是「让检查看不见」。
@@ -51,12 +62,17 @@ from typing import Any, Callable
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from ldv.checks._fixtures import (  # noqa: E402
+    build_incremental,
     build_keyset,
     build_reach,
+    build_sequence,
+    coverage_of,
     keyset_queries,
     load,
     items as make_items,
+    make_builder,
     reach_queries,
+    sequences,
 )
 from ldv.checks._framework import Report  # noqa: E402
 from ldv.checks.contract import (  # noqa: E402
@@ -66,7 +82,14 @@ from ldv.checks.contract import (  # noqa: E402
     b4_split_is_partition,
     b5_decode_covers,
     b6_signal_not_collapsed,
+)
+from ldv.checks.coverage import (  # noqa: E402
     b16_members_covered,
+    b18_cover_leak_baseline,
+    b19_progress_guard,
+    cover_leak_profile,
+    progress_profile,
+    soundness_profile,
 )
 from ldv.checks.semantics import b10_three_states_separable, b11_propensity_complete  # noqa: E402
 from ldv.checks.source import b12_no_global_scalar, b14_exogenous_boundary  # noqa: E402
@@ -77,7 +100,7 @@ from ldv.checks.structure import (  # noqa: E402
     b13_rank_well_founded,
     b15_reproducible,
 )
-from ldv.core.direction import ORIGIN_SPLIT, Direction  # noqa: E402
+from ldv.core.direction import EVENT_STAYED, ORIGIN_SPLIT, Direction  # noqa: E402
 from ldv.core.interfaces import call_penalty  # noqa: E402
 from ldv.core.kernel import Kernel, QueryResult  # noqa: E402
 from ldv.core.tri import Tri  # noqa: E402
@@ -108,7 +131,30 @@ def inj_b1(nodes, edges, injected: bool) -> Report:
     kernel, good = build_keyset(nodes)
     rep = _rep()
     b1_no_false_negative(kernel, _HitAllNo() if injected else good,
-                         keyset_queries(nodes), rep)
+                         keyset_queries(nodes), rep, path="批建")
+    return rep
+
+
+def inj_b1_maintenance(nodes, edges, injected: bool) -> Report:
+    """`B1` 的**第二条**判据（维护路径）：ground truth 是「**维护之后**的成员 ∩ 查询」。
+
+    ⚠️ 为什么不能只跑一条：`B1` 的 ground truth 里**有成员集**，而成员集在两条路径上
+       不同（一次建完时它一开始就完整，维护时是后来才长起来的）⇒ 同一批查询
+       问的其实是**另一个**成员集。「只跑一条路」与「两条路都跑」在汇总里长得一样。
+    """
+    all_items = make_items(nodes)
+    ids = sorted(nodes)
+    init = ids[:6]                                  # 与 `run_checks.MAINT_INIT` 一致
+    plug = KeysetPlugin()
+    k = Kernel(plug, {i: all_items[i] for i in init})
+    k.build(plug.merge([]))
+    for i in init:
+        k.insert(i)
+    for i in ids[6:]:
+        k.insert(i, all_items[i])
+    rep = _rep()
+    b1_no_false_negative(k, _HitAllNo() if injected else plug,
+                         keyset_queries(nodes), rep, path="维护")
     return rep
 
 
@@ -164,7 +210,42 @@ def inj_b4(nodes, edges, injected: bool) -> Report:
     return rep
 
 
+def inj_b4_stay_unaccounted(nodes, edges, injected: bool) -> Report:
+    """`B4` 的**第二条**判据（§10.2 出路 (4)）：**漏的必须条条有账**。
+
+    ⚠️ 上面那条 `inj_b4` 注入的是「重叠」；这一条注入的是**账**。
+
+    ## 为什么必须单列一条
+
+    裸的 `∪members(子) == members(父)`（等式）在出路 (4) 之下必然破 —— 项可以
+    **停在父方向**。所以判据是「`⊆` **且** 漏的恰好是账上那些」。
+
+    带上 `⊆` 就**放宽了** —— 而放宽的东西必须**另有东西钉住**，否则
+    「漏」会重新变得看不见（那正是本设计反复要消灭的形状）。
+    ⇒ 这一条注入的就是「**放宽之后漏了但没记账**」：拿一个真的有滞留的结构，
+      把账**抹掉**。
+
+    判据两侧都要成立才算数：
+        基线（账在）   漏 == 账 ⇒ **绿**
+        注入（账抹掉） 漏 ≠ 账 ⇒ **红**
+
+    ⚠️ 它**只**能在「真有滞留」的结构上验 —— 在批建路径上 `miss` 恒为空集，
+       抹账与不抹账**都是绿的**（那正是「基线就绿的注入验证毫无信息量」）。
+       ⇒ 所以这里用**先建 2 维护 34** 的 `sequence`：实测滞留 32 项。
+    """
+    ids = sorted(nodes)
+    k = build_incremental(make_builder("sequence", nodes, edges), nodes, ids[:2], ids[2:])
+    if injected:
+        # 把「留在这一层」的账抹掉 —— 滞留项仍在父方向里，但**没有账**。
+        # （只动 `_events`；`B4` 不查账本完整性，那是 `B9` 的事。）
+        k.ledger._events = [e for e in k.ledger._events if e.kind != EVENT_STAYED]  # noqa: SLF001
+    rep = _rep()
+    b4_split_is_partition(k, rep)
+    return rep
+
+
 # ═══ B5 ══════════════════════════════════════════════════════════════════════
+
 
 class _DecodeLossy(KeysetPlugin):
     """解码注入：往返时**丢**掉 require —— 于是解码结果不再覆盖原方向。"""
@@ -420,6 +501,29 @@ class _WorstChild(Kernel):
         return tuple(path)
 
 
+class _NoRefusal(Kernel):
+    """`B16` **维护路径**那条判据的注入：**关掉两条出路**。
+
+        §10.2 出路 (1) 根记账        `insert` 先问 `命中(根, {x})`，只有「否」才不塞进结构
+        §10.2 出路 (4) 项留在父方向   每个子方向都**证明**不收它 ⇒ 停在父这一层
+
+    两者都走 `_refuses` ⇒ 一个 override 同时关掉，`insert` 退化成**改前**的行为：
+    不看 `命中`，按最小代价一路塞到底。
+
+    ⚠️ **必须用方向 C（`sequence`），不能用 A**：`keyset` 的劈开是**结构上**完备的
+       （`x` 满足父 ⇒ 要么有 `best` 落子 1、要么没有落子 2），两条出路**从不触发**
+       ⇒ 关掉它们什么也不改，注入红不了。
+       `sequence` 是 k 叉，父的前缀后面那个符号来自**无穷字母表** ⇒ 两条出路真的会触发。
+
+    ⚠️ **不能用「选代价最大的子方向」那种注入**（`_WorstChild` 的形态）：实测在维护
+       路径上它会让方向数**指数增长**（36 项跑到 100 万个方向），是病态而不是缺陷。
+       关出路就够 —— 病灶清楚、代价有界，而且**正好**是这一行要守的那件事。
+    """
+
+    def _refuses(self, d: Any, item_id: str) -> bool:  # noqa: ARG002
+        return False
+
+
 def inj_b16(nodes, edges, injected: bool) -> Report:
     plug = KeysetPlugin()
     k = (_WorstChild if injected else Kernel)(plug, make_items(nodes))
@@ -427,7 +531,143 @@ def inj_b16(nodes, edges, injected: bool) -> Report:
     for nid in sorted(nodes):
         k.insert(nid)
     rep = _rep()
-    b16_members_covered(k, plug, rep)
+    b16_members_covered(k, coverage_of("keyset", nodes, edges), rep, path="批建")
+    return rep
+
+
+def inj_b16_maintenance(nodes, edges, injected: bool) -> Report:
+    """`B16` 的**第二条**判据（维护路径）：与批建那条**各判一次、各注入一次**。
+
+    ⚠️ 为什么不能只跑一条：两条路径**不是同一件事** ——
+       一次建完时，子方向的 payload 从**当时完整的**成员集算出来 ⇒ 天然盖得住；
+       维护时成员是**后来才长起来的**，payload 在劈开时就冻结了 ⇒ 盖不住。
+       「只跑一条路」与「两条路都跑」在汇总里长得**一模一样**，所以两条各占一行。
+
+    ⚠️ 也不能只注入一条：批建那行的注入（`_WorstChild`）在维护路径上**不红** ——
+       维护路径的问题**不是「分配写反了」，是「后来的项没人接」**。同一句话，
+       两条路径上的形态不同 ⇒ 两条注入也不共用。
+    """
+    from ldv.plugins.sequence import SequencePlugin
+
+    all_items = make_items(nodes)
+    ids = sorted(nodes)
+    init = ids[:6]                                  # 与 `run_checks.MAINT_INIT` 一致
+    plug = SequencePlugin(sequences(nodes, edges))
+    k = (_NoRefusal if injected else Kernel)(plug, {i: all_items[i] for i in init})
+    k.build(frozenset({()}))                        # 根 = 空前缀：覆盖一切
+    for i in init:
+        k.insert(i)
+    for i in ids[6:]:
+        k.insert(i, all_items[i])
+    rep = _rep()
+    b16_members_covered(k, coverage_of("sequence", nodes, edges), rep, path="维护")
+    return rep
+
+
+# ═══ B18 ═════════════════════════════════════════════════════════════════════
+
+class _DropBucket:
+    """`B18` 注入：**只报前两个桶**，把其余的桶丢掉。
+
+    ⚠️ 为什么用方向 C 而不是 A：`keyset` 的二分是**结构上**不漏的
+       （`x` 满足父 ⇒ 要么有 `best` 落子 1、要么没有落子 2，两半合起来恰好是父的覆盖）
+       ⇒ 想让它漏只能造假 payload，而那会立刻撞上 `§K2` 的「两侧非空」。
+       `sequence` 是 k 叉，**少报几个桶**就真的漏 —— 这也正是 §10.2 对 C 描述的那条机制
+       （父的覆盖是 `{x : p ⊑ seq(x)}`，而子方向只枚举了**当时见过的符号**）。
+    """
+
+    def __init__(self, inner: Any) -> None:
+        self.inner = inner
+        self.name = inner.name
+
+    def __getattr__(self, k: str) -> Any:
+        return getattr(self.inner, k)
+
+    def split(self, parent, items):  # noqa: ANN001, ANN201
+        got = self.inner.split(parent, items)
+        if got is None or len(got) <= 2:
+            return got
+        return got[:2]                      # ← 注入：丢掉其余的桶
+
+
+def _drop_bucket_plugin(nodes, edges, injected: bool):
+    from ldv.plugins.sequence import SequencePlugin
+
+    seqs = sequences(nodes, edges)
+    inner = SequencePlugin(seqs)
+    return _DropBucket(inner) if injected else inner
+
+
+def inj_b18(nodes, edges, injected: bool) -> Report:
+    plug = _drop_bucket_plugin(nodes, edges, injected)
+    k = Kernel(plug, make_items(nodes))
+    k.build(frozenset({()}))
+    for nid in sorted(nodes):
+        k.insert(nid)
+    cover = coverage_of("sequence", nodes, edges)
+    obs = {f"sequence|batch": cover_leak_profile(k, cover)}
+    # baseline 取**当前**文件 —— 批建路径三个方向都是 0 漏，所以任何一处漏都是「新增」。
+    rep = _rep()
+    b18_cover_leak_baseline(obs, rep, {"基线": {"sequence|batch": {"漏项数": 0, "漏的对数": 0}}})
+    return rep
+
+
+# ═══ B19 ═════════════════════════════════════════════════════════════════════
+
+class _ChildKeepsParentPayload:
+    """`B19` 注入：**至少一侧**的子方向 payload 退回**父的 payload**。
+
+    ⇒ 那一侧的覆盖 = 父的覆盖 ⇒ `细化量(d) = |覆盖(d)| − max_k |覆盖(k)| = 0` ⇒ 每次展开都「无进步」。
+
+    ⚠️ **这不是硬凑的坏代码** —— 它正是设计文档 §10.2 出路 (3)
+       「子方向的 payload 从**父的 payload** 派生」的形状：`payload(子) ⊇ payload(父)`
+       ⇒ `覆盖(子) ⊇ 覆盖(父)`（`覆盖` 对 payload 单调）⇒ 每次展开都没有细化量。
+       ⇒ 这就是 (3) 的代价的**计量形态**：它拿「覆盖变细」换了「成员正确」。
+    """
+
+    def __init__(self, inner):  # noqa: ANN001
+        self.inner = inner
+        self.name = inner.name
+
+    def __getattr__(self, k):  # noqa: ANN201
+        return getattr(self.inner, k)
+
+    def split(self, parent, items):  # noqa: ANN001, ANN201
+        got = self.inner.split(parent, items)
+        if got is None:
+            return None
+        return (got[0], frozenset(parent.payload))      # ← 注入：退回父的 payload
+
+
+def _deep_chain(n: int = 16):
+    """一条**长度 n 的链** —— 专门用来把「无进步连续段」撑到 N=10 以上。
+
+    ⚠️ 真语料（36 项）的树只有 7 层，`N = 10` 在那里**永远不会红**。
+       「真语料上不红」与「判据是空转」是两件事 —— 要分开，就得造一个够深的输入。
+       方向 C 的 trie 深度随序列长度增长，所以这里造一条长链。
+    """
+    from ldv.corpus.loader import Node
+
+    ids = [f"s{i}" for i in range(n)]
+    nodes = {i: Node(id=i, fields={"type": i}, keys=frozenset({i})) for i in ids}
+    edges = {i: (frozenset({ids[k + 1]}) if k + 1 < n else frozenset())
+             for k, i in enumerate(ids)}
+    return nodes, edges
+
+
+def inj_b19(nodes, edges, injected: bool) -> Report:
+    from ldv.plugins.sequence import SequencePlugin
+
+    dn, de = _deep_chain(16)
+    # cap 拉长，否则 `sequences()` 只给 6 步 ⇒ 树只有 7 层，够不到 N=10。
+    inner = SequencePlugin(sequences(dn, de, cap=14))
+    plug = _ChildKeepsParentPayload(inner) if injected else inner
+    k = Kernel(plug, make_items(dn))
+    k.build(frozenset({()}))
+    for nid in sorted(dn):
+        k.insert(nid)
+    rep = _rep()
+    b19_progress_guard(progress_profile(k, coverage_of("sequence", dn, de)), rep)
     return rep
 
 
@@ -512,7 +752,7 @@ def inj_b11_uniform(nodes, edges, injected: bool) -> Report:
 
 
 class _LeafIsTerminal(Kernel):
-    """注入：把「分不开」写成**永久标记** —— 原来那处缺陷的形状。
+    """注入：把「分不开」写成**永久标记** —— 「一个布尔看不出来」的那种形状。
 
     一旦某个方向被判过「分不开」，就**永远**是叶，即使成员集后来变了。
     ⇒ 树只在第一批项上长过层，之后插进来的项全堆进已有叶。
@@ -656,8 +896,6 @@ class _CommonInReq(KeysetPlugin):
 
 def metric_soundness(nodes: Any, edges: Any, injected: bool) -> bool:
     """「健全性在**维护路径**上是否成立」—— 基线 True，注入 False。"""
-    from ldv.checks.contract import soundness_profile
-
     plug = _CommonInReq() if injected else KeysetPlugin()
     all_items = make_items(nodes)
     ids = sorted(nodes)
@@ -667,7 +905,39 @@ def metric_soundness(nodes: Any, edges: Any, injected: bool) -> bool:
         k.insert(i)
     for i in ids[6:]:
         k.insert(i, all_items[i])
-    return soundness_profile(k, plug)["越界成员数"] == 0
+    return soundness_profile(k, coverage_of("keyset", nodes, edges))["越界成员数"] == 0
+
+
+# 「覆盖不漏」（§1 硬要求表**第四行**）也是度量。注入：`sequence` 的 `劈开`
+# **少报桶** —— 父的覆盖里那些「下一个符号没被枚举到」的项，任何子方向都收不住。
+# ⇒ 这正是 §10.2 对 C 描述的那条机制，也是「覆盖不漏」和「健全性」是**两条独立机制**的证据。
+
+def metric_cover_leak(nodes: Any, edges: Any, injected: bool) -> bool:
+    """「覆盖不漏是否成立」—— 基线 True，注入 False。"""
+    plug = _drop_bucket_plugin(nodes, edges, injected)
+    k = Kernel(plug, make_items(nodes))
+    k.build(frozenset({()}))
+    for nid in sorted(nodes):
+        k.insert(nid)
+    return cover_leak_profile(k, coverage_of("sequence", nodes, edges))["漏项数"] == 0
+
+
+# 「进步量」也是度量：**每次展开的覆盖细化量**。注入：子方向退回父的 payload。
+# ⚠️ 它在**真语料**上只能量到「无进步 10/35、最长连续段 4」—— 树只有 7 层，
+#    够不到 N=10。要证明这个度量对缺陷敏感，得造一个**够深**的输入（见 `_deep_chain`）。
+
+def metric_progress(nodes: Any, edges: Any, injected: bool) -> bool:
+    """「每次展开是否都让覆盖变细」—— 基线 True，注入 False。"""
+    from ldv.plugins.sequence import SequencePlugin
+
+    dn, de = _deep_chain(16)
+    inner = SequencePlugin(sequences(dn, de, cap=14))
+    plug = _ChildKeepsParentPayload(inner) if injected else inner
+    k = Kernel(plug, make_items(dn))
+    k.build(frozenset({()}))
+    for nid in sorted(dn):
+        k.insert(nid)
+    return progress_profile(k, coverage_of("sequence", dn, de))["无进步展开"] == 0
 
 
 # ═══ 驱动 ════════════════════════════════════════════════════════════════════
@@ -676,13 +946,16 @@ CASES: dict[str, Callable] = {
     "B1": inj_b1, "B2": inj_b2, "B3": inj_b3, "B4": inj_b4, "B5": inj_b5,
     "B6": inj_b6, "B7": inj_b7, "B8": inj_b8, "B9": inj_b9, "B10": inj_b10,
     "B11": inj_b11, "B12": inj_b12, "B13": inj_b13, "B14": inj_b14, "B15": inj_b15,
-    "B16": inj_b16, "B17": inj_b17,
+    "B16": inj_b16, "B17": inj_b17, "B18": inj_b18, "B19": inj_b19,
 }
 
 #: 同一条检查的**第二条**判据。键是标签，值是 `(判据编号, 注入函数)`。
-#: 标签不参与 B1–B17 的注册表核对。
+#: 标签是给人看的，不参与注册表核对 —— 核对比的是**编号**（见 `_registry_gap`）。
 EXTRA_CASES: dict[str, tuple[str, Callable]] = {
+    "B1·维护路径": ("B1", inj_b1_maintenance),
     "B11·位置敏感": ("B11", inj_b11_uniform),
+    "B4·滞留要记账": ("B4", inj_b4_stay_unaccounted),
+    "B16·维护路径": ("B16", inj_b16_maintenance),
 }
 
 
@@ -691,6 +964,32 @@ def _result(rep: Report, code: str) -> Tri:
         if a.code == code:
             return a.result
     return Tri.UNEXPANDED
+
+
+def _registry_gap() -> tuple[list[str], list[str]]:
+    """注册表对不上的地方 —— 返回 `(声明了但没验, 验了但没声明)`。
+
+    比的两个集合都**外生给定**，不看任何一边的自我声明：
+
+        左边  `run_checks.PLUGIN_CODES | KERNEL_CODES`  —— 声明要跑的编号
+        右边  `CASES` 的键 ∪ `EXTRA_CASES` 的值          —— 真被验过的编号
+
+    两个方向都要报，因为它们**症状不同**：
+
+        声明了但没验   新加一条检查、忘了配注入 ⇒ 套件报「全绿」，
+                       而那个「全绿」对新增的编号一个字节的信息都没有
+        验了但没声明   注入还在、检查被删了 ⇒ 注入在验一条没人跑的判据
+
+    ## 为什么这条自检非有不可
+
+    上面第一种正是本仓库一直在防的形状（「空转与通过长得一模一样」），
+    只不过它这次出现在**注册表**上。别处没有任何东西守它，所以守在这里。
+    """
+    from ldv.run_checks import KERNEL_CODES, PLUGIN_CODES
+
+    declared = set(PLUGIN_CODES) | set(KERNEL_CODES)
+    covered = set(CASES) | {code for code, _ in EXTRA_CASES.values()}
+    return sorted(declared - covered), sorted(covered - declared)
 
 
 def main() -> int:
@@ -702,6 +1001,23 @@ def main() -> int:
 
     print("═══ 注入验证：每条检查都要能红 ═══")
     failures: list[str] = []
+
+    # ── 第 0 条：注册表自检 —— 「全绿」这句话覆盖到了哪些编号 ────────────────
+    undeclared, unverified = _registry_gap()
+    if undeclared or unverified:
+        if undeclared:
+            print(f"  ✗ 注册表  {undeclared}  **声明了要跑，却没有任何注入验过它**"
+                  f" —— 上面的「全绿」管不到它们")
+            failures.append(f"注册表: {undeclared} 未被注入覆盖（新增检查忘了配注入？）")
+        if unverified:
+            print(f"  ✗ 注册表  {unverified}  **有注入，却不在 `run_checks` 声明的编号里**"
+                  f" —— 注入在验一条没人跑的判据")
+            failures.append(f"注册表: {unverified} 有注入但不在声明里（检查删了、注入没删？）")
+    else:
+        print(f"  ✓ 注册表  {len(CASES)} 个编号 + "
+              f"{len(EXTRA_CASES)} 条副判据 —— 与 `run_checks` 声明的那批**恰好相等**")
+    n = 1  # 上面这条也算一条
+
     cases: list[tuple[str, str, Callable]] = [(c, c, fn) for c, fn in CASES.items()]
     cases += [(label, code, fn) for label, (code, fn) in EXTRA_CASES.items()]
     for label, code, fn in cases:
@@ -730,13 +1046,15 @@ def main() -> int:
             failures.append(f"{label}: {why}")
 
     print()
-    n = len(cases)
+    n += len(cases)
 
     # ── 度量那一条：问的不是「红不红」，是「读数会不会变」 ──────────────────
     for label, fn in (("度量·增量≡全量", metric_scale_matches),
                       ("度量·分辨率不变", metric_resolution_stable),
                       ("度量·覆盖嵌套", metric_cover_nesting),
-                      ("度量·健全性（维护路径）", metric_soundness)):
+                      ("度量·健全性（维护路径）", metric_soundness),
+                      ("度量·覆盖不漏", metric_cover_leak),
+                      ("度量·进步量", metric_progress)):
         try:
             m_base = fn(nodes, edges, False)
             m_shot = fn(nodes, edges, True)

@@ -32,10 +32,14 @@ EVENT_INVALIDATED = "invalidated"       # 不再被强制 —— **标记，不�
                                         #  ⚠️ 当前内核**不产生**它 —— 需要删除/收缩流程，
                                         #  那条流程还没建。种类先留着，语义不变。）
 EVENT_UNSPLITTABLE = "unsplittable"     # §K2：判「这一层不建」（**判定**，不是失效）
+EVENT_OUT_OF_SCOPE = "out_of_scope"     # 项**按证明**落在根覆盖之外 ⇒ 不塞进结构（§10.2 出路 (1)）
+EVENT_STAYED = "stayed"                 # 项**留在父方向**：每个子方向都**证明**不收它
+                                        #  （§10.2 出路 (4) —— X-tree 的 supernode 同形：
+                                        #   「only if there is no other possibility」）
 EVENT_USAGE = "usage"                   # 一次交互的使用记录（含倾向权重）
 
 ALL_EVENT_KINDS = (EVENT_BORN, EVENT_WITNESS_UPDATED, EVENT_INVALIDATED,
-                   EVENT_UNSPLITTABLE, EVENT_USAGE)
+                   EVENT_UNSPLITTABLE, EVENT_OUT_OF_SCOPE, EVENT_STAYED, EVENT_USAGE)
 
 # 方向的来源。**外生 / 内生** 是 §K9 的分界，不是注释。
 ORIGIN_EXOGENOUS = "exogenous"   # 人声明的最外层意图 —— 不许被 usage 驱动

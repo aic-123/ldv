@@ -12,21 +12,22 @@ from __future__ import annotations
 import os
 import random
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 from ..core.kernel import Kernel, Query
 from ..corpus.loader import Node, load_edges, load_nodes
 
 #: 语料目录的候选位置 —— **仓库内的那份排在最前**。
 #:
-#: ⚠️ 这里曾经写死一条开发机绝对路径（`C:/Users/.../rl-scaffold/nodes`）。
+#: ⚠️ 语料路径**绝不能**写死成开发机绝对路径（形如 `C:/Users/<某人>/.../nodes`）：
 #: 那对**任何 clone 这个仓库的人**都不存在，而症状不是报错、是**检查报「跳过」**——
 #: 一个「语料不在」的仓库和一个「检查全过」的仓库，在汇总上长得不一样（跳过要显式报出），
 #: 但都很容易被读成「没问题」。所以：
 #:
 #:     `LDV_CORPUS` 环境变量 → `ldv/corpus/nodes/`（仓库内，首选）→ 仓库根下的 `corpus/nodes/`
 #:
-#: 找不到就**报跳过**，绝不报通过（`run_checks` 与 `run_tests` 都这样）。
+#: 找不到就**报跳过**，绝不报通过（`run_checks` 与 `run_tests` 都这样；
+#: `.github/workflows/ci.yml` 另有一条判据专门守「语料真的来自仓库内」）。
 _HERE = Path(__file__).resolve().parent          # …/ldv/checks
 
 
@@ -290,16 +291,18 @@ def build_incremental(build: Any, nodes: dict[str, Node],
 #    这一点由 `equivalence.py` 的读数显式报出（它是「payload 比签名更有表达力」的证据）。
 
 
-def _mutually_reachable(edges: dict[str, frozenset[str]]) -> dict[str, frozenset[str]]:
-    """每个项的**强连通分量**（= 与它互相可达的项，含它自己）。
+def _forward_closure(edges: dict[str, frozenset[str]],
+                     universe: Iterable[str] | None = None) -> dict[str, frozenset[str]]:
+    """每个项**从它出发**能走到的项（含它自己）—— **正向** BFS。
 
-    用**正向 BFS** 算，与插件的 `reachable()`（从锚点出发的**反向** BFS）
-    方向相反、代码不共用 —— 所以不是「同一条路的两个说法」。
+    与插件的 `reachable()`（从锚点出发的**反向** BFS）方向相反、代码不共用 ——
+    所以不是「同一条路的两个说法」。
     n = 36 时 O(n·(n+m)) 完全够用；**不引 Tarjan**，因为「简单」本身就是
     checker 的硬要求（McConnell 等 2011 的 Simplicity，p.22/§5.1）。
     """
-
-    def forward(start: str) -> set[str]:
+    starts = list(universe) if universe is not None else list(edges)
+    out: dict[str, frozenset[str]] = {}
+    for start in starts:
         seen = {start}
         stack = [start]
         while stack:
@@ -308,10 +311,14 @@ def _mutually_reachable(edges: dict[str, frozenset[str]]) -> dict[str, frozenset
                 if nxt not in seen:
                     seen.add(nxt)
                     stack.append(nxt)
-        return seen
+        out[start] = frozenset(seen)
+    return out
 
-    fwd = {n: forward(n) for n in edges}
-    return {n: frozenset(m for m in fwd[n] if n in fwd[m]) for n in edges}
+
+def _mutually_reachable(edges: dict[str, frozenset[str]]) -> dict[str, frozenset[str]]:
+    """每个项的**强连通分量**（= 与它互相可达的项，含它自己）。"""
+    fwd = _forward_closure(edges)
+    return {n: frozenset(m for m in fwd[n] if n in fwd[m]) for n in fwd}
 
 
 def equiv_classes(which: str, nodes: dict[str, Node],
@@ -328,4 +335,78 @@ def equiv_classes(which: str, nodes: dict[str, Node],
         return {i: frozenset(j for j in nodes if seqs[j] == seqs[i]) for i in nodes}
     if which == "reach":
         return _mutually_reachable(edges)
+    raise ValueError(which)
+
+
+# --- 外生**覆盖**定义 —— 覆盖类判据的公共 oracle -----------------------------
+#
+#     覆盖(d) = 「按该方向的**语义**，d 说『是』的那些项」
+#
+# 这份定义**必须外生算**（不调插件、不调内核），理由与 `equiv_classes` 完全相同：
+#
+#     拿插件的 `§I3 代价` 判「插件覆盖住了没有」 ⇒ 检查器与被检查对象**共用同一段代码**
+#     ⇒ `false-green` 形状 3「共享盲点」：两边永远同时通过
+#
+# McConnell 等 2011 §5.5 把这条排除得更明确：拿「被检查对象的运算记录」当见证
+# **不算 certifying** —— 「证明这条见证性质等于证明 P 正确」。
+#
+#     方向       覆盖的定义                                        与 `代价 = 0` 的关系
+#     ─────────────────────────────────────────────────────────────────────────────
+#     keyset     `require ⊆ keys(x)` 且 `keys(x) ∩ forbid = ∅`      恰好等价
+#     sequence   某个前缀是 `seq(x)` 的前缀                          恰好等价
+#     reach      `x` 能走到某个锚点（`forward(x) ∩ payload ≠ ∅`）    **大得多** ——
+#                `代价 = 0` 只对**锚点本身**成立，覆盖却是「能走到锚点的所有项」
+#
+# ⚠️ `reach` 那一行是本段存在的理由：拿 `代价 = 0` 判覆盖**在原理上就过强**，
+#    不只是实现问题。GiST 1995 明说 `Consistent` **允许不精确** ——
+#    "an accurate test for satisfiability is not required here" ——
+#    所以「用精确性代理判一个只要求不许假阴的量」是判据选错了，不是插件写错了。
+
+#: 方向 C 的「序列到此为止」哨兵 —— **与 `plugins/sequence.py` 的 `END` 同值**。
+#: oracle 自己实现前缀关系、不 import 插件的代码；这里只复制这条**约定**。
+SEQ_END = "\x00end"
+
+
+def _is_prefix(p: tuple[str, ...], s: tuple[str, ...]) -> bool:
+    return len(p) <= len(s) and s[:len(p)] == p
+
+
+def coverage_of(which: str, nodes: dict[str, Node],
+                edges: dict[str, frozenset[str]]) -> Any:
+    """返回 `cover(payload) -> frozenset[str]`（只落在语料内的那部分）。
+
+    与 `equiv_classes` **并列**放在夹具里 —— 两者是同一类东西：按方向的定义重算，
+    不调被测对象。`B16` / 健全性 / 覆盖不漏 / 进步量守卫 四条共用它。
+    """
+    if which == "keyset":
+        keys = {i: nodes[i].keys for i in nodes}
+
+        def cover_keyset(payload: Any) -> frozenset[str]:
+            req, forb = payload
+            req, forb = frozenset(req), frozenset(forb)
+            return frozenset(i for i in nodes
+                             if req <= keys[i] and not (keys[i] & forb))
+
+        return cover_keyset
+
+    if which == "sequence":
+        seqs = {i: tuple(v) + (SEQ_END,) for i, v in sequences(nodes, edges).items()}
+
+        def cover_sequence(payload: Any) -> frozenset[str]:
+            return frozenset(
+                i for i in nodes
+                if any(_is_prefix(tuple(p), seqs[i]) for p in payload)
+            )
+
+        return cover_sequence
+
+    if which == "reach":
+        fwd = _forward_closure(edges, universe=nodes)
+
+        def cover_reach(payload: Any) -> frozenset[str]:
+            anchors = set(payload)
+            return frozenset(x for x in nodes if fwd.get(x, frozenset()) & anchors)
+
+        return cover_reach
+
     raise ValueError(which)

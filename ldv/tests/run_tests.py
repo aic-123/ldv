@@ -16,7 +16,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from ldv.checks._fixtures import build_keyset, build_reach, build_sequence, load  # noqa: E402
 from ldv.core import selfopt  # noqa: E402
-from ldv.core.direction import EVENT_UNSPLITTABLE, ORIGIN_EXOGENOUS  # noqa: E402
+from ldv.core.direction import (  # noqa: E402
+    EVENT_STAYED,
+    EVENT_UNSPLITTABLE,
+    ORIGIN_EXOGENOUS,
+)
 from ldv.core.kernel import (  # noqa: E402
     PROPENSITY_FLOOR,
     Kernel,
@@ -645,7 +649,8 @@ def test_divergence() -> None:
       ① 比较器自检：同路径判同构、项集不同判不同构 ⇒ 它不是常量
       ② 两侧项集必须一致 ⇒ 差异是**结构性**的，不是「项多寡」造成的（防假的不同构）
       ③ **尺度**：扇出固定为 2 的方向（A / B）必须逐项相同；
-         扇出由插件定的方向（C，k 叉）**允许**在尺度上不同 —— 但要**报出来**
+         扇出由插件定的方向（C，k 叉）**允许**在尺度上不同 —— 但要**报出来**；
+         而**分辨率**那一列要换个尺子（见下）
       ④ 实测：扫描里**同构与不同构都出现过** ⇒ 度量在真语料上有区分力
       ⑤ 不同构**不进退出码**（度量与判据分开）
 
@@ -659,6 +664,22 @@ def test_divergence() -> None:
     ⚠️ ④ 判的是**三个方向合起来**，不是逐个方向 —— 实测 `reach` 在扫描范围内
        **从未同构**（连 `k = N−1` 都不同构），要求每个方向都出现 True 是错的。
        要证的是「这个**比较器**能报出两个值」，不是「每个方向都两种都出现」。
+
+    ⚠️ ③ 的 C 分支**再改过一次**（`§10.2` 出路 (4) 落地之后），改动有**实测依据**，
+       不是为了让改动通过：
+
+           出路 (4) 之前   项**全都**往下走 ⇒ `叶容量` 就是分辨率
+           出路 (4) 之后   项可以**停在内部节点** ⇒ `叶容量` **看不见**那部分代价
+                           实测 k=2：叶容量报 **2**，真相是 **34 项堆在根上**
+
+       ⇒ 分辨率换成 `最大停留数`（每项锥的末位方向上的项数；批建路径上它与
+         `叶容量` **相等**，所以这个推广不改变原有的读数）。
+       ⇒ 判据拆成两半，**两半都是收窄**：
+            无滞留的 k ⇒ 停留数必须与同项集参照**相同**
+            有滞留的 k ⇒ `最大停留数 > 最大叶容量`（**把那个洞钉住**）
+       ⚠️ 顺带说明：改前 k=2 的「叶容量 10」是**假的绿** —— 那个结构里有
+          **68 个成员落在覆盖之外**（`B16` 维护路径红）。⇒ 它报的分辨率
+          不是「细」，是「细在错的地方」。
 
     ⚠️ ④ 在「哪天真的做到了同构」时**会红** —— 那是**信号不是故障**：
        它说明「增量 ≡ 全量」成立了，这条度量该**升级成 B 系列检查**（进退出码）。
@@ -687,24 +708,66 @@ def test_divergence() -> None:
         bad_universe = [k for k, r in rows.items() if not r["项集一致"]]
         ok(f"[{which}] 每个 k 的两侧**项集一致**（否则比的是项多寡，不是结构）",
            not bad_universe, f"项集不一致的 k：{bad_universe}")
+        # ★ 参照侧按**纳入项集**重建（§10.2 出路 (1)），所以「比项多寡」这件事
+        #   已经被**构造**排除了。但「根覆盖之外」有多少项必须**报出来** ——
+        #   不然「范围」会被读成「结构」。
+        oos = {k: r["根覆盖之外"] for k, r in rows.items() if r["根覆盖之外"]}
+        if oos:
+            PASS.append(f"（读数）[{which}] §10.2 出路 (1)：根覆盖之外（不塞进结构）"
+                        f"的项数 各 k = {oos}；参照侧按**同一项集**重建")
 
         # ③ 尺度：**扇出固定为 2 的方向必须稳**；扇出由插件定的方向只报不判。
+        #   ⚠️ 比的是**同项集参照**（`r['参照']`），不是全集 —— 见 `divergence.py`
+        #      开头：拿全集当参照会在「根覆盖之外」存在时把**范围**读成**结构**。
         f = prof["全量"]
-        scale_ok = all((r["方向数"], r["最大叶容量"]) == (f["方向数"], f["最大叶容量"])
-                       for r in rows.values())
-        cap_ok = all(r["最大叶容量"] == f["最大叶容量"] for r in rows.values())
+        scale_ok = all(
+            (r["方向数"], r["最大叶容量"]) == (r["参照"]["方向数"], r["参照"]["最大叶容量"])
+            for r in rows.values())
         if which in ("keyset", "reach"):
-            ok(f"[{which}] 扇出恒为 2 ⇒ 差异**不在尺度**：每个 k 的方向数与叶容量都和全量相同",
+            ok(f"[{which}] 扇出恒为 2 ⇒ 差异**不在尺度**：每个 k 的方向数与叶容量"
+               f"都和**同项集参照**相同",
                scale_ok,
                f"全量 {f['方向数']}/{f['最大叶容量']}，"
-               f"增量 {sorted({(r['方向数'], r['最大叶容量']) for r in rows.values()})}")
+               f"增量 {sorted({(r['方向数'], r['最大叶容量']) for r in rows.values()})}，"
+               f"参照 {sorted({(r['参照']['方向数'], r['参照']['最大叶容量']) for r in rows.values()})}")
         else:
-            # ★ 分辨率（叶容量）**仍然必须稳** —— 它是不变量。
-            ok(f"[{which}] 扇出由插件定 ⇒ 方向数**允许**变，但**分辨率不许变**"
-               f"（每个 k 的最大叶容量都与全量相同）",
-               cap_ok,
-               f"全量叶容量 {f['最大叶容量']}，"
-               f"增量 {sorted({r['最大叶容量'] for r in rows.values()})}")
+            # ★ 分辨率：**`叶容量` 是错的尺子**（§10.2 出路 (4) 之后）。
+            #
+            #   `叶容量` 默认「每一项都走到了叶」。出路 (4) 让项可以**停在内部节点**
+            #   ⇒ 那部分代价 `叶容量` **看不见**：实测 k=2 时叶容量报 2，
+            #     而真相是 34 项堆在**根**上（根是内部节点）。
+            #   ⇒ 所以分辨率要用 `最大停留数`：`停(d) = |members(d) \ ∪members(子)|`
+            #      （**从成员集现算**，不用 `Cone(x)` —— 锥是插入时记的，
+            #        方向后来才劈开时不会延长，会把早就走到叶的项误记成「停在内部」）。
+            #
+            #   判据分两半，**都是收窄而不是放宽**：
+            #     滞留 == 0 的 k   ⇒ 停留数必须与**同项集参照**相同（分辨率是不变量）
+            #     滞留 > 0 的 k   ⇒ **至少有一处**确实被遮住
+            #                        （`最大停留数 > 最大叶容量`）—— 把那个洞钉住
+            #
+            #   ⚠️ 后半用 `any` 而不是 `all`，因为「被遮住」只在**滞留量足够大**时
+            #      才在**最大值**上露出来：实测 k=6/12/18 滞留 16/6/5，但那些项
+            #      停在的方向成员数 ≤ 10 ⇒ 两个数仍然都是 10。
+            #      用 `all` 会把「遮住程度不够大」误判成「没有遮住」。
+            cap_ok = all(r["最大停留数"] == r["参照"]["最大停留数"]
+                         for r in rows.values() if not r["滞留"])
+            blind_ok = any(r["最大停留数"] > r["最大叶容量"]
+                           for r in rows.values() if r["滞留"])
+            ok(f"[{which}] 扇出由插件定 ⇒ 方向数**允许**变；"
+               f"**无滞留的 k 上分辨率（停留数）不许变**，"
+               f"**有滞留的 k 上 `叶容量` 至少有一处看不见那部分代价**",
+               cap_ok and blind_ok,
+               f"全量叶容量 {f['最大叶容量']} / 停留数 {f['最大停留数']}，"
+               f"增量 (叶容量,停留数,滞留) "
+               f"{sorted((r['最大叶容量'], r['最大停留数'], r['滞留']) for r in rows.values())}，"
+               f"参照停留数 {sorted({r['参照']['最大停留数'] for r in rows.values()})}"
+               f"｜无滞留判据 {cap_ok} / 有滞留判据 {blind_ok}")
+            stay_read = {k: r["滞留"] for k, r in rows.items() if r["滞留"]}
+            if stay_read:
+                PASS.append(
+                    f"（读数）[{which}] §10.2 出路 (4)：项**留在父方向**（不塞进结构、也不拒绝）"
+                    f"—— 各 k 滞留数 {stay_read}；这些项停在**内部**节点上，"
+                    f"所以 `叶容量` 那一列**低于**真实扫描量")
             PASS.append(
                 f"（读数）[{which}] 扇出由插件定 ⇒ 方向数随初始批次变：全量 "
                 f"{f['方向数']}，各 k "
@@ -989,10 +1052,300 @@ def test_rebuild() -> None:
        "阈值重建次数 <= 1")
 
 
+def test_out_of_scope() -> None:
+    """★ §10.2 出路 (1)「根记账」—— 把「最外层意图之外」从静默错位变成一条**可数的账**。
+
+    五条，每条都能红：
+
+      ① 批建路径**零误伤**（三个方向的根都覆盖全部项 ⇒ 一个都不许被拒）
+      ② 维护路径**确实拒了**（`reach` 的根只声明了前 6 项当锚点 ⇒ 走不到的那些在外面）
+      ③ 记账守恒：`认识 = 纳入 + 根覆盖之外`，且账本事件数与它逐项相符
+      ④ 被拒的项**不在任何方向的成员里**（「不塞进结构」是字面执行，不是打折）
+      ⑤ ★ **方向不许偏**：`命中(根,{x})` 返回「未展开」时**必须照常插入** ——
+         「不知道」不许被当成「不在」（§K8 的同一条纪律：往假阴偏才是错的）
+
+    ⚠️ ⑤ 是这条判据的**已知答案对照组**：只有「否」才是否证。
+       少了它，一个「凡非『是』就拒」的实现也能让 ①–④ 全绿 ——
+       而那正是把「不知道」折成「没有」，是 §K8 明令禁止的那个方向。
+    """
+    from ldv.core.direction import EVENT_OUT_OF_SCOPE
+    from ldv.core.tri import Tri as _Tri
+    from ldv.plugins.reach import ReachPlugin
+    from ldv.plugins.sequence import SequencePlugin
+    from ldv.checks._fixtures import items as make_items, sequences
+
+    loaded = load()
+    if loaded is None:
+        PASS.append("根记账（跳过：目录不在）")
+        return
+    nodes, edges, _ = loaded
+    all_items = make_items(nodes)
+    ids = sorted(nodes)
+
+    # ① 批建路径零误伤
+    for label, mk, root in (
+        ("keyset", lambda: KeysetPlugin(), lambda p: p.merge([])),
+        ("reach", lambda: ReachPlugin(edges), lambda p: frozenset(nodes)),
+        ("sequence", lambda: SequencePlugin(sequences(nodes, edges)), lambda p: frozenset({()})),
+    ):
+        plug = mk()
+        k = Kernel(plug, dict(all_items))
+        k.build(root(plug))
+        for i in ids:
+            k.insert(i)
+        ok(f"★ [{label}] 批建路径**零误伤**：根的声明覆盖全部项 ⇒ 一个都不被拒",
+           k.stats()["根覆盖之外"] == 0, f"实际 {k.stats()['根覆盖之外']} 项被拒")
+
+    # ② / ③ / ④ 维护路径
+    plug = ReachPlugin(edges)
+    k = Kernel(plug, {i: all_items[i] for i in ids[:6]})
+    k.build(frozenset(ids[:6]))
+    for i in ids[:6]:
+        k.insert(i)
+    for i in ids[6:]:
+        k.insert(i, all_items[i])
+    st = k.stats()
+    ok("★ [reach] 维护路径确实拒了（根只声明了前 6 项当锚点）",
+       st["根覆盖之外"] > 0, f"实际 {st}")
+    ok("★ 记账守恒：认识 = 纳入 + 根覆盖之外",
+       st["认识"] == st["纳入"] + st["根覆盖之外"],
+       f"认识 {st['认识']} ≠ 纳入 {st['纳入']} + 之外 {st['根覆盖之外']}")
+    ev = [e for e in k.ledger if e.kind == EVENT_OUT_OF_SCOPE]
+    ok("★ 账本事件数与 `stats()['根覆盖之外']` 逐项相符（数在账上，不是算出来的）",
+       len(ev) == st["根覆盖之外"], f"事件 {len(ev)} vs 计数 {st['根覆盖之外']}")
+    ok("★ 被拒的项**不在任何方向的成员里**（「不塞进结构」是字面执行）",
+       not (k.placed & (set(k.items) - k.placed)),
+       f"被拒 {sorted(set(k.items) - k.placed)[:3]}")
+    ok("★ 且被拒的项**真的不在**结构里（否则上一条恒真、是空转）",
+       set(k.items) - k.placed, "没有任何项被拒 —— 上一条就没在查东西")
+
+    # ⑤ 方向不许偏：`命中` 返回「未展开」时必须照常插入
+    class _RootSaysUnknown(ReachPlugin):
+        """对照组：根对任何查询都说「未展开」。"""
+
+        def hit(self, d, query):  # noqa: ANN001, ANN201
+            if d.did == self._root_did:
+                return _Tri.UNEXPANDED
+            return super().hit(d, query)
+
+    plug2 = _RootSaysUnknown(edges)
+    k2 = Kernel(plug2, {i: all_items[i] for i in ids[:6]})
+    k2.build(frozenset(ids[:6]))
+    plug2._root_did = k2.root.did  # noqa: SLF001
+    for i in ids[:6]:
+        k2.insert(i)
+    for i in ids[6:]:
+        k2.insert(i, all_items[i])
+    ok("★ [对照组] 根说「未展开」时**照常插入** —— 「不知道」不许被当成「不在」",
+       k2.stats()["根覆盖之外"] == 0, f"实际 {k2.stats()}")
+
+
+def _stay_unproven(k: Kernel, plugin: Any) -> list[str]:
+    """② 的**谓词**：每条 `stayed` 事件上，**每个子方向都证明不收它**。
+
+    返回违规列表（空 = 过）。**直接问插件**，不借内核的 `_refuses` ——
+    借了就是「拿内核自己的判断验内核自己的判断」（`false-green` 形状 3 共享盲点）。
+
+    抽成纯函数是为了能拿**已知错**的输入自检它（见调用处）。
+    """
+    bad: list[str] = []
+    for e in k.ledger:
+        if e.kind != EVENT_STAYED:
+            continue
+        d = k.direction(e.did)
+        x = e.detail.get("item", "")
+        q = Query(ideal=frozenset({x}))
+        if any(plugin.hit(c, q) is not Tri.NO for c in k.children_of(d)):
+            bad.append(f"{x}@{d.did}")
+    return bad
+
+
+def _stay_leaks(k: Kernel) -> int:
+    """③ 后半的**谓词**：滞留项溜进子方向成员的次数（应为 0）。"""
+    return sum(1 for d in k.all_directions() for x in k.stayed_of(d)
+               for c in k.children_of(d) if x in k.members_of(c))
+
+
+def _stay_outside_parent(k: Kernel, accessor: Any) -> list[str]:
+    """③ 前半的**谓词**：滞留项**不在**父成员里的方向（应为空）。"""
+    return [d.did for d in k.all_directions()
+            if accessor(d) and not accessor(d) <= k.members_of(d)]
+
+
+def test_stay_at_parent() -> None:
+    """★ §10.2 出路 (4)「项留在父方向」—— 与出路 (1) 是**两条不同的代价**。
+
+        出路 (1) 根记账     项按证明落在根覆盖之外 ⇒ **不塞进结构** ⇒ 代价在**范围**
+        出路 (4) 留在父方向 每个子方向都证明不收它   ⇒ **留在父这一层** ⇒ 代价在**划分**
+
+    为什么不能拒绝（那是 (3) 的读法）：拒绝会让项从**成员集**里消失，而 `B1` 的
+    ground truth 正是「成员 ∩ 查询」—— 于是「健全性变绿」会**部分来自数据变少**。
+    留在父方向则：项仍可检索（父的 `命中` 对它**不是「否」**）、`B1` 的答案不动，
+    代价只落在划分上（`B4` 收窄成「不重，且**漏的恰好是账上那些**」）。
+
+    每条都能红，而且**判据自己也要有区分力**（拿已知错的输入喂进谓词）：
+
+      ① 非空转：这份夹具上**确实有滞留**（否则下面全在查空气）
+      ② 字面执行：每条 `stayed` 事件所挂的方向上，**每个子方向都证明不收它**；
+         且事件数 == `stats()['滞留']`（数在账上，不是算出来的）
+      ③ 项**真的留在父的成员里**（留在 ≠ 拒绝），且**没有**溜进任何子方向的成员里
+      ④ 代价守恒：滞留**不动范围** —— `认识 = 纳入 + 根覆盖之外` 照旧，
+         且滞留**不减** `纳入`（「留在父方向」不是「被拒」的委婉说法）
+      ⑤ 两条恒等式（`停` **从成员集现算**）：`停在叶上 + 停在内部 == 纳入`、
+         `停在内部 == 滞留`
+      ⑥ ★ **已知答案对照组**：让**非根**方向一律说「未展开」⇒ 滞留**必须为 0**。
+         「不知道」不许被当成「不在」（与 §K8 同一条纪律）——
+         一个「凡非『是』就拒」的实现能让 ①–⑤ 全绿，只有这条会红（实测：它**只**红这条）。
+      ⑦ `叶容量` 的洞：项停在**内部**节点时 `最大停留数 > 最大叶容量`；
+         而**批建**路径上两者相等 ⇒ ⑦ 那条不是恒真（`最大停留数` 是推广，不是另一个数）
+
+    ★ ②/③ 的自检：伪造一条**已知不该有**的滞留事件（挂在一个子方向会说「是」的项上）
+      ⇒ 三个谓词**必须**报出来。少了这一步，「谓词恒返回空」也能让 ②③ 全绿 ——
+      那是「空转与通过长得一模一样」。
+    """
+    from ldv.checks._fixtures import build_incremental, make_builder, sequences as make_seqs
+    from ldv.core.direction import EVENT_STAYED
+    from ldv.plugins.sequence import SequencePlugin
+
+    loaded = load()
+    if loaded is None:
+        PASS.append("留在父方向（跳过：目录不在）")
+        return
+    nodes, edges, _ = loaded
+    ids = sorted(nodes)
+
+    def _build(init: list[str]) -> Kernel:
+        return build_incremental(make_builder("sequence", nodes, edges), nodes, init, ids[2:])
+
+    # 这份夹具（sequence，先建 2 维护 34）实测滞留 32 —— 见 §10.2 出路 (4)。
+    k = _build(ids[:2])
+    st = k.stats()
+    d0 = k.root
+
+    # ① 非空转
+    ok("★ [留在父方向] 非空转：这份夹具上确实有滞留（否则下面全在查空气）",
+       st["滞留"] > 0, f"滞留 {st['滞留']} —— 下面几条都没在查东西")
+
+    # ② 字面执行：每个子方向都**证明**不收它（用插件直接问）
+    ok("★ 每条 `stayed` 事件上，**每个子方向都证明不收它**（只有「否」算证明）",
+       not _stay_unproven(k, k.plugin), f"有子方向没说「否」：{_stay_unproven(k, k.plugin)[:3]}")
+    ev = [e for e in k.ledger if e.kind == EVENT_STAYED]
+    ok("★ 且事件数 == `stats()['滞留']`（数在账上，不是算出来的）",
+       len(ev) == st["滞留"], f"事件 {len(ev)} vs 计数 {st['滞留']}")
+
+    # ③ 留在父的成员里；不溜进子方向
+    ok("★ 滞留的项**真的留在父的成员里**（留在 ≠ 拒绝）",
+       not _stay_outside_parent(k, k.stayed_of),
+       f"不在父成员里的方向：{_stay_outside_parent(k, k.stayed_of)}")
+    ok("★ 且**没有**溜进任何子方向的成员里（「每个子方向都证明不收」是字面执行）",
+       _stay_leaks(k) == 0, f"泄漏 {_stay_leaks(k)} 处")
+
+    # ── ★ 自检：三个谓词对**已知错的**输入必须有区分力 ──────────────────
+    # `ids[0]` 落在子方向里（子方向对它说「是」）⇒ 给它记一条滞留就是**错的**。
+    k_bad = _build(ids[:2])
+    k_bad.ledger.append(EVENT_STAYED, k_bad.root.did, item=ids[0], reason="自检用伪造")
+    q0 = Query(ideal=frozenset({ids[0]}))
+    ok("★ [自检] 伪造的那条确实是错的（子方向对 `ids[0]` 说「是」，不是「否」）",
+       any(k_bad.plugin.hit(c, q0) is Tri.YES for c in k_bad.children_of(k_bad.root)),
+       "伪造目标选错了 —— 下面两条自检就查不到东西")
+    ok("★ [自检] ② 的谓词有区分力：喂**已知不该有**的滞留事件必须报违规",
+       _stay_unproven(k_bad, k_bad.plugin) != [], "谓词恒返回空 —— ② 是空转")
+    ok("★ [自检] 泄漏谓词有区分力：同一份伪造输入必须数出泄漏",
+       _stay_leaks(k_bad) > 0, "泄漏谓词恒返回 0 —— ③ 后半是空转")
+    ok("★ [自检] 「滞留 ⊂ 父成员」谓词有区分力：把事件读成挂在**父**上的那些必须报违规",
+       _stay_outside_parent(k_bad, lambda d: k_bad.stayed_of(k_bad.direction(d.parent))
+                            if d.parent else frozenset()) != [],
+       "谓词恒返回空 —— ③ 前半是空转")
+
+    # ④ 代价守恒：滞留在**划分**上，不动**范围**
+    ok("★ 滞留不动范围：`认识 = 纳入 + 根覆盖之外` 照旧成立",
+       st["认识"] == st["纳入"] + st["根覆盖之外"], f"实际 {st['认识']} vs {st}")
+    ok("★ 滞留**不减** `纳入`（「留在父方向」不是「被拒」的委婉说法）",
+       st["纳入"] == st["认识"] and st["滞留"] > 0,
+       f"纳入 {st['纳入']} / 认识 {st['认识']} / 滞留 {st['滞留']}")
+
+    # ⑤ 两条恒等式（`停` 从成员集现算）
+    ok("★ 恒等式：`停在叶上 + 停在内部 == 纳入`（`停` 从成员集现算）",
+       st["停在叶上"] + st["停在内部"] == st["纳入"],
+       f"{st['停在叶上']} + {st['停在内部']} ≠ {st['纳入']}")
+    ok("★ 恒等式：`停在内部 == 滞留（账上）`（两边互相独立地算）",
+       st["停在内部"] == st["滞留"], f"{st['停在内部']} ≠ {st['滞留']}")
+
+    # ⑦ `叶容量` 的洞 + 「批建路径上两把尺子相等」的对照
+    ok("★ `叶容量` 的洞：项停在**内部**节点时 `最大停留数 > 最大叶容量`",
+       st["最大停留数"] > st["最大叶容量"],
+       f"最大停留数 {st['最大停留数']} vs 最大叶容量 {st['最大叶容量']}")
+    from ldv.checks._fixtures import build_keyset, build_reach, build_sequence
+    batch = {"keyset": lambda: build_keyset(nodes), "reach": lambda: build_reach(nodes, edges),
+             "sequence": lambda: build_sequence(nodes, edges)}
+    same, detail = True, []
+    for which, mk in batch.items():
+        b = mk()[0].stats()
+        same = same and b["最大叶容量"] == b["最大停留数"] and b["滞留"] == 0
+        detail.append(f"{which}:{b['最大叶容量']}/{b['最大停留数']}/滞留{b['滞留']}")
+    ok("★ 且**批建**路径上 `最大叶容量 == 最大停留数`、滞留 0（三个方向）"
+       " —— ⑦ 那条 `>` 不是恒真，`最大停留数` 是**推广**不是另一个数",
+       same, " / ".join(detail))
+
+    # ⑧ ★ `叶容量` 会掉到「分辨率下界」**以下** —— 而叶**仍然**各自是单个等价类。
+    #    这条钉住的是**尺子的量程**，不是结构：§7.2 的等式 `叶容量 = 最大等价类`
+    #    前提是 `滞留 == 0`（每一项都走到了叶）。少了这个前提，
+    #    `叶容量` 会报出一个**比下界还小**的数 —— 它不再能当「分辨率下界」用。
+    from ldv.checks._fixtures import build_keyset as _bk, build_sequence as _bsq
+    from ldv.checks._fixtures import equiv_classes as _eq
+
+    classes = _eq("sequence", nodes, edges)
+    max_class = max(len(v) for v in classes.values())
+    leaves = [d for d in k.all_directions() if not k.children_of(d)]
+    per_leaf = [len({classes[x] for x in k.members_of(d) if x in classes}) for d in leaves]
+    ok("★ [量程] 滞留 > 0 时 `最大叶容量` 掉到**最大等价类以下**（这里 %d < %d）"
+       " —— 它不是分辨率下界了" % (st["最大叶容量"], max_class),
+       st["最大叶容量"] < max_class, f"最大叶容量 {st['最大叶容量']} vs 最大等价类 {max_class}")
+    ok("★ [量程] 而**每个叶仍然各自是单个等价类** —— 掉下去的不是分辨率，是那把尺子",
+       bool(leaves) and all(n == 1 for n in per_leaf), f"各叶的等价类数 {per_leaf}")
+    ok("★ [量程] 下界改由 `最大停留数` 承担：`最大停留数 >= 最大等价类`",
+       st["最大停留数"] >= max_class, f"{st['最大停留数']} < {max_class}")
+    batch = _bsq(nodes, edges)[0].stats()
+    ok("★ [量程] 对照：**批建**路径上 `滞留 == 0` ⇒ 等式 `叶容量 == 最大等价类` 成立"
+       "（§7.2 的等式前提就是这一条）",
+       batch["滞留"] == 0 and batch["最大叶容量"] == max_class,
+       f"批建滞留 {batch['滞留']}、叶容量 {batch['最大叶容量']} vs 最大等价类 {max_class}")
+
+    # ⑥ 已知答案对照组：非根方向一律说「未展开」⇒ 滞留必须为 0
+    class _KidsSayUnknown(SequencePlugin):
+        """对照组：**非根**方向对任何查询都说「未展开」。"""
+
+        def hit(self, d, query):  # noqa: ANN001, ANN201
+            if d.did != self._root_did:
+                return Tri.UNEXPANDED
+            return super().hit(d, query)
+
+    plug2 = _KidsSayUnknown(make_seqs(nodes, edges))
+    k2 = Kernel(plug2, {i: nodes[i].as_item() for i in ids[:2]})
+    k2.build(frozenset({()}))
+    plug2._root_did = k2.root.did  # noqa: SLF001
+    for i in ids[:2]:
+        k2.insert(i)
+    for i in ids[2:]:
+        k2.insert(i, nodes[i].as_item())
+    st2 = k2.stats()
+    # 先验对照组**真的生效了**（否则下面那条是空转：override 没打上，一切照旧）
+    probe = Query(ideal=frozenset({ids[10]}))
+    ok("★ [对照组] 非根方向**确实**在说「未展开」（override 真的生效）",
+       all(plug2.hit(c, probe) is Tri.UNEXPANDED for c in k2.children_of(k2.root)),
+       "还有子方向没说「未展开」—— 对照组没打上")
+    ok("★ [对照组] 子方向说「未展开」时**滞留必须为 0** —— 「不知道」不许被当成「不在」",
+       st2["滞留"] == 0, f"实际滞留 {st2['滞留']}")
+    ok("★ [对照组] 且项**没有消失**：`纳入 == 认识`、`根覆盖之外 == 0`",
+       st2["纳入"] == st2["认识"] and st2["根覆盖之外"] == 0, f"实际 {st2}")
+    ok("★ [对照组] 且它**确实换了行为**（方向数不同）—— 不是一个「照旧」的假对照组",
+       st2["方向"] != st["方向"], f"对照组方向数 {st2['方向']} == 真实组 {st['方向']}")
+
+
 def main() -> int:
     for fn in (test_tri, test_loader, test_kernel, test_selfopt, test_sequence,
                test_flows, test_emergence, test_divergence, test_equivalence,
-               test_rebuild):
+               test_rebuild, test_out_of_scope, test_stay_at_parent):
         fn()
     total = len(PASS) + len(FAIL)
     for f in FAIL:

@@ -27,9 +27,10 @@ from __future__ import annotations
 import sys
 from typing import Any, Sequence
 
-from ..checks._fixtures import items as make_items, keyset_queries, load, sequences
-from ..checks.contract import (cover_nesting_profile, false_positive_profile,
-                               soundness_profile)
+from ..checks._fixtures import (coverage_of, items as make_items,
+                                keyset_queries, load, sequences)
+from ..checks.contract import cover_nesting_profile, false_positive_profile
+from ..checks.coverage import soundness_profile
 from ..core.kernel import Kernel
 from ..plugins.keyset import KeysetPlugin
 
@@ -117,7 +118,7 @@ def main() -> int:
         row = f"{label:<34}"
         for _, init, later in builds:
             k, plug = build(cls, init, later)
-            sp = soundness_profile(k, plug)
+            sp = soundness_profile(k, coverage_of("keyset", nodes, edges))
             row += f"{sp['越界成员数']:>10}/{sp['成员数']:<7}"
         print(row)
 

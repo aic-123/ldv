@@ -71,6 +71,7 @@ from typing import Any, Iterable, Sequence
 from .core import selfopt
 from .core.direction import (
     EVENT_BORN,
+    EVENT_OUT_OF_SCOPE,
     EVENT_UNSPLITTABLE,
     EVENT_WITNESS_UPDATED,
 )
@@ -179,11 +180,21 @@ class InsertReport:
     witness_updated: tuple[str, ...] = ()       # 情形② 见证更新
     changed: tuple[str, ...] = ()               # 存在或归属发生变化的全部方向
     out_of_cone: tuple[str, ...] = ()           # M3：落在 Cone(x) 外的变动 ⇒ 必须为空
+    #: ★ 这一项**落在根覆盖之外**，因此**没有进结构**（§10.2 出路 (1)）。
+    #: 它不是一个「失败」，是一个**范围**事实 —— 但它必须**被印出来**，
+    #: 否则「没长出新层」会被读成「结构没动」，而真相是「这个项压根没进去」。
+    out_of_scope: bool = False
     events: int = 0                             # ★ 本次追加的账本事件**总条数**
     #: ⚠️ `events` 和上面几个字段**不是一回事**：那些是按 did 归类后的**去重视图**。
     #: 账本核对必须用 `events` —— 用去重视图去比会差出「重叠数」那么多条。
 
     def render(self) -> str:
+        if self.out_of_scope:
+            # ⚠️ 这一格必须**单独**、**在最前**印出来。
+            #    它落进「锥 0 层 + 没有变动」那个形状里，与「插进去了但结构没动」
+            #    长得**一模一样** —— 正是本仓最防的那件事。
+            return (f"插 {self.item}｜★ 落在**根覆盖之外** ⇒ 不塞进结构"
+                    f"（§10.2 出路 (1)：范围事实，已记账）")
         bits = [f"插 {self.item}｜锥 {len(self.cone)} 层"]
         if self.born:
             bits.append(f"涌现 {len(self.born)}：{list(self.born[:3])}")
@@ -222,6 +233,7 @@ def insert_items(kernel: Any, items: Iterable[tuple[str, Any]]) -> list[InsertRe
         path = kernel.insert(iid, item)                     # M1 / M2
 
         new_events = list(kernel.ledger)[before_events:]
+        out_of_scope = any(e.kind == EVENT_OUT_OF_SCOPE for e in new_events)
         changed: set[str] = set()
         for d in kernel.all_directions():
             if d.did not in before_dirs:
@@ -250,6 +262,7 @@ def insert_items(kernel: Any, items: Iterable[tuple[str, Any]]) -> list[InsertRe
                                   if e.kind == EVENT_WITNESS_UPDATED),
             changed=tuple(sorted(changed)),
             out_of_cone=tuple(out),
+            out_of_scope=out_of_scope,
             events=len(new_events),
         ))
     return reports
@@ -343,6 +356,13 @@ def render_chain(a: FlowA | None, b: Sequence[InsertReport] | None,
         lines.append(f"  插入 {len(b)} 项：长出新层 {len(grew)} 项；"
                      f"归属更新累计 {touched} 处（**都在各自的锥上**）"
                      + (f"；§K2 判「这一层不建」{judged} 次" if judged else ""))
+        # ★ 落在**根覆盖之外**的项必须单独计数（§10.2 出路 (1)）。
+        #   它们既不在「长出新层」里，也不在「归属更新」里 —— 不单列就等于没发生。
+        oos = [r for r in b if r.out_of_scope]
+        if oos:
+            lines.append(f"  ★ 其中 {len(oos)} 项落在**根覆盖之外**（不塞进结构，"
+                         f"§10.2 出路 (1)）：{ [r.item for r in oos[:3]] }"
+                         f" —— 这是**范围**事实，不是失败；它们**在账上**")
         for r in b[:6]:
             lines.append("  · " + r.render())
         if len(b) > 6:

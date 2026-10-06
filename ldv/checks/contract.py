@@ -131,96 +131,34 @@ def cover_nesting_profile(kernel: Any, plugin: Any,
     return {"已展开方向数": checked, "越界次数": len(bad), "例子": bad[:2]}
 
 
-# --- §1 硬要求表第三行：健全性（**必须两条路径都量**） ------------------------
-
-def soundness_profile(kernel: Any, plugin: Any) -> dict[str, Any]:
-    """`members(d) ⊆ 覆盖(d)` —— §1 硬要求表**第三行**，按方向统计。
-
-        members(d) ⊆ { x : 代价(d, x) = 0 }
-
-    ## 为什么它必须**单独**量，而且必须**两条路径都量**
-
-    `B16` 查的就是这一条，但 `run_checks` 只拿**一次建完**的内核去查它。
-    而这一条在两条路径上**不是同一件事**：
-
-        一次建完     每个方向的成员集在**第一次展开时就是完整的**
-                     ⇒ 子方向的 payload 从这批成员算出来，一定盖得住它们 ⇒ 天然成立
-        维护路径     成员是**后来才长起来的**，而 payload 在劈开时就**冻结**了
-                     ⇒ 子方向收不住「它没见过的项」 ⇒ 破了也没人查
-
-    ⇒ 实测（36 项语料，本轮修 `keyset.split` 之前）：
-
-        方向      一次建完            先建 2 维护 34
-        ────────────────────────────────────────────────
-        keyset    0 / 159            123 / 227     且 42/385 条假阴
-        reach     0 / 224            313 / 385     且 44/384 条假阴
-        sequence  0 / 122             68 / 210     且 25/154 条假阴
-
-    **一次建完全绿、维护路径全红** —— 这就是「空转与通过长得一模一样」在
-    **流程**上的形态：检查存在、是绿的，但它从没跑在出问题的那条路上。
-
-    修好 A 之后（先建 6 维护 30），把 `B1` 也搬到维护路径上跑：
-
-        方向        维护路径越界        B1（维护路径上的假阴）
-        ────────────────────────────────────────────────────────
-        keyset      0 / 232            **是**（411 个样本，0 条假阴）
-        reach       246 / 328          **否**（30/367 条假阴）
-        sequence    36 / 176           **否**（17/141 条假阴）
-
-    ⇒ 「健全性破了」与「真的产生假阴」是同一件事的两面：
-      `members(d) ⊄ 覆盖(d)` ⇒ `命中` 的「否」证不住 ⇒ 假阴（§K8 禁）。
-
-    ⚠️ 这是**硬要求**（§K8 禁假阴的结构来源），所以它**不是**「无害趋势」。
-       当前它以**度量**形式报出而不是进退出码，理由只有一条，且要说清：
-       B / C 两个方向的修法**需要先裁定**（见 `C10` §4 与设计文档 §10.2），
-       而一条基线就红的判据**过不了注入验证**（注入验证要求基线绿）。
-       ⇒ 裁定之后，这一条要升级成判据（进退出码）。
-    """
-    bad: dict[str, tuple[int, int]] = {}
-    members = 0
-    outside = 0
-    for d in kernel.all_directions():
-        mem = kernel.members_of(d)
-        if not mem:
-            continue
-        members += len(mem)
-        out = 0
-        for iid in sorted(mem):
-            try:
-                cost = call_penalty(plugin, d, kernel.items[iid])
-            except Exception:  # noqa: BLE001 - 插件是外部代码
-                cost = float("nan")
-            if cost != 0.0:
-                out += 1
-        if out:
-            bad[d.did] = (out, len(mem))
-            outside += out
-    return {
-        "方向数": len(kernel.all_directions()),
-        "成员数": members,
-        "越界成员数": outside,
-        "越界方向": bad,
-        "最大越界方向": max(bad, key=lambda k: bad[k][0]) if bad else "—",
-    }
-
-
-def render_soundness(batch: dict[str, Any], inc: dict[str, Any],
-                     which: str = "") -> str:
-    """把两条路径的健全性读数渲染成**一行**。"""
-    head = f"健全性（{which}）" if which else "健全性"
-    b, i = batch["越界成员数"], inc["越界成员数"]
-    if not b and not i:
-        return (f"{head}：一次建完 {b}/{batch['成员数']}、维护 {i}/{inc['成员数']} "
-                f"个成员落在覆盖外（两条路径都成立）")
-    return (f"★ {head}**被破坏**（§1 硬要求表第三行）："
-            f"一次建完 {b}/{batch['成员数']}、**维护 {i}/{inc['成员数']}** 个成员落在覆盖外"
-            f"（最差方向 {inc['最大越界方向']}）"
-            f"—— §K8 的结构来源，不是无害趋势；修法见设计文档 §10.2")
+# --- §1 硬要求表第三 / 第四行 -------------------------------------------------
+#
+# ⚠️ **健全性（第三行）与覆盖不漏（第四行）不在这里** —— 它们与 `B16` / `B18` / `B19`
+#    一起放在 `checks/coverage.py`。理由只有一条：那一族**共用一个外生覆盖定义**
+#    （`_fixtures.coverage_of`），拆在两处就会出现「同一条性质两种算法」——
+#    而那正是**与被检查对象共用盲点**的形状（按 `§I3 代价` 重算覆盖）。
+#    本模块只管 §I1–§I6 的**契约**。
 
 
 # --- B1 ---------------------------------------------------------------------
 
-def b1_no_false_negative(kernel: Any, plugin: Any, queries: Sequence[Any], rep: Report) -> None:
+def b1_no_false_negative(kernel: Any, plugin: Any, queries: Sequence[Any], rep: Report,
+                         path: str = "批建") -> None:
+    """`命中` 说「否」时，这个方向里**必须真的没有**命中 —— §K8 的行为式那一半。
+
+    ground truth 是 `members(d) ∩ ideal(q)`，**外生给定**（不调插件算答案）。
+
+    ## ★ **两条路径各判一次**
+
+    这条判据的 ground truth 里**有成员集**，而成员集在两条路径上不同：
+
+        一次建完     成员集在**第一次展开时就是完整的**
+        维护路径     成员是**后来才长起来的** ⇒ 同一批查询问的是**另一个**成员集
+
+    ⇒ 两条路径不是同一件事，**各占一行**。`path` 印在标题里，因为
+      「只跑一条路」与「两条路都跑」在汇总里长得一模一样 ——
+      判据的适用范围，**收窄要印、放宽也要印**。
+    """
     bad: list[str] = []
     checked = 0
     for d in kernel.all_directions():
@@ -235,9 +173,9 @@ def b1_no_false_negative(kernel: Any, plugin: Any, queries: Sequence[Any], rep: 
             if call_hit(plugin, d, q) is Tri.NO:
                 bad.append(f"{d.did}×{q.label}（实际有 {sorted(truth)[:3]}）")
     if checked == 0:
-        rep.add("B1", "假阴", Tri.UNEXPANDED, "没有一条「实际有命中」的样本可查")
+        rep.add("B1", f"假阴（{path}路径）", Tri.UNEXPANDED, "没有一条「实际有命中」的样本可查")
         return
-    rep.add("B1", "假阴：命中说否而实际有命中",
+    rep.add("B1", f"假阴（{path}路径）：命中说否而实际有命中",
             Tri.NO if bad else Tri.YES,
             f"{len(bad)}/{checked} 条假阴：{bad[:3]}" if bad else f"{checked} 个「实际有命中」样本全部未被判否")
 
@@ -328,14 +266,33 @@ def b3_penalty_comparable(kernel: Any, plugin: Any, rep: Report) -> None:
 # --- B4 ---------------------------------------------------------------------
 
 def b4_split_is_partition(kernel: Any, rep: Report) -> None:
-    """`劈开` 的结果必须构成**划分**。
+    """`劈开` 的结果必须构成**划分** —— §10.2 出路 (4) 之后是**收窄**版：
+
+        ∪members(子) ⊆ members(父)                       ← 不许**多**（重叠）
+        members(父) − ∪members(子) == **账上那些滞留项**  ← 漏的必须**条条有账**
 
     ⚠️ 查的是**内核的归属分配**，不是插件返回的 payload。
        理由见 `core/kernel.py` 开头：`命中` 允许假阳 ⇒ 重叠永远看不出来，
        所以「不重不漏」只能由内核的分配来保证，也只能查那里。
+
+    ## 为什么是「等式 + 账」，而不是裸的 `⊆`
+
+    裸的 `∪members(子) == members(父)` 默认**每一项都往下走**。
+    §10.2 出路 (4) 之下这个前提不成立：**每个子方向都证明不收它**的项
+    **停在父方向**（X-tree 的 supernode 同形："only if there is no other possibility"）。
+
+    ⇒ 直接放宽成 `⊆` 会让「漏」这件事**重新变得看不见** —— 那正是本设计
+      反复要消灭的形状。所以**两头都钉**：
+
+        `⊆`                    ⇒ 仍然不许重叠
+        漏的集合 == 账上滞留集  ⇒ 漏**只能**是「被证明收不住」的那些，一条不多
+
+    ★ 这不是放宽，是**换了个更强的东西钉**：钉的不再是「不漏」，而是
+      「**要么不漏，要么每一条漏都有证明**」。前者在滞留恒为 0 时才等价。
     """
     bad: list[str] = []
     checked = 0
+    with_stay = 0
     for d in kernel.all_directions():
         kids = kernel.children_of(d)
         if len(kids) < 2:
@@ -349,16 +306,25 @@ def b4_split_is_partition(kernel: Any, rep: Report) -> None:
             if dup:
                 bad.append(f"{d.did} 的子方向重叠：{sorted(dup)[:3]}")
             union |= mk
-        if union != set(parent):
-            miss = sorted(set(parent) - union)
-            extra = sorted(union - set(parent))
-            bad.append(f"{d.did} 的子方向不覆盖父：漏 {miss[:3]} / 多 {extra[:3]}")
+        extra = sorted(union - set(parent))
+        if extra:
+            bad.append(f"{d.did} 的子方向多出父没有的项：{extra[:3]}")
+            continue
+        miss = set(parent) - union
+        if miss:
+            with_stay += 1
+        accounted = set(kernel.stayed_of(d))
+        if miss != accounted:
+            bad.append(
+                f"{d.did} 的滞留与账不符：漏 {sorted(miss)[:3]}，账上 {sorted(accounted)[:3]}")
     if checked == 0:
         rep.add("B4", "劈开成划分", Tri.UNEXPANDED, "没有任何方向被展开过")
         return
-    rep.add("B4", "劈开成划分：不重不漏",
+    rep.add("B4", "劈开成划分：不重，且漏的恰好是账上那些",
             Tri.NO if bad else Tri.YES,
-            f"{len(bad)} 处破划分：{bad[:2]}" if bad else f"{checked} 个已展开方向的子集构成划分")
+            f"{len(bad)} 处破划分：{bad[:2]}" if bad
+            else f"{checked} 个已展开方向：子集不重叠，"
+                 f"其中 {with_stay} 个有滞留且滞留与账逐项相符")
 
 
 # --- B5 ---------------------------------------------------------------------
@@ -426,57 +392,3 @@ def b6_signal_not_collapsed(kernel: Any, plugin: Any, rep: Report) -> None:
     rep.add("B6", "信号不折叠：无信号 ≠ 负信号",
             Tri.NO if bad else Tri.YES,
             "；".join(bad) if bad else f"「{r_none}」 ≠ 「{r_neg}」")
-
-
-# --- B16 --------------------------------------------------------------------
-
-def b16_members_covered(kernel: Any, plugin: Any, rep: Report) -> None:
-    """**成员必须落在自己方向的覆盖里** —— §K8 的结构版本，**与查询集无关**。
-
-        members(d)  ⊆  { x : 代价(d, x) = 0 }
-
-    为什么这条要紧：`命中` 说「否」是在**证明**「这个方向里没有命中」，
-    而它手里的依据只有**方向自己**（payload）。若某个成员根本不在方向的覆盖里，
-    那个证明就**管不到它** —— 它可能命中，而 `命中` 已经说了「否」。
-    ⇒ 这就是假阴的**结构来源**。
-
-    ## 与 `B1` 的分工（实测过，不是推理）
-
-        B1   行为式：拿**查询集**的 ground truth 比 —— 只查得到被查询覆盖到的方向
-        B16  结构式：拿**代价**比 —— 不看查询集，一次全查
-
-    实测：同一个「插入时选**代价最大**的子方向」的坏内核（健全性破坏 102 个成员），
-
-        B1  在 40 条查询下判「否」  ← 查到了
-        B1  在  3 条查询下判「是」  ← **绿了**
-        B16                        ← 无论查询集怎么变，都是「否」
-
-    ⇒ 查询集一换，`B1` 就可能瞎；`B16` 不会。**两个都留**：
-      `B1` 管「插件**说**得准不准」，`B16` 管「内核**分**得对不对」。
-    """
-    bad: list[str] = []
-    checked = 0
-    for d in kernel.all_directions():
-        mem = kernel.members_of(d)
-        if not mem:
-            continue
-        checked += len(mem)
-        outside: list[str] = []
-        for iid in sorted(mem):
-            try:
-                cost = call_penalty(plugin, d, kernel.items[iid])
-            except Exception as exc:  # noqa: BLE001 - 插件是外部代码
-                bad.append(f"{d.did} 的代价抛异常：{type(exc).__name__}: {exc}")
-                break
-            if cost != 0.0:
-                outside.append(iid)
-        if outside:
-            bad.append(f"{d.did} 有 {len(outside)}/{len(mem)} 个成员落在覆盖外"
-                       f"（{outside[:3]}）")
-    if checked == 0:
-        rep.add("B16", "过滤器健全", Tri.UNEXPANDED, "没有任何方向有成员")
-        return
-    rep.add("B16", "过滤器健全：成员 ⊆ 覆盖（§K8 的结构版本，与查询集无关）",
-            Tri.NO if bad else Tri.YES,
-            f"{len(bad)} 个方向有成员越界：{bad[:2]}" if bad
-            else f"{checked} 个成员全部落在自己方向的覆盖里（代价均为 0）")
