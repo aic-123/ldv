@@ -288,11 +288,27 @@ def load_baseline() -> dict[str, Any]:
     return json.loads(BASELINE_PATH.read_text(encoding="utf-8"))
 
 
-def write_baseline(entries: dict[str, Any]) -> None:
+def corpus_fingerprint(nodes: Any, edges: Any) -> dict[str, int]:
+    """语料指纹 —— 用来判定「这份 baseline 是不是**本语料**上冻的」。
+
+    ⚠️ 为什么非有不可：baseline 是**语料相关**的读数（`sequence` 维护路径 16 漏
+       是在那 36 项上量的）。换一份语料跑，`183 > 16` 会被报成
+       **「新增覆盖不漏」** —— 而真相是**「baseline 是别的语料的」**。
+       两者在输出里长得一模一样，正是本仓库一直在防的形状。
+
+    ⇒ 只记**两个数**（项数 / 边数），不记内容：够用，而且换语料一定会变。
+    """
+    return {"项数": len(nodes), "边数": sum(len(v) for v in edges.values())}
+
+
+def write_baseline(entries: dict[str, Any], corpus: dict[str, int] | None = None) -> None:
     body = {
         "_note": ("覆盖不漏（§1 硬要求表第四行）的**冻结基线**。"
                   "由 `python -m ldv.run_checks --write-cover-leak-baseline` 生成。"
-                  "新增违规会红；条目不再发生也会红（ESLint `--prune-suppressions` 那条纪律）。"),
+                  "新增违规会红；条目不再发生也会红（ESLint `--prune-suppressions` 那条纪律）。"
+                  "`语料` 是**本基线是在哪份语料上冻的** —— 换了语料这条守卫报「跳过」，"
+                  "不报「红」：**「baseline 是别的语料的」与「新增违规」必须分得开**。"),
+        "语料": corpus or {},
         "基线": entries,
     }
     BASELINE_PATH.write_text(
@@ -301,6 +317,7 @@ def write_baseline(entries: dict[str, Any]) -> None:
 
 
 def b18_cover_leak_baseline(obs: dict[str, dict[str, Any]], rep: Report,
+                            corpus: dict[str, int],
                             baseline: dict[str, Any] | None = None) -> None:
     """**新增违规会红，条目不再发生也会红** —— 两头都守。
 
@@ -326,8 +343,38 @@ def b18_cover_leak_baseline(obs: dict[str, dict[str, Any]], rep: Report,
         观测 > baseline   → **红**（新增违规）
         baseline > 0 且 观测 == 0 → **红**（条目不再发生 ⇒ 去收紧 baseline）
         其余              → 绿；观测 < baseline 时**另报**「可以收紧」
+
+    ## ★ 第 0 条：baseline 必须是**本语料**上冻的（否则**跳过**，不红不绿）
+
+    没有这一条的话，「换了一份语料」会被报成「新增覆盖不漏」——
+    实测：`openalex-small`（281 项）上 `sequence|maintenance` 漏 **183**，
+    而 baseline 是在 36 项上冻的 **16** ⇒ 报「新增覆盖不漏：183 漏（baseline 16）」。
+    **那句话是假的**：没有任何东西变差，只是 baseline 换了参照物。
+
+    ⇒ 语料指纹对不上 ⇒ 报 **未展开**（跳过），并说清是**换了语料**。
+      跳过 ≠ 通过：它明确地说「这条守卫在本语料上判不了」，而不是「没问题」。
+
+    ⚠️ **`corpus` 是必填参数**（不是 `= None` 的默认值）。理由与第 0 条同源：
+       防御**不能因为调用方少传一个参数而静默消失** —— 那正是本仓库一直在防的形状。
+       漏传会在调用点直接 `TypeError`，而不是变成一条「永远绿」的守卫。
+
+    ⚠️ 而且 **baseline 里没记指纹**（`语料` 为空）也走**跳过**，理由同第 0 条：
+       判不了 ≠ 没问题。少了这一条，一个旧格式的 baseline 文件
+       会让整条守卫**无声地失去防御**（`frozen == {}` 恒不等于 `corpus` 之外无差别）。
     """
-    base = (baseline if baseline is not None else load_baseline()).get("基线", {})
+    doc = baseline if baseline is not None else load_baseline()
+    base = doc.get("基线", {})
+    frozen = doc.get("语料") or {}
+    if frozen != corpus:
+        why = (f"baseline 是在**另一份语料**上冻的（{frozen} vs 现在 {corpus}）"
+               if frozen else
+               f"baseline 里**没记语料指纹**（`语料` = {frozen!r}）"
+               f"⇒ 无法判定它是不是本语料的")
+        rep.add("B18", "覆盖不漏（baseline 守卫）", Tri.UNEXPANDED,
+                f"{why} ⇒ 这条守卫在本语料上**判不了**。要判就先 "
+                f"`python -m ldv.run_checks --write-cover-leak-baseline` 重冻。"
+                f"**跳过 ≠ 通过**：它没说本语料不漏")
+        return
     bad: list[str] = []
     tight: list[str] = []
     checked = 0

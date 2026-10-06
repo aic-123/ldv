@@ -8,13 +8,21 @@
 
 from __future__ import annotations
 
+import os
 import sys
 import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from ldv.checks._fixtures import build_keyset, build_reach, build_sequence, load  # noqa: E402
+from ldv.checks._fixtures import (  # noqa: E402
+    build_keyset,
+    build_reach,
+    build_sequence,
+    corpus_candidates,
+    find_corpus,
+    load,
+)
 from ldv.core import selfopt  # noqa: E402
 from ldv.core.direction import (  # noqa: E402
     EVENT_STAYED,
@@ -98,9 +106,43 @@ def test_loader() -> None:
         PASS.append("真语料（跳过：目录不在）")
         return
     nodes, edges, dangling = loaded
-    ok("真语料读得进", len(nodes) == 36, f"读到 {len(nodes)} 个")
+    ok("真语料读得进", len(nodes) > 0, f"读到 {len(nodes)} 个")
     ok("悬挂边为空", not dangling, f"悬挂 {sorted(dangling)}")
-    ok("边数与事实相符", sum(len(v) for v in edges.values()) == 47)
+
+    # ⚠️ **计数只对随仓库提交的那份成立。** 换语料（`LDV_CORPUS=…`）时断言必须跟着换 ——
+    #    否则「换了一份料」会被读成「语料坏了」，而那正是「跳过 ≠ 通过」要防的混淆。
+    shipped = Path(__file__).resolve().parents[1] / "corpus" / "nodes"
+    if find_corpus() == shipped:
+        ok("真语料读得进（随仓库提交的那份）", len(nodes) == 36, f"读到 {len(nodes)} 个")
+        ok("边数与事实相符", sum(len(v) for v in edges.values()) == 47)
+    else:
+        PASS.append(f"真语料计数（跳过：跑的是外部语料 {find_corpus().parent.name} —— "
+                    f"{len(nodes)} 项 / {sum(len(v) for v in edges.values())} 边）")
+
+    # ── ★ 指路：**显式指定却找不到 ⇒ 报错，不许回落** ──────────────────────
+    # 回落会让「`LDV_CORPUS` 打错一个字」与「指对了」**长得一模一样**：
+    # 跑的是仓库里那 36 项，检查照样全绿、退出码 0。
+    # ⚠️ 这条自检**必须**用 `monkeypatch` 之外的办法证明它非空转 ——
+    #    下面同时验「设了不存在的名字 ⇒ 报错」与「不设 ⇒ 正常兜底」，两条都要真跑。
+    saved = os.environ.get("LDV_CORPUS")
+    try:
+        os.environ["LDV_CORPUS"] = "ldv-no-such-corpus-xyz"
+        raises("`LDV_CORPUS` 指向不存在的名字 ⇒ 报错（不静默回落到默认语料）",
+               lambda: find_corpus())
+        os.environ.pop("LDV_CORPUS", None)
+        ok("不设 `LDV_CORPUS` ⇒ 正常兜底到随仓库提交的那份",
+           find_corpus() == shipped, f"兜底到 {find_corpus()}")
+        # 名字解析：`_data/<名字>/nodes` 必须在候选链里，否则「按名字指料」这条路是断的
+        os.environ["LDV_CORPUS"] = "some-name"
+        cands = [str(p) for p in corpus_candidates()]
+        ok("`LDV_CORPUS=<名字>` 会去 `_data/<名字>/nodes` 找（仓库旁 + 上一级）",
+           any(p.endswith(os.path.join("_data", "some-name", "nodes")) for p in cands)
+           and sum(p.endswith(os.path.join("_data", "some-name", "nodes")) for p in cands) == 2,
+           f"候选链：{cands}")
+    finally:
+        os.environ.pop("LDV_CORPUS", None)
+        if saved is not None:
+            os.environ["LDV_CORPUS"] = saved
 
 
 # ═══ 内核 ════════════════════════════════════════════════════════════════════
@@ -837,6 +879,13 @@ def test_equivalence() -> None:
     ⚠️ ⑤ 断言的是**它现在红**。这不是「留一个已知红」，是**把缺口钉住**：
        谁把 `reach` 的 `劈开` 改成不拆 SCC，这条就会翻 —— 那时该做的是
        **更新 §10 的留白**，而不是删掉这条断言。
+
+    ★ **⑤ 用的合环图是人工造的；缺口在公开数据集上也露了** ——
+      OpenAlex 引用图切片（281 项 / 1008 边）有 6 个 ≥2 的强连通分量
+      ⇒ `B17`(reach) 红，被拆开的类正好 6 个（`ldv/tests/test_intake.py`）。
+      人工小图可以被人说成「构造出来的边角情形」，公开语料不能。
+      ⇒ 也正因为这条红，`test_intake.py` 的判据 ② 从「红数为 0」改成了
+      **基线守卫** —— 「红数为 0」等于要求一条**已知的**缺口消失。
     """
     from ldv.checks._fixtures import equiv_classes
     from ldv.checks.equivalence import absorption_profile, b17_leaf_is_equivalence_class
@@ -1342,10 +1391,207 @@ def test_stay_at_parent() -> None:
        st2["方向"] != st["方向"], f"对照组方向数 {st2['方向']} == 真实组 {st['方向']}")
 
 
+def test_cover_leak_baseline() -> None:
+    """★ `B18` 的 baseline 守卫 —— 四条规则 + **换语料必须报「跳过」**。
+
+    ## 为什么守卫要单独测，而不是混在「跑一遍 B18」里
+
+    普通判据的失效模式是**永远绿**；守卫的失效模式**不一样** —— 它会**红**，
+    红得理直气壮，而那句话是**假的**：
+
+    > `B18` 的基线是**语料相关**的读数（`sequence` 维护路径 16 漏是在 36 项上量的）。
+    > 换一份语料跑，`183 > 16` 会被报成**「新增覆盖不漏」** ——
+    > 而真相是**「baseline 是别的语料的」**。两者在输出里长得一模一样。
+
+    实测踩到过（`openalex-small` 281 项），所以才有了语料指纹。
+    **「跑一遍 B18 是绿的」查不出这个** —— 在真语料上它本来就是绿的。
+
+    ## 逐条钉住（每条都能红）
+
+        ① 基线文件在、指纹 == 现算的、条目非空 —— **非空转**前提
+        ② 观测 > baseline          ⇒ 红（新增违规）
+        ③ baseline > 0 且 观测 == 0 ⇒ 红（条目失效 —— 不许当永久豁免）
+        ④ 语料指纹不符             ⇒ **跳过**（未展开），**不是**红也不是绿
+        ⑤ baseline 里没记指纹      ⇒ **跳过**（判不了 ≠ 没问题），且理由与 ④ 分得开
+        ⑥ **基线文件整个不见了**   ⇒ **跳过**（这条是 ⑤ 的实测形态，见下）
+        ⑦ 0 < 观测 < baseline      ⇒ 绿 + 报「可以收紧」
+        ⑧ `corpus` 漏传            ⇒ 当场 `TypeError`（防御不许静默消失）
+        ⑨ 真语料上这条守卫**确实在判**，且**冻结的数 == 现算的数**
+
+    ## ★ ⑥ 是实测出来的，而且**两条臂都得跑**（`outputs/_measure_b18_missing_baseline.py`）
+
+    「基线文件不见了」这件事，旧代码（HEAD 逐字）报的是**两种**东西，
+    取决于语料有没有既存违规：
+
+        臂 A  `keyset`/`reach`（既存违规 0 处）  观测全 0、基线默认值也全 0 ⇒ **绿**
+        臂 B  加上 `sequence|maintenance`（既存 16 漏）              ⇒ **红**
+              理由写的是「新增覆盖不漏：16 漏（baseline 0）」—— **那是假的**
+
+    第一版测量脚本只跑了臂 B，于是印出「旧代码报绿」—— **与读数相反**。
+    两条臂一起跑才看得出全貌：**「基线不见了」被拆成「绿」和「红」两种假象，
+    而两条都不说「基线不见了」** —— 而它不是绿、也不是违规，是**判不了**。
+    ⇒ 这正是 ④ 的同一个形状：「换了一份语料」/「基线被删了」/「新增违规」三者长得一模一样。
+
+    ## ★ ④ 必须配一条**单变量对照**，否则它自己就是空转
+
+    「总是跳过」的实现能让 ④ 全绿。所以：**同一份 obs、同一份基线条目，
+    只有语料指纹不同** ⇒ 一个判得出、一个判不了。两边一对照，
+    「跳过」是**指纹**触发的、不是恒跳过。这一步不能省 ——
+    少了它，④ 就是「空转与通过长得一模一样」的又一个实例。
+
+    ## 以及：真语料上必须真的在判（⑧）
+
+    ②–⑦ 全是拿合成观测喂进去的。若它在真语料上一路「跳过」，
+    那上面几条通过也说明不了它在工作 ⇒ 最后用真语料真跑一遍，
+    并核对**冻结的数 == 现算的数**（否则基线过期，运行时会报「条目失效」红）。
+    """
+    from ldv.checks._fixtures import (
+        build_incremental,
+        build_keyset,
+        build_reach,
+        build_sequence,
+        coverage_of,
+        make_builder,
+    )
+    from ldv.checks._framework import Assertion, Report
+    from ldv.checks.coverage import (
+        BASELINE_PATH,
+        b18_cover_leak_baseline,
+        corpus_fingerprint,
+        cover_leak_profile,
+        load_baseline,
+    )
+
+    loaded = load()
+    if loaded is None:
+        PASS.append("B18 基线守卫（跳过：目录不在）")
+        return
+    nodes, edges, _ = loaded
+    fp = corpus_fingerprint(nodes, edges)
+
+    # ── ① 非空转前提：文件在、指纹对得上、条目非空 ────────────────────────
+    doc = load_baseline()
+    ok("★ [B18] 基线文件在（否则「新增」这个概念不存在）",
+       BASELINE_PATH.is_file(), str(BASELINE_PATH))
+    ok("★ [B18] 基线里的语料指纹 == **现算的**指纹（对不上 ⇒ 真跑时一路「跳过」）",
+       doc.get("语料") == fp, f"基线 {doc.get('语料')} vs 现算 {fp}")
+    ok("★ [B18] 基线条目非空（空基线 ⇒ 守卫在守空气）",
+       bool(doc.get("基线")), f"{doc.get('基线')}")
+
+    def guard(obs: dict, baseline: dict, corpus: dict) -> Assertion:
+        rep = Report(plugin="(自检)")
+        b18_cover_leak_baseline(obs, rep, corpus, baseline)
+        return rep.assertions[-1]
+
+    def leak(n: int, pairs: int = 1) -> dict:
+        return {"漏项数": n, "漏的对数": pairs,
+                "明细": [{"父": "D0", "漏项数": n}] if n else []}
+
+    base0 = {"语料": fp, "基线": {"keyset|maintenance": {"漏项数": 0, "漏的对数": 0}}}
+    base16 = {"语料": fp, "基线": {"keyset|maintenance": {"漏项数": 16, "漏的对数": 2}}}
+    #: ★ 一份**故意不是本语料**的指纹。两个数各 +1 ⇒ 保证与 `fp` 一定不等
+    #:（这份语料恰好是 36 项 / 47 边，写死一个别的数也行，但加 1 不会随语料失效）。
+    other = {"项数": fp["项数"] + 1, "边数": fp["边数"] + 1}
+
+    # ── ② 观测 > baseline ⇒ 红 ─────────────────────────────────────────────
+    a = guard({"keyset|maintenance": leak(5)}, base0, fp)
+    ok("★ [B18] 观测 > baseline ⇒ **红**（新增违规）",
+       a.result is Tri.NO, f"{a.result}：{a.detail}")
+
+    # ── ③ baseline > 0 且 观测 == 0 ⇒ 红（条目失效）────────────────────────
+    a = guard({"keyset|maintenance": leak(0, 0)}, base16, fp)
+    ok("★ [B18] baseline > 0 而观测 == 0 ⇒ **红**（条目失效，不许当永久豁免）",
+       a.result is Tri.NO, f"{a.result}：{a.detail}")
+
+    # ── ④ 语料指纹不符 ⇒ 跳过 ──────────────────────────────────────────────
+    a = guard({"keyset|maintenance": leak(5)}, base0, other)
+    ok("★ [B18] 语料指纹不符 ⇒ **跳过**（未展开），**不是**红也不是绿",
+       a.result is Tri.UNEXPANDED, f"{a.result}：{a.detail}")
+    ok("★ [B18] 且理由里点明「另一份语料」与「跳过 ≠ 通过」（跳过必须能读懂）",
+       "另一份语料" in a.detail and "跳过 ≠ 通过" in a.detail, a.detail)
+
+    # ── ⑤ 单变量对照：跳过由**指纹**触发，不是恒跳过 ──────────────────────
+    same = guard({"keyset|maintenance": leak(5)}, base0, fp)
+    diff = guard({"keyset|maintenance": leak(5)}, base0, other)
+    ok("★ [B18] 单变量对照：**同一份 obs + 同一份基线**，只有语料指纹不同 ⇒ "
+       "一个判得出、一个判不了 —— 「跳过」是指纹触发的，不是恒跳过",
+       same.result is Tri.NO and diff.result is Tri.UNEXPANDED,
+       f"指纹相符 {same.result} vs 指纹不符 {diff.result}")
+
+    # ── ⑥ baseline 里**没记指纹** ⇒ 同样跳过（旧格式文件不许让守卫无声失效）──
+    no_fp = {"基线": {"keyset|maintenance": {"漏项数": 0, "漏的对数": 0}}}
+    a = guard({"keyset|maintenance": leak(5)}, no_fp, fp)
+    ok("★ [B18] baseline 里没记语料指纹 ⇒ **跳过**（判不了 ≠ 没问题）",
+       a.result is Tri.UNEXPANDED, f"{a.result}：{a.detail}")
+    ok("★ [B18] 且这条的理由与「另一份语料」**分得开**（一个说换了料、一个说旧格式）",
+       "没记语料指纹" in a.detail, a.detail)
+
+    # ── ⑥′ **基线文件整个不见了**（`load_baseline()` 返回 `{}`）─────────────
+    #    `{}` 不是 `None` ⇒ 走的是「doc 里没有 `语料`」这条路。
+    #    旧代码在**这一条**上报的是绿（观测全 0 时）或红（有既存违规时），
+    #    两条都不说「基线不见了」—— 见 `outputs/_measure_b18_missing_baseline.py`。
+    a = guard({"keyset|maintenance": leak(0, 0)}, {}, fp)
+    ok("★ [B18] 基线文件不见了 ⇒ **跳过**（旧代码在观测全 0 时报的是**绿**）",
+       a.result is Tri.UNEXPANDED, f"{a.result}：{a.detail}")
+    a2 = guard({"keyset|maintenance": leak(16, 2)}, {}, fp)
+    ok("★ [B18] 基线文件不见了 + 有既存违规 ⇒ **跳过**（旧代码报的是红，"
+       "理由「新增覆盖不漏」是**假的**：没有任何东西变差）",
+       a2.result is Tri.UNEXPANDED, f"{a2.result}：{a2.detail}")
+    ok("★ [B18] 而且两种情形给的是**同一句**「判不了」—— 旧行为把它们分成了绿和红",
+       a.detail == a2.detail, f"{a.detail[:40]} ≠ {a2.detail[:40]}")
+
+    # ── ⑦ 0 < 观测 < baseline ⇒ 绿 + 报「可以收紧」─────────────────────────
+    a = guard({"keyset|maintenance": leak(3)}, base16, fp)
+    ok("★ [B18] 0 < 观测 < baseline ⇒ **绿**，且报「可以收紧」（不是静悄悄地绿）",
+       a.result is Tri.YES and "可收紧" in a.detail, f"{a.result}：{a.detail}")
+
+    # ── ⑧ `corpus` 是必填 —— 漏传当场炸 ───────────────────────────────────
+    raises("★ [B18] `corpus` 必填：漏传直接 TypeError（防御不许因少传参数而静默消失）",
+           lambda: b18_cover_leak_baseline({"keyset|maintenance": leak(5)},
+                                           Report(plugin="(自检)")))
+
+    # ── ⑨ 真语料上**确实在判**，且冻结的数 == 现算的数 ─────────────────────
+    #: 与 `run_checks.MAINT_INIT` 同口径（先建 6、维护其余）。
+    ids = sorted(nodes)
+    real: dict[str, dict] = {}
+    for which in ("keyset", "reach", "sequence"):
+        cover = coverage_of(which, nodes, edges)
+        mk = make_builder(which, nodes, edges)
+        batch = {"keyset": build_keyset(nodes),
+                 "reach": build_reach(nodes, edges),
+                 "sequence": build_sequence(nodes, edges)}[which][0]
+        inc = build_incremental(mk, nodes, ids[:6], ids[6:])
+        real[f"{which}|batch"] = cover_leak_profile(batch, cover)
+        real[f"{which}|maintenance"] = cover_leak_profile(inc, cover)
+
+    rep = Report(plugin="(自检)")
+    b18_cover_leak_baseline(real, rep, fp)
+    a = rep.assertions[-1]
+    ok("★ [B18] 真语料上这条守卫**确实在判**（不是一路「跳过」）",
+       a.result is not Tri.UNEXPANDED, f"跳过了：{a.detail}")
+    ok("★ [B18] 真语料上它是**绿** —— 基线就是在本语料上冻的",
+       a.result is Tri.YES, f"{a.result}：{a.detail}")
+
+    frozen = doc.get("基线", {})
+    mism = {k: (frozen.get(k, {}).get("漏项数"), v["漏项数"])
+            for k, v in real.items()
+            if frozen.get(k, {}).get("漏项数") != v["漏项数"]}
+    ok("★ [B18] 而且**冻结的数 == 现算的数**（基线没过期 —— 否则运行时会报「条目失效」红）",
+       not mism, f"对不上的：{mism}")
+    #: 反向也查一遍：**只在 `sequence|maintenance` 上非零** —— 若哪个方向悄悄开始漏，
+    #: 上面那条会红；若哪个方向的既存违规被修好了而基线没动，上面那条也会红。
+    nonzero = {k: v["漏项数"] for k, v in real.items() if v["漏项数"]}
+    ok("★ [B18] 非空条目只有 `sequence|maintenance` 一处（其余 5 条都是 0 漏）"
+       " —— 基线的形状与 §1 硬要求表的第四行对得上",
+       set(nonzero) == {"sequence|maintenance"},
+       f"非零条目：{nonzero}")
+
+
 def main() -> int:
     for fn in (test_tri, test_loader, test_kernel, test_selfopt, test_sequence,
                test_flows, test_emergence, test_divergence, test_equivalence,
-               test_rebuild, test_out_of_scope, test_stay_at_parent):
+               test_rebuild, test_out_of_scope, test_stay_at_parent,
+               test_cover_leak_baseline):
         fn()
     total = len(PASS) + len(FAIL)
     for f in FAIL:

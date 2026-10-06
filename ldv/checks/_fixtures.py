@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from ..core.kernel import Kernel, Query
-from ..corpus.loader import Node, load_edges, load_nodes
+from ..corpus.loader import CorpusError, Node, load_edges, load_nodes
 
 #: 语料目录的候选位置 —— **仓库内的那份排在最前**。
 #:
@@ -24,18 +24,40 @@ from ..corpus.loader import Node, load_edges, load_nodes
 #: 一个「语料不在」的仓库和一个「检查全过」的仓库，在汇总上长得不一样（跳过要显式报出），
 #: 但都很容易被读成「没问题」。所以：
 #:
-#:     `LDV_CORPUS` 环境变量 → `ldv/corpus/nodes/`（仓库内，首选）→ 仓库根下的 `corpus/nodes/`
+#:     `LDV_CORPUS` 环境变量（**路径或名字**）→ `ldv/corpus/nodes/`（仓库内，首选）
+#:                                            → 仓库根下的 `corpus/nodes/`
 #:
 #: 找不到就**报跳过**，绝不报通过（`run_checks` 与 `run_tests` 都这样；
 #: `.github/workflows/ci.yml` 另有一条判据专门守「语料真的来自仓库内」）。
+#:
+#: ⚠️ **但「显式指定却找不到」是另一回事** —— 那是报错，不是跳过。见 `find_corpus`。
 _HERE = Path(__file__).resolve().parent          # …/ldv/checks
 
 
+def external_corpus_candidates(name: str) -> tuple[Path, ...]:
+    """按**名字**找外部语料：`_data/<名字>/nodes`（仓库旁，再上一级）。
+
+    外部数据**不进仓库**（怎么取、丢了什么，见 `ldv/tools/intake_openalex.py`
+    的映射表与 DROP 表）。所以 `LDV_CORPUS=openalex-citations` 这种**名字**写法
+    必须能被解析 —— 否则「把料接进来跑一遍」只能靠绝对路径，而绝对路径
+    正是上面那条警告要消灭的东西。
+    """
+    root = _HERE.parent.parent                   # <仓库根>
+    return (root / "_data" / name / "nodes",
+            root.parent / "_data" / name / "nodes")   # 仓库旁 → 上一级
+
+
 def corpus_candidates() -> tuple[Path, ...]:
+    """**完整候选链**（从具体到兜底）—— 给报错信息与测试看的。
+
+    ⚠️ `find_corpus` **不**直接拿它当查找池：显式指定时只认前两项。
+    写成一条链会让「显式指定但找不到」**悄悄走到兜底**上，而那条路是错的。
+    """
     env = os.environ.get("LDV_CORPUS")
     out: list[Path] = []
     if env:
         out.append(Path(env))
+        out.extend(external_corpus_candidates(env))   # ★ 也允许只给**名字**
     out.append(_HERE.parent / "corpus" / "nodes")            # ldv/corpus/nodes
     out.append(_HERE.parent.parent / "corpus" / "nodes")     # <仓库根>/corpus/nodes
     return tuple(out)
@@ -45,9 +67,29 @@ SEED = 20261005
 
 
 def find_corpus() -> Path | None:
-    for cand in corpus_candidates():
+    """找语料目录。**显式指定却找不到 ⇒ 报错，不回落到默认语料。**
+
+    ⚠️ 这一条不是洁癖：回落的后果是「语料**指错了**」与「语料**指对了**」
+    **长得一模一样** —— `LDV_CORPUS=openalex-citation`（少个 s）跑的是仓库里那 36 项，
+    而所有检查照样报绿、退出码 0。**空转与通过长得一模一样**，
+    这一次出现在**指路**上。
+
+    ⇒ 两条路**互斥**：设了 `LDV_CORPUS` 就只在显式候选里找，找不到报错；
+       没设才走兜底链，兜底链全落空才报「跳过」。
+    """
+    env = os.environ.get("LDV_CORPUS")
+    pool = ((Path(env),) + external_corpus_candidates(env)) if env else (
+        _HERE.parent / "corpus" / "nodes",
+        _HERE.parent.parent / "corpus" / "nodes",
+    )
+    for cand in pool:
         if cand.is_dir() and any(cand.glob("*.md")):
             return cand
+    if env:
+        raise CorpusError(
+            f"LDV_CORPUS={env!r} 找不到语料 —— 试过：{[str(c) for c in pool]}。"
+            " 显式指定的语料找不到时**不回落到默认语料**"
+            "（回落会让「指错了」和「指对了」长得一模一样）。")
     return None
 
 

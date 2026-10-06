@@ -2,3 +2,8 @@ __pycache__/
 *.py[cod]
 .venv/
 venv/
+
+# 外部语料**不进仓库** —— 取法与丢弃明细见 `ldv/tools/intake_openalex.py` 与 README。
+# 放在这里靠的是「一处解析器按优先级找」：`LDV_CORPUS`（路径或名字）→
+# `_data/<名字>/nodes` → `ldv/corpus/nodes`（随仓库提交的那份）。
+_data/

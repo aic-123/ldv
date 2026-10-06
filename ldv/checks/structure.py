@@ -17,6 +17,10 @@
 **这个「逐步 + 前后比对」的形状是可以搬的**：
 凡是「局部性」类的断言（改一点不许动全局），都得这么查；
 只查终态等于什么都没查（dce 的 `checks/mvp.py` 那边吃过这个亏）。
+
+⚠️ **但「逐步」不等于「每步都从头重建」** —— 那在语料尺度上是平方的。
+   一个内核走到底、快照逐次前移，逐步同态而插入次数从 `n²/2` 降到 `n`。
+   实测对照写在 `b8_invalidation_local` 的 docstring 里。
 """
 
 from __future__ import annotations
@@ -57,31 +61,49 @@ def b7_witness_complete(kernel: Any, rep: Report) -> None:
 def b8_invalidation_local(make_kernel: Any, item_ids: list[str], rep: Report) -> None:
     """**逐项插入**，每次都查「变动 ⊆ 插入路径」。
 
-    `make_kernel()` 每次返回一个**全新的、只建了根的内核** —— 这样
-    第 k 次插入时的历史是确定的，红了也可复现。
+    ## ★ 一个内核走到底 —— 不是「省事」，是原来那版**在语料尺度上是平方的**
+
+    原来每检查第 k 项就 `make_kernel()` 重建、把前 k−1 项**重插一遍**：
+    总插入次数 `n(n−1)/2`。36 项的随仓库语料上看不出来（0.05 s），
+    换一份真语料就是灾难：
+
+        语料               n     现写
+        openalex-small    281   21 分钟没跑完（被杀）
+        openalex          3907   61 分钟没跑完（被杀）
+
+    一个内核逐项插入，总插入次数是 `n`。**这不改变判据的内容**：
+    `make_kernel()` 只建根，之后全是 `insert`，中间没有任何别的写操作
+    ⇒ 「第 k 次插入之前的状态」**只由插入序列决定**，
+    增量走到底与每次重建**逐步同态**。
+
+    这一点是**实测**出来的，不是推的 —— 两个实现各自吐出「每一步的 `changed` 集合」
+    的 trace，逐字比对（`outputs/_measure_b8.py`，**12/12 逐字相同**）：
+
+        语料/方向                          现写       增量      逐步 trace
+        b160 keyset                       0.62 s    0.01 s   相同
+        b160 reach                        6.36 s    0.08 s   相同
+        b160 sequence                    17.38 s    0.25 s   相同
+        b160 keyset · 注入 `_LeakyKernel`  0.78 s    0.01 s   相同（都是 159 处越界）
+
+    ⇒ 换增量**不动判据**，只把插入次数从 `n²/2` 降到 `n`。
     """
     bad: list[str] = []
     checked = 0
-    for upto in range(1, len(item_ids) + 1):
-        kernel = make_kernel()
-        before_dirs: set[str] = set()
-        before_mem: dict[str, frozenset[str]] = {}
-        for nid in item_ids[: upto - 1]:
-            kernel.insert(nid)
-        before_dirs = {d.did for d in kernel.all_directions()}
-        before_mem = {d.did: kernel.members_of(d) for d in kernel.all_directions()}
+    kernel = make_kernel()
+    #: 上一步的归属快照。**只留一份** —— 全留会在 3907 项上吃掉几个 G
+    #: （reach 有 7813 个方向，每份快照 7813 个 frozenset）。
+    before_mem = {d.did: kernel.members_of(d) for d in kernel.all_directions()}
 
-        target = item_ids[upto - 1]
+    for target in item_ids:
         path = kernel.insert(target)
         path_set = set(path)
 
-        after_dirs = {d.did for d in kernel.all_directions()}
-        changed: set[str] = set()
-        for d in kernel.all_directions():
-            if d.did not in before_dirs:
-                changed.add(d.did)
-            elif kernel.members_of(d) != before_mem.get(d.did):
-                changed.add(d.did)
+        # `all_directions()` 排过序，**一次就够** —— 原来调了三次（`after_dirs`、
+        # 再遍历一遍取 `members_of`）。reach 在 3907 项上有 7813 个方向，
+        # 每一次排序都不便宜。
+        after_mem = {d.did: kernel.members_of(d) for d in kernel.all_directions()}
+        # 新方向在 `before_mem` 里查不到 ⇒ `get` 给 `None` ⇒ 与 frozenset 必不相等 ⇒ 计为变动。
+        changed = {did for did, mem in after_mem.items() if before_mem.get(did) != mem}
 
         checked += 1
         for did in sorted(changed):
@@ -90,6 +112,8 @@ def b8_invalidation_local(make_kernel: Any, item_ids: list[str], rep: Report) ->
             if did in path_set or (d.parent is not None and d.parent in path_set):
                 continue
             bad.append(f"插 {target} 动到了路径外的 {did}（path={path[:3]}…）")
+        before_mem = after_mem
+
     if checked == 0:
         rep.add("B8", "失效局部", Tri.UNEXPANDED, "没有项可插")
         return

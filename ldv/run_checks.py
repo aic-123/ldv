@@ -6,9 +6,39 @@
     python -m ldv.run_checks sequence       # 只跑方向 C（序列前缀）
 
     python -m ldv.run_checks --write-cover-leak-baseline    # 重新冻结覆盖不漏的基线
+    python -m ldv.run_checks --no-probes                    # 不跑贵的**探针**（判据一条不少）
+    python -m ldv.run_checks --cap 400                      # 只跑前 400 项（**会把缩了印出来**）
 
 退出码：**只看「红」的条数**。度量（方向数 / 事件数 / 假阳率 / 使用记录数）走输出，
 不进退出码 —— 继承 dce：`report()` 承载度量，退出码只承载「有没有违规」。
+
+---
+## 先分清「判据」与「探针」—— 这决定了该关哪一个
+
+    判据（进退出码）   B1–B19。贵的只有 `B15`（3 次整建）与 `B8`（n 次插入）
+    探针（只报不判）   十个度量。贵的是 `规范重建`（O(n) 次重建 × 每次 O(n)）
+
+⇒ **关探针是安全的**：它们**不进退出码**，关掉它们**不可能把红变成绿**。
+   实测（281 项语料，`outputs/_profile_runone.py`）：
+
+    方向       整趟      其中 `规范重建`   关掉探针后
+    ──────────────────────────────────────────────────
+    keyset     27.4 s      26.96 s           ~0.4 s
+    reach     450.8 s     446.54 s           ~4.3 s
+    sequence  ~300 s       ~300 s             ~2 s
+
+⇒ 所以 `--no-probes`：**判据一条不少地全跑，只把贵的探针关掉**，并**印出来**。
+   这是「**缩小范围**」与「**全过**」必须分得开的那条纪律在开关上的落地 ——
+   关掉的东西**出现在报告里**，不出现在退出码里。
+
+## `--cap` 是另一回事
+
+`--cap N` 把**整个语料**截到前 N 项 —— 它连**判据**一起截。
+所以它**会挡住结论**：实测 `openalex-citations` 的环**全部落在第 400 项之后**
+（前 400 项 SCC ≥2 的组 = **0**），所以 `--cap 160` 上看不到 `B17` 那条红。
+⇒ 要判据有效就别用 `--cap`；要快就用 `--no-probes`。
+
+⚠️ 默认 **0 = 不缩** —— 随仓库那 36 项语料的行为一个字节都不变。
 """
 
 from __future__ import annotations
@@ -35,6 +65,7 @@ from .checks.coverage import (
     b16_members_covered,
     b18_cover_leak_baseline,
     b19_progress_guard,
+    corpus_fingerprint,
     cover_leak_profile,
     progress_profile,
     render_cover_leak,
@@ -105,7 +136,7 @@ def leak_obs(which: str, batch_kernel, inc_kernel, cover) -> dict:
     }
 
 
-def run_one(which: str, loaded) -> Report:
+def run_one(which: str, loaded, probes: bool = True) -> Report:
     nodes, edges, dangling = loaded
     cover = coverage_of(which, nodes, edges)
     kernel, plugin, queries, make = batch_kernel(which, nodes, edges)
@@ -150,7 +181,8 @@ def run_one(which: str, loaded) -> Report:
                               soundness_profile(inc, cover), which))
     leak_b, leak_i = cover_leak_profile(kernel, cover), cover_leak_profile(inc, cover)
     rep.note(render_cover_leak(leak_b, leak_i, which))
-    b18_cover_leak_baseline(leak_obs(which, kernel, inc, cover), rep)
+    b18_cover_leak_baseline(leak_obs(which, kernel, inc, cover), rep,
+                            corpus=corpus_fingerprint(nodes, edges))
 
     # B19 —— 进步量守卫。**跨次数**的性质：反复声称能分、却连续 N 次没让覆盖变细。
     # 与 `§K2 判空`（单次性质）不是一回事，不能合并。
@@ -203,8 +235,15 @@ def run_one(which: str, loaded) -> Report:
     # 「增量 ≡ 全量」—— 第 4 个度量（`C8` §7 第 1 步）。
     # ⚠️ **只报不判**：实测它**不成立**，进退出码会让套件常红、红成噪声。
     #    它是 `C8` §7 第 2 / 3 步的决策依据：哪几个 k 同构、哪几个不同构。
-    prof = divergence_profile(make_builder(which, nodes, edges), nodes, sorted(nodes))
-    rep.note(render_divergence(prof, which))
+    #
+    # ★ 探针可以关（`--no-probes`）。**关掉是安全的**：度量不进退出码，
+    #   所以关掉它**不可能把红变成绿** —— 只会让报告少一行读数。
+    #   但**必须印出来**：「没跑」与「跑了但没话说」不能长得一样。
+    if probes:
+        prof = divergence_profile(make_builder(which, nodes, edges), nodes, sorted(nodes))
+        rep.note(render_divergence(prof, which))
+    else:
+        rep.note("增量 ≡ 全量（度量）：**本趟未跑**（`--no-probes`）—— 它是探针，不进退出码")
 
     # `C8` §7 第 2 步的读数：判空点上**有没有**可搬的区分信息。
     # 实测三个方向都是 0 —— 这不是「还没做」，是**没有东西可搬**（见 equivalence.py）。
@@ -213,12 +252,50 @@ def run_one(which: str, loaded) -> Report:
     # `C8` §7 第 3 步的读数：规范重建**值不值得做**。
     # 结论：同构买得到，但代价是 §K3（接口级不变量）—— 所以**不做**。
     # 与上一条一样：**只报不判**（`B8` 才是那条判据）。
-    rep.note(render_rebuild(rebuild_profile(which, nodes, edges), which))
+    # ⚠️ 这是**最贵的一条**（O(n) 次重建 × 每次 O(n)）：281 项上 reach 要 446 s，
+    #    3907 项上是**小时级**。所以它是 `--no-probes` 关掉的第一条。
+    if probes:
+        rep.note(render_rebuild(rebuild_profile(which, nodes, edges), which))
+    else:
+        rep.note("规范重建（度量）：**本趟未跑**（`--no-probes`）—— 它是探针，不进退出码")
     return rep
 
 
+def cap_corpus(loaded, cap: int):
+    """把语料**截到前 `cap` 项**（按 id 升序）—— 见模块开头 `--cap`。
+
+    返回 `(新语料, 被截掉的项数)`。`cap <= 0` 或本来就不够大 ⇒ 原样返回。
+    边跟着节点一起收：留下的项之间的边才留。
+    """
+    nodes, edges, dangling = loaded
+    if cap <= 0 or len(nodes) <= cap:
+        return loaded, 0
+    keep = set(sorted(nodes)[:cap])
+    cut = len(nodes) - len(keep)
+    new_nodes = {i: n for i, n in nodes.items() if i in keep}
+    new_edges = {i: frozenset(d for d in v if d in keep)
+                 for i, v in edges.items() if i in keep}
+    return (new_nodes, new_edges, dangling), cut
+
+
 def main(argv: list[str]) -> int:
-    which = [a for a in argv[1:] if not a.startswith("-")]
+    # ⚠️ `--cap 400` 里的 `400` **不是**方向名 —— 所以先摘掉带值的选项再取位置参数。
+    cap = 0
+    probes = True
+    args: list[str] = []
+    i = 1
+    while i < len(argv):
+        if argv[i] == "--cap":
+            cap = int(argv[i + 1])
+            i += 2
+            continue
+        if argv[i] == "--no-probes":
+            probes = False
+            i += 1
+            continue
+        args.append(argv[i])
+        i += 1
+    which = [a for a in args if not a.startswith("-")]
     targets = which or ["keyset", "reach", "sequence"]
 
     loaded = load()
@@ -227,7 +304,24 @@ def main(argv: list[str]) -> int:
         print("  设 LDV_CORPUS 或把语料放到 ldv/corpus/nodes/")
         return 0
 
-    if "--write-cover-leak-baseline" in argv:
+    loaded, cut = cap_corpus(loaded, cap)
+    if cut:
+        print(f"⚠ `--cap {cap}`：语料 **{cut + cap} 项 ⇒ 本趟只用前 {cap} 项**，"
+              f"其余 {cut} 项**本趟什么也没说**。")
+        print("   ⚠️ `--cap` **连判据一起截** —— 它会挡住结论。实测 `openalex-citations`")
+        print("      的环全在第 400 项之后 ⇒ 前 400 项上看不到 `B17` 那条红。")
+        print("      要判据有效就别用 `--cap`；要快用 `--no-probes`。")
+        print()
+
+    if not probes:
+        print("⚠ `--no-probes`：**贵的那几条探针本趟未跑**（`增量≡全量` / `规范重建`）。")
+        print("   为什么关：`规范重建` 是 O(n) 次重建 × 每次 O(n)，281 项上 reach 要 446 s，")
+        print("   3907 项上是小时级 —— 而它**只报不判**，不进退出码。")
+        print("   ⇒ **关它不可能把红变成绿**：判据（B1–B19）一条不少地全跑。")
+        print("   报告里会写明哪几行未跑 —— 「没跑」与「跑了但没话说」不共用一行。")
+        print()
+
+    if "--write-cover-leak-baseline" in args:
         nodes, edges, _ = loaded
         entries: dict[str, dict] = {}
         for w in targets:
@@ -236,15 +330,16 @@ def main(argv: list[str]) -> int:
                                     maintenance_kernel(w, nodes, edges), cover))
         entries = {k: {"漏项数": v["漏项数"], "漏的对数": v["漏的对数"]}
                    for k, v in sorted(entries.items())}
-        write_baseline(entries)
+        write_baseline(entries, corpus=corpus_fingerprint(nodes, edges))
         print("已冻结覆盖不漏基线：")
+        print(f"  语料指纹 {corpus_fingerprint(nodes, edges)}")
         for k, v in entries.items():
             print(f"  {k:24s} {v['漏项数']} 漏 / {v['漏的对数']} 对")
         return 0
 
     reps: list[Report] = []
     for w in targets:
-        rep = run_one(w, loaded)
+        rep = run_one(w, loaded, probes=probes)
         reps.append(rep)
         print(rep.render())
         print()

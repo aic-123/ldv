@@ -87,6 +87,7 @@ from ldv.checks.coverage import (  # noqa: E402
     b16_members_covered,
     b18_cover_leak_baseline,
     b19_progress_guard,
+    corpus_fingerprint,
     cover_leak_profile,
     progress_profile,
     soundness_profile,
@@ -607,8 +608,14 @@ def inj_b18(nodes, edges, injected: bool) -> Report:
     cover = coverage_of("sequence", nodes, edges)
     obs = {f"sequence|batch": cover_leak_profile(k, cover)}
     # baseline 取**当前**文件 —— 批建路径三个方向都是 0 漏，所以任何一处漏都是「新增」。
+    # ⚠️ 指纹必须一起给：`B18` 的第 0 条会先比语料指纹，对不上就**跳过**。
+    #    注入验证要验的是**判据**，不是「跳过」—— 所以这里必须造出**真跑时会出现的**
+    #    那种配置（基线冻在本语料上），否则验的是一个生产里不存在的形态。
+    fp = corpus_fingerprint(nodes, edges)
     rep = _rep()
-    b18_cover_leak_baseline(obs, rep, {"基线": {"sequence|batch": {"漏项数": 0, "漏的对数": 0}}})
+    b18_cover_leak_baseline(obs, rep, fp,
+                            {"语料": fp,
+                             "基线": {"sequence|batch": {"漏项数": 0, "漏的对数": 0}}})
     return rep
 
 
