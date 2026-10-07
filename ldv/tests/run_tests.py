@@ -20,11 +20,19 @@ from ldv.checks._fixtures import (  # noqa: E402
     build_reach,
     build_sequence,
     corpus_candidates,
+    coverage_of,
     find_corpus,
+    items,
     load,
+    sequences,
+)
+from ldv.checks.coverage import (  # noqa: E402
+    cover_leak_profile,
+    soundness_profile,
 )
 from ldv.core import selfopt  # noqa: E402
 from ldv.core.direction import (  # noqa: E402
+    EVENT_INVALIDATED,
     EVENT_STAYED,
     EVENT_UNSPLITTABLE,
     ORIGIN_EXOGENOUS,
@@ -509,6 +517,55 @@ def test_flows() -> None:
        a_none_shown.空转 and not a_none_shown.records,
        f"展示 {len(a_none_shown.shown)} 个")
     ok("A：有候选时不是空转", not a.空转)
+
+    # ── 流程 B′ · 删除（§10.2 C）─────────────────────────────────────────────
+    # ⚠️ 要**真删到结构里**：挑的是已经进过结构的项，不是「删空气」。
+    from ldv.flow import remove_items
+
+    kr, _ = build_keyset(nodes)
+    cover_k = coverage_of("keyset", nodes, loaded[1])
+    victim = sorted(kr.items)[-6:]
+    before_dirs = kr.stats()["方向"]
+    rp = remove_items(kr, victim, cover=cover_k)
+
+    ok("B′：每项都出了一份报告（没漏、没多）", len(rp) == len(victim))
+    ok("B′：M1 支撑锥从根起", all(x.cone and x.cone[0] == kr.root.did for x in rp))
+    ok("B′：D4/M3 —— 变动 ⊆ Cone(x)，锥外 0 处",
+       not any(x.out_of_cone for x in rp),
+       f"越界：{[x.out_of_cone for x in rp if x.out_of_cone][:1]}")
+    ok("B′：**方向数一个都没少**（§M2 情形③「标记，不删」）",
+       kr.stats()["方向"] == before_dirs)
+    ok("B′：D6 —— 没有方向被真删（`_dirs` 里一个都没少）",
+       not any(x.gone_directions for x in rp))
+    ok("B′：D5 —— 账本只增不改", not any(x.ledger_rewritten for x in rp)
+       and kr.ledger.verify_append_only() == [])
+    ok("B′：D1 —— 支持集空了的方向都有失效账目",
+       not any(x.unrecorded_empty for x in rp))
+    ok("B′：D2/D3 —— **量过了**，且都是 0（不是「未展开」）",
+       all(x.cover_leak == 0 and x.outside_members == 0 for x in rp),
+       f"读数 {[(x.cover_leak, x.outside_members) for x in rp]}")
+    # ★ 非退化：**真的有方向变空** —— 否则 D1/D6 查的是空气。
+    ok("B′：非退化 —— 这一趟**真的有方向支持集空了**（否则 D1/D6 是空转）",
+       any(x.emptied for x in rp),
+       f"变空 {[x.emptied for x in rp if x.emptied][:3]}")
+    ok("B′：空方向数 == 已失效方向数 > 0（结构事实与账本事实一致）",
+       kr.stats()["空方向"] == kr.stats()["已失效方向"] > 0, str(kr.stats()))
+    ok("B′：被删的项真的不在 `items` 里了", all(v not in kr.items for v in victim))
+    ok("B′：被删的项真的不在路径方向的成员里了",
+       all(x.item not in kr.members_of(kr.direction(did))
+           for x in rp for did in x.cone))
+    # 不传 cover ⇒ D2/D3 是「未展开」，**不是 0** —— 两者不能长得一样
+    kr2, _ = build_keyset(nodes)
+    rp2 = remove_items(kr2, sorted(kr2.items)[-3:])
+    ok("B′：不传覆盖 oracle ⇒ D2/D3 是 `None`（未展开），**不是 0**",
+       all(x.cover_leak is None and x.outside_members is None for x in rp2)
+       and all("未展开" in x.render() for x in rp2))
+    try:
+        kr2.remove("__不存在__")
+        _raised = False
+    except KeyError:
+        _raised = True
+    ok("B′：删一个不存在的项 ⇒ 抛 KeyError，不静默当没事", _raised)
 
 
 # ═══ 涌现：叶不是终态（§M2 情形④） ══════════════════════════════════════════
@@ -2659,6 +2716,321 @@ def _ref_signature(edges: dict[str, frozenset[str]], item_id: str) -> frozenset[
     return frozenset(found) or frozenset({item_id})
 
 
+# ═══ 删除路径（§10.2 C） ═════════════════════════════════════════════════════
+#
+# 设计文档 §10.2 C 要六条检查 `D1–D6`，**都跑在删除路径上**。它们**不是** `B` 编号
+# （§10.2 D 的持久化判据才用 `P` 编号），所以不进 `run_checks`，落在这里。
+#
+# ⚠️ 六条写在文档里**不等于六条都能红**。所以每条配一个**已知答案的对照组**
+#    （一个错一处的变异内核），并**逐条**印出「基线绿 / 注入红」。
+#    任何一条注入后不红，它就是空转 —— 而空转与通过长得一模一样。
+
+def _del_build(cls, which, nodes, edges):
+    """用给定的内核类（`Kernel` 或其变异子类）走一遍**与生产相同的批建**。"""
+    from ldv.plugins.reach import ReachPlugin
+    from ldv.plugins.sequence import SequencePlugin
+
+    if which == "keyset":
+        plug = KeysetPlugin()
+        root = plug.merge([])
+    elif which == "reach":
+        plug = ReachPlugin(edges, traverse_budget=10_000)
+        root = frozenset(nodes)
+    elif which == "sequence":
+        plug = SequencePlugin(sequences(nodes, edges))
+        root = frozenset({()})
+    else:
+        raise ValueError(which)
+    k = cls(plug, items(nodes))
+    k.build(root)
+    for nid in sorted(nodes):
+        k.insert(nid)
+    return k
+
+
+def _d1_empty_needs_record(kernel) -> list[str]:
+    """`D1` 空方向必须带失效记录 —— `members(d) == ∅ ⇒ 必须有一条「已失效」账目`。
+
+    这是 `remove()` 第 ② 件（记账）的守卫。**不记账与记了账在结构上长得一样**
+    —— 都只是「成员集空了」，所以必须单独查账本。
+    """
+    bad = []
+    for d in kernel.all_directions():
+        if kernel.members_of(d):
+            continue
+        has = any(e.kind == EVENT_INVALIDATED and e.detail.get("members_after") == 0
+                  for e in kernel.ledger.events_for(d.did))
+        if not has:
+            bad.append(d.did)
+    return bad
+
+
+def _d2_cover_leak(kernel, cover) -> int:
+    """`D2` 删除后 `覆盖(父) ⊆ ∪覆盖(子)` 仍成立 —— `B18` 的删除路径版本。"""
+    return cover_leak_profile(kernel, cover)["漏项数"]
+
+
+def _d3_soundness(kernel, cover) -> int:
+    """`D3` 删除后 `members(父) ⊆ 覆盖(父)` 仍成立 —— `B16` 的删除路径版本。"""
+    return soundness_profile(kernel, cover)["越界成员数"]
+
+
+def _d4_change_within_cone(mem_before: dict, kernel, path: tuple) -> list[str]:
+    """`D4` 变动集合 ⊆ `Cone(x)` —— `B8` 的删除路径版本。"""
+    out = []
+    for did, mem in mem_before.items():
+        if set(kernel._members.get(did, ())) != mem and did not in path:
+            out.append(did)
+    return out
+
+
+def _ledger_lines(ledger) -> list[tuple]:
+    """账本的**外部**指纹 —— 不用 `Ledger._digest`（那玩意儿只由 `append` 维护，
+    就地改 `detail` 它看不见；而 `detail` 是**可变字典**，`Event` 冻结拦不住它）。"""
+    return [(e.seq, e.kind, e.did,
+             tuple(sorted((k, repr(v)) for k, v in e.detail.items())))
+            for e in ledger]
+
+
+def _d5_append_only(lines_before: list[tuple], kernel) -> list[str]:
+    """`D5` 账本只增不改 —— `B9` 的删除路径版本。"""
+    now = _ledger_lines(kernel.ledger)
+    bad = []
+    if len(now) < len(lines_before):
+        bad.append(f"账本变短：{len(lines_before)} → {len(now)}")
+    for i, fp in enumerate(lines_before):
+        if i >= len(now) or now[i] != fp:
+            bad.append(f"第 {i} 条被改写")
+    return bad
+
+
+def _d6_states_separable(kernel, before_dirs, nonexistent: str = "D9999") -> list[str]:
+    """`D6` 「已失效」与「从来没存在过」分得开 —— `§K4`。
+
+    分得开靠**两样都在**：方向仍在 `_dirs` 里查得到 + 账本里有记录。
+    两样缺一，一个「支持集空了的旧方向」与一个「从没建过的编号」就**分不开**了
+    —— 而 `§M2 情形③` 的原话正是「这两个必须分得开」。
+    """
+    bad = []
+    now = {d.did for d in kernel.all_directions()}
+    for did in sorted(before_dirs - now):
+        bad.append(f"{did} 删前在 `_dirs` 里、删后不见了（真删了方向）")
+    for d in kernel.all_directions():
+        if not kernel.members_of(d) and kernel.ledger.status_of(d.did) == "不存在":
+            bad.append(f"{d.did} 空了却报「不存在」")
+    if kernel.ledger.status_of(nonexistent) != "不存在":
+        bad.append(f"{nonexistent} 从未存在却报 {kernel.ledger.status_of(nonexistent)!r}")
+    return bad
+
+
+# --- 六个对照内核 —— 各错一处 -----------------------------------------------
+
+class _NoLedger(Kernel):
+    """`D1` 对照：去成员，但**不记失效**。"""
+
+    def remove(self, item_id: str) -> tuple[str, ...]:
+        if item_id not in self.items:
+            raise KeyError(item_id)
+        path = tuple(self._path.get(item_id, ()))
+        del self.items[item_id]
+        for did in path:
+            self._members.get(did, set()).discard(item_id)
+        self._path.pop(item_id, None)
+        return path
+
+
+class _DropChild(Kernel):
+    """`D2` 对照：把路径上最深的方向从**父的 `_children`** 里摘掉（拆父子边）。"""
+
+    def remove(self, item_id: str) -> tuple[str, ...]:
+        path = super().remove(item_id)
+        for did in reversed(path):
+            par = self._dirs[did].parent
+            if par is not None:
+                self._children[par] = tuple(
+                    c for c in self._children.get(par, ()) if c != did)
+                break
+        return path
+
+
+class _GhostMember(Kernel):
+    """`D3` 对照：往某个方向的成员里塞一个**语料之外**的项。"""
+
+    def __init__(self, plugin, items):
+        super().__init__(plugin, items)
+        self._done = False
+
+    def remove(self, item_id: str) -> tuple[str, ...]:
+        path = super().remove(item_id)
+        if path and not self._done:
+            self._members.setdefault(path[-1], set()).add("__幽灵项__")
+            self._done = True
+        return path
+
+
+class _OffPath(Kernel):
+    """`D4` 对照：动一个**不在 `Cone(x)` 上**的方向。
+
+    ⚠️ 选**去掉一个成员**，不选加一个：实测 `keyset` / `sequence` 上
+       `覆盖(d) == members(d)`（payload 是精确的）⇒ 加任何项都会顺手把 `D3`
+       （`members ⊆ 覆盖`）弄红，对照就不「精确命中」了。去掉成员则**只缩**
+       `members`，`⊆ 覆盖` 仍成立 ⇒ 只有 `D4` 红。留一个成员，免得顺手弄空 ⇒ 惊动 `D1`。
+    """
+
+    def __init__(self, plugin, items):
+        super().__init__(plugin, items)
+        self._done = False
+
+    def remove(self, item_id: str) -> tuple[str, ...]:
+        path = super().remove(item_id)
+        if self._done:
+            return path
+        for d in self.all_directions():
+            if d.did in path:
+                continue
+            mem = self._members.get(d.did, set())
+            if len(mem) >= 2:
+                mem.discard(sorted(mem)[0])
+                self._done = True
+                break
+        return path
+
+
+class _Tamper(Kernel):
+    """`D5` 对照：就地改一条**既有**账目的 `detail`（`Event` 冻结，`detail` 没冻）。"""
+
+    def __init__(self, plugin, items):
+        super().__init__(plugin, items)
+        self._done = False
+
+    def remove(self, item_id: str) -> tuple[str, ...]:
+        path = super().remove(item_id)
+        if not self._done and len(self.ledger._events) > 0:
+            self.ledger._events[0].detail["__篡改__"] = True
+            self._done = True
+        return path
+
+
+class _DeleteDir(Kernel):
+    """`D6` 对照：把空方向从 `_dirs` 里**摘掉**（真删方向），账本原样保留。
+
+    ⚠️ 它**同时**会破 `D2` —— 被删的方向若曾覆盖东西，它的覆盖就没了。
+       这是**真事实**（两条裁决耦合），不是对照没做干净：设计文档 §10.2 C
+       明写「三条处置**互相关联**」。所以这一格是**唯一**一个「带红」的对照，
+       测试里**显式记下**这件事，而不是把它当噪声盖掉。
+    """
+
+    def __init__(self, plugin, items):
+        super().__init__(plugin, items)
+        self._cover = None
+
+    def remove(self, item_id: str) -> tuple[str, ...]:
+        path = super().remove(item_id)
+        empty = [did for did in reversed(path)
+                 if did in self._dirs and not self._members.get(did)]
+        if not empty:
+            return path
+        if self._cover is not None:            # 挑覆盖最小的删 —— 尽量少破 D2
+            empty.sort(key=lambda did: len(self._cover(self._dirs[did].payload)))
+        did = empty[0]
+        par = self._dirs[did].parent
+        if par is not None:
+            self._children[par] = tuple(
+                c for c in self._children.get(par, ()) if c != did)
+        self._dirs.pop(did, None)
+        return path
+
+
+_DEL_MUTANTS: dict[str, type] = {
+    "D1": _NoLedger, "D2": _DropChild, "D3": _GhostMember,
+    "D4": _OffPath, "D5": _Tamper, "D6": _DeleteDir,
+}
+
+
+def _del_arm(cls, which, nodes, edges, cover, frac: int = 3) -> dict:
+    """建内核 ⇒ 删最后 `1/frac` 的项 ⇒ 返回六条检查的读数。
+
+    ⚠️ 逐项删、每步都查 —— 取「**任意一步触发的最大违规**」。
+       一条检查要能红，一次就够；取最大是为了让「擦肩而过」也算数。
+    """
+    kernel = _del_build(cls, which, nodes, edges)
+    if hasattr(kernel, "_cover"):
+        kernel._cover = cover
+    before_dirs = {d.did for d in kernel.all_directions()}
+    mem_before = {did: set(m) for did, m in kernel._members.items()}
+    lines_before = _ledger_lines(kernel.ledger)
+
+    out = {"D1": 0, "D2": 0, "D3": 0, "D4": 0, "D5": 0, "D6": 0}
+    for v in sorted(nodes)[len(nodes) * (frac - 1) // frac:]:
+        path = kernel.remove(v)
+        out["D1"] += len(_d1_empty_needs_record(kernel))
+        out["D2"] = max(out["D2"], _d2_cover_leak(kernel, cover))
+        out["D3"] = max(out["D3"], _d3_soundness(kernel, cover))
+        out["D4"] += len(_d4_change_within_cone(mem_before, kernel, path))
+        out["D5"] += len(_d5_append_only(lines_before, kernel))
+        out["D6"] += len(_d6_states_separable(kernel, before_dirs))
+        # 每步之后刷新快照：下一条的「变动」是相对**上一步**
+        mem_before = {did: set(m) for did, m in kernel._members.items()}
+        lines_before = _ledger_lines(kernel.ledger)
+    return out
+
+
+def test_deletion_path() -> None:
+    """★ `§10.2 C` 删除流程的六条检查 `D1–D6` —— 每条都要能红。
+
+    ## 为什么是六条、为什么每条都要配对照
+
+    设计文档 §10.2 C 把六条写在**同一条流程**上，而它们各自守的是不同的东西：
+
+        D1  空方向必须带失效记录        守卫 `remove()` 的第 ② 件（记账）
+        D2  删除后 `覆盖(父) ⊆ ∪覆盖(子)` `B18` 的删除路径版本
+        D3  删除后 `members(父) ⊆ 覆盖(父)` `B16` 的删除路径版本
+        D4  变动集合 ⊆ `Cone(x)`         `B8` 的删除路径版本
+        D5  账本只增不改                 `B9` 的删除路径版本
+        D6  「已失效」与「从来没存在过」分得开  `§K4`
+
+    ⚠️ **`D2` / `D3` 在真 `Kernel` 上按构造恒绿** —— 删除既不碰 `payload`
+       （`§K4` 不可变）也不碰语料，`覆盖` 两边都不动。所以它们不是「会开火的判据」，
+       是**守卫**：谁把 `remove()` 改成会动覆盖（比如采纳 `③ 向上收缩父 payload`），
+       它们就开火。读数见 `ldv/MEASUREMENTS.md` 结果十一。
+
+    ⚠️ **`D6` 的对照会带红 `D2`** —— 真删方向时，被删方向若曾覆盖东西，
+       父的覆盖就漏了。这是**真事实**（两条裁决耦合，见 §10.2 C「三条处置互相关联」），
+       测试显式记录它，不当噪声盖掉。
+
+    ## 读数（随仓库 36 项语料，删最后 1/3）
+
+        方向      基线   D1对照  D2对照  D3对照  D4对照  D5对照  D6对照
+        keyset    全 0    31      13       1       1       1     22（另带 D2=3）
+        reach     全 0   104       9       1       1       1     78（另带 D2=9）
+        sequence  全 0     1      25       1       1       1      1（另带 D2=1）
+    """
+    loaded = load()
+    if loaded is None:
+        ok("★ [删除路径] 语料在（这条测试要真语料，缺了就报「红」不是「过」）",
+           False, "找不到语料")
+        return
+    nodes, edges, _ = loaded
+
+    for which in ("keyset", "reach", "sequence"):
+        cover = coverage_of(which, nodes, edges)
+        base = _del_arm(Kernel, which, nodes, edges, cover)
+        ok(f"★ [删除路径·{which}] 基线：`D1–D6` **全绿**（真 `Kernel.remove` 干净）",
+           all(v == 0 for v in base.values()), f"基线不干净：{base}")
+
+        for code, cls in _DEL_MUTANTS.items():
+            shot = _del_arm(cls, which, nodes, edges, cover)
+            ok(f"★ [删除路径·{which}] {code} 对照 `{cls.__name__}`："
+               f"基线绿、注入红（否则这条是空转）",
+               base[code] == 0 and shot[code] > 0,
+               f"基线={base[code]} 注入={shot[code]}")
+            others = {k: v for k, v in shot.items() if k != code and v > 0}
+            print(f"    · {which:8s} {code} ← {cls.__name__:12s} "
+                  f"基线 {base[code]} → 注入 {shot[code]}"
+                  + (f"；另带红 {others}（D6 对照与 D2 耦合，见 docstring）"
+                     if others else "；只此一条红"))
+
+
 def main() -> int:
     for fn in (test_tri, test_loader, test_kernel, test_selfopt, test_sequence,
                test_flows, test_emergence, test_divergence, test_equivalence,
@@ -2666,7 +3038,7 @@ def main() -> int:
                test_cover_leak_baseline, test_cover_oracle_transparency,
                test_b3_reduction_premise, test_reach_cache_premise,
                test_reach_cache_transparency, test_tree_premise,
-               test_query_hit_items):
+               test_deletion_path, test_query_hit_items):
         fn()
     total = len(PASS) + len(FAIL)
     for f in FAIL:

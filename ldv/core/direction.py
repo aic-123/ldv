@@ -29,8 +29,9 @@ from typing import Any, Iterable
 EVENT_BORN = "born"                     # 方向被建出来
 EVENT_WITNESS_UPDATED = "witness_updated"   # 见证被缩小（**事实**变了，不是判断）
 EVENT_INVALIDATED = "invalidated"       # 不再被强制 —— **标记，不删**（§M2 情形③；
-                                        #  ⚠️ 当前内核**不产生**它 —— 需要删除/收缩流程，
-                                        #  那条流程还没建。种类先留着，语义不变。）
+                                        #  由 `Kernel.remove()` 产生，见 §10.2 C。
+                                        #  ⚠️ 它的 `detail` 必须带 `members_after`：
+                                        #  折 `status_of` 读的是**支持集**，不是事件种类。）
 EVENT_UNSPLITTABLE = "unsplittable"     # §K2：判「这一层不建」（**判定**，不是失效）
 EVENT_OUT_OF_SCOPE = "out_of_scope"     # 项**按证明**落在根覆盖之外 ⇒ 不塞进结构（§10.2 出路 (1)）
 EVENT_STAYED = "stayed"                 # 项**留在父方向**：每个子方向都**证明**不收它
@@ -137,12 +138,20 @@ class Ledger:
         **失效是叠加在历史之上的**，不是替换它 —— 所以「曾被强制」
         和「从未被强制」在这里天然可分：
         前者有 `born` + `invalidated`，后者**一条都没有**。
+
+        ⚠️ **折叠读的是 `members_after == 0`，不是「出现过 `invalidated`」。**
+        删除流程（§10.2 C）给 `Cone(x)` 上**每个**方向都追加一条 `invalidated`
+        —— 它记的是「**x 不再强制它**」，不是「这个方向死了」。若按「出现过」折，
+        删任何一项都会把整条路径标成「已失效」，而那些方向**明明还活着**。
+        两种折法在「只删过一次、删的又是唯一成员」时**输出逐字相同** ——
+        正是本仓库一直在防的那个形状。所以判据要读**支持集**，不读**事件种类**。
         """
         kinds = self.kinds_of(did)
         if not kinds:
             return "不存在"
-        if EVENT_INVALIDATED in kinds:
-            return "已失效（曾存在）"
+        if any(e.kind == EVENT_INVALIDATED and e.detail.get("members_after") == 0
+               for e in self.events_for(did)):
+            return "已失效（支持集空了）"
         return "生效"
 
     # --- 校验 -------------------------------------------------------------

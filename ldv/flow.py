@@ -162,15 +162,14 @@ def run_query(kernel: Any, query: Any, *,
 class InsertReport:
     """一次插入的变动报告 —— §M2 的四种情形各占一格。
 
-    ⚠️ 这里只有**三**格（情形①②④），不是四格。
+    ⚠️ 这里只有**三**格（情形①②④）。
 
-    §M2 情形③「标记失效（不删）」在内核里**当前不可达** —— 它需要一条**删除/收缩
-    流程**（把某个方向作废但保留账本记录），而那条流程还没建。所以这里**不放这个槽**：
-    一个永远为空的字段会让读报告的人以为「情形③ 查过了」。
-
-    这不是遗漏，是**刻意留空** —— 与 `core/kernel.py` 里「`EVENT_INVALIDATED`
-    故意不 import」是同一件事的两面。删掉这个槽的同时，`render()` 里那句
-    「标记失效 …（不删）」也一并删掉，免得读者以为它曾经亮过。
+    §M2 情形③「标记失效（不删）」**不在这一格上** —— 它属于**删除**那条路，
+    由 `remove_items` 的 `RemoveReport` 报（§10.2 C 已落地）。
+    ⚠️ 它曾经是「当前不可达」所以**刻意留空**；现在可达了，**也不放回来**：
+       一个「删除才可能非空」的槽塞进「插入」的报告里，等于让读报告的人
+       在插入这条路上看见一个**永远为空**的字段 —— 那正是本仓库在防的形状
+       （「空转与通过长得一模一样」）。**放回它自己的报告里**，两条路各自干净。
     """
 
     item: str
@@ -268,6 +267,156 @@ def insert_items(kernel: Any, items: Iterable[tuple[str, Any]]) -> list[InsertRe
     return reports
 
 
+# ═══ 流程 B′ · 删除（工作流程 §2 的另一半；设计文档 §10.2 C） ═════════════════
+
+
+@dataclass(frozen=True)
+class RemoveReport:
+    """一次删除的变动报告 —— `§M2 情形③`。
+
+    与 `InsertReport` **分开**，不是合并成一个「维护报告」：两条路查的东西不同。
+    删除这条路**不产生**「涌现」「判空」「见证更新」—— 那三个是**插入**的产物。
+    合并的话，读报告的人会在删除那条路上看见三个**永远为空**的槽。
+
+    ## 六条检查 `D1–D6` 落在这里
+
+        字段                  对应
+        ──────────────────────────────────────────────
+        `invalidated`         `D1` 空方向必须带失效记录（这里是「记了几条」）
+        `unrecorded_empty`    `D1` 的反面：空了却**没记账**的方向 ⇒ 必须为空
+        `cover_leak`          `D2` 覆盖(父) ⊆ ∪覆盖(子)（由调用方传 oracle 算）
+        `outside_members`     `D3` members(父) ⊆ 覆盖(父)
+        `out_of_cone`         `D4` 变动 ⊆ `Cone(x)`（M3 的删除路径版本）
+        `ledger_rewritten`    `D5` 账本只增不改
+        `gone_directions`     `D6` 「已失效」与「从来没存在过」分得开
+
+    ⚠️ `D2` / `D3` 的读数**要外生 oracle**（`checks/_fixtures.coverage_of`）。
+       所以这两个字段**默认 `None`**（= 未展开），由**调用方**填；`flow.py` 平时
+       不依赖 `checks/`，只在传了 `cover` 时**惰性**引入那一个函数。
+       ⚠️ `None` 与 `0` **不是一回事** —— 前者是「没量」，后者是「量了，是 0」。
+       `render()` 把两者印成不同的字（`D2 漏 **未展开**` vs `D2 漏 0`）。
+    """
+
+    item: str
+    cone: tuple[str, ...]                  # `Cone(x)` = 删除路径（返回值）
+    emptied: tuple[str, ...] = ()          # 这一删让哪些方向**支持集空了**
+    invalidated: tuple[str, ...] = ()      # 记了失效账目的方向（= 锥）
+    unrecorded_empty: tuple[str, ...] = ()  # `D1`：空了却没记账 ⇒ 必须为空
+    changed: tuple[str, ...] = ()          # `members` 变了的全部方向
+    out_of_cone: tuple[str, ...] = ()      # `D4` / M3：落在锥外的变动 ⇒ 必须为空
+    gone_directions: tuple[str, ...] = ()  # `D6`：删前在、删后不在 `_dirs` ⇒ 必须为空
+    ledger_rewritten: tuple[str, ...] = ()  # `D5`：被改写的既有账目 ⇒ 必须为空
+    cover_leak: int | None = None          # `D2`（外生 oracle；`None` = 未展开）
+    outside_members: int | None = None     # `D3`（外生 oracle；`None` = 未展开）
+    events: int = 0                        # 本次追加的账本事件条数
+
+    @property
+    def 违规(self) -> tuple[str, ...]:
+        """**进退出码**的那些 —— 与 `render()` 里印的不完全是一回事。
+
+        ⚠️ `D2` / `D3` 只在**量过**（`is not None`）时才算违规。
+           「没量」不能算过，也不能算违规 —— 它是**未展开**，必须**印出来**。
+        """
+        bad: list[str] = []
+        if self.unrecorded_empty:
+            bad.append(f"D1 空方向没记账：{list(self.unrecorded_empty)}")
+        if self.out_of_cone:
+            bad.append(f"D4/M3 锥外变动：{list(self.out_of_cone)}")
+        if self.gone_directions:
+            bad.append(f"D6 方向被真删：{list(self.gone_directions)}")
+        if self.ledger_rewritten:
+            bad.append(f"D5 账本被改写：{list(self.ledger_rewritten)}")
+        if self.cover_leak:
+            bad.append(f"D2 覆盖漏 {self.cover_leak}")
+        if self.outside_members:
+            bad.append(f"D3 越界成员 {self.outside_members}")
+        return tuple(bad)
+
+    def render(self) -> str:
+        bits = [f"删 {self.item}｜锥 {len(self.cone)} 层"]
+        if self.emptied:
+            bits.append(f"支持集空了 {len(self.emptied)}：{list(self.emptied[:3])}")
+        bits.append(f"失效记账 {len(self.invalidated)} 条")
+        # ★ `D2` / `D3` 必须把「没量」与「量了是 0」印成**不同的字**
+        d23 = []
+        for tag, v in (("D2 漏", self.cover_leak), ("D3 越界", self.outside_members)):
+            d23.append(f"{tag} {v}" if v is not None else f"{tag} **未展开**")
+        bits.append("｜".join(d23))
+        if self.违规:
+            bits.append("‼ " + "；".join(self.违规))
+        return "｜".join(bits)
+
+
+def remove_items(kernel: Any, ids: Iterable[str], *,
+                 cover: Any = None) -> list[RemoveReport]:
+    """流程 B′。删项，**逐项前后比对**（§10.2 C）。
+
+    与 `insert_items` 同形，理由也一样：`D4`（变动 ⊆ `Cone(x)`）**只查终态就什么都没查**
+    —— 终态本来就自洽。所以逐项比对。
+
+    `cover` 是**外生覆盖 oracle**（`cover(payload) -> frozenset[str]`）。
+    传了 ⇒ `D2` / `D3` 被量；不传 ⇒ 它们是 `None`（未展开），**不是 0**。
+    """
+    from .core.direction import EVENT_INVALIDATED
+
+    reports: list[RemoveReport] = []
+    for iid in ids:
+        before_dirs = {d.did for d in kernel.all_directions()}
+        before_mem = {d.did: kernel.members_of(d) for d in kernel.all_directions()}
+        before_events = len(kernel.ledger)
+        # `D5` 要**外部**指纹：`Ledger._digest` 只由 `append` 维护，就地改 `detail`
+        # 它看不见 —— 而 `detail` 是可变字典，`Event` 冻结拦不住。
+        before_lines = [(e.seq, e.kind, e.did,
+                         tuple(sorted((k, repr(v)) for k, v in e.detail.items())))
+                        for e in kernel.ledger]
+
+        path = kernel.remove(iid)                       # §10.2 C 的 ①②
+
+        new_events = list(kernel.ledger)[before_events:]
+        after_lines = [(e.seq, e.kind, e.did,
+                        tuple(sorted((k, repr(v)) for k, v in e.detail.items())))
+                       for e in kernel.ledger]
+        rewritten = [f"第 {i} 条" for i, fp in enumerate(before_lines)
+                     if i >= len(after_lines) or after_lines[i] != fp]
+
+        changed: set[str] = set()
+        for d in kernel.all_directions():
+            if d.did not in before_dirs:
+                changed.add(d.did)
+            elif kernel.members_of(d) != before_mem.get(d.did):
+                changed.add(d.did)
+        cone = set(path)
+        emptied = tuple(did for did in path if not kernel.members_of(kernel.direction(did)))
+        recorded = {e.did for e in new_events
+                    if e.kind == EVENT_INVALIDATED and e.detail.get("members_after") == 0}
+        # `D1`：空了、但**没有**失效账目。⚠️ 这里判的是「**支持集空**且无记录」，
+        #      不是「有没有出现过 `invalidated`」—— 后者会把**还活着**的方向也标上。
+        unrecorded = tuple(did for did in emptied if did not in recorded)
+
+        leak = outside = None
+        if cover is not None:
+            from .checks.coverage import cover_leak_profile, soundness_profile
+            leak = cover_leak_profile(kernel, cover)["漏项数"]
+            outside = soundness_profile(kernel, cover)["越界成员数"]
+
+        reports.append(RemoveReport(
+            item=iid,
+            cone=tuple(path),
+            emptied=tuple(sorted(emptied, key=_did_order)),
+            invalidated=tuple(sorted({e.did for e in new_events
+                                      if e.kind == EVENT_INVALIDATED}, key=_did_order)),
+            unrecorded_empty=tuple(sorted(unrecorded, key=_did_order)),
+            changed=tuple(sorted(changed)),
+            out_of_cone=tuple(sorted(did for did in changed if did not in cone)),
+            gone_directions=tuple(sorted(before_dirs - {d.did for d in kernel.all_directions()})),
+            ledger_rewritten=tuple(rewritten),
+            cover_leak=leak,
+            outside_members=outside,
+            events=len(new_events),
+        ))
+    return reports
+
+
 # ═══ 流程 D · 自优化（工作流程 §4） ═══════════════════════════════════════════
 
 
@@ -340,36 +489,61 @@ def make_params(direction_name: str, outermost_intent: str) -> selfopt.Params:
 
 
 def render_chain(a: FlowA | None, b: Sequence[InsertReport] | None,
-                 d: FlowD | None) -> str:
-    """把三个流程的输出拼成一份可读追踪。"""
+                 d: FlowD | None, r: Sequence[RemoveReport] | None = None) -> str:
+    """把四个流程的输出拼成一份可读追踪。
+
+    `r` 是**删除**那一段（流程 B′，§10.2 C）。⚠️ 它与 `b` **分开印**，
+    不合并成「维护」一段 —— 合并会让「插入 12 项、删除 0 项」与
+    「插入 0 项、删除 12 项」在输出上长得一模一样。
+    """
     lines: list[str] = []
     if a is not None:
         lines.append("── 流程 A · 运行 ──")
         lines.append("  " + a.render().replace("\n", "\n  "))
     if b is not None:
         lines.append("── 流程 B · 维护 ──")
-        grew = [r for r in b if r.born]
-        touched = sum(len(r.changed) for r in b)
+        grew = [r_ for r_ in b if r_.born]
+        touched = sum(len(r_.changed) for r_ in b)
         # ⚠️ 这里原来写 `// 2` —— 因为旧实现一次判空**建一对**方向，报告里记两个 did。
         #    字面 §K2 之后判空**不建方向**，事件是**一条**（挂在父上），所以不再除 2。
-        judged = sum(len(r.unsplittable) for r in b)
+        judged = sum(len(r_.unsplittable) for r_ in b)
         lines.append(f"  插入 {len(b)} 项：长出新层 {len(grew)} 项；"
                      f"归属更新累计 {touched} 处（**都在各自的锥上**）"
                      + (f"；§K2 判「这一层不建」{judged} 次" if judged else ""))
         # ★ 落在**根覆盖之外**的项必须单独计数（§10.2 出路 (1)）。
         #   它们既不在「长出新层」里，也不在「归属更新」里 —— 不单列就等于没发生。
-        oos = [r for r in b if r.out_of_scope]
+        oos = [r_ for r_ in b if r_.out_of_scope]
         if oos:
             lines.append(f"  ★ 其中 {len(oos)} 项落在**根覆盖之外**（不塞进结构，"
-                         f"§10.2 出路 (1)）：{ [r.item for r in oos[:3]] }"
+                         f"§10.2 出路 (1)）：{ [r_.item for r_ in oos[:3]] }"
                          f" —— 这是**范围**事实，不是失败；它们**在账上**")
-        for r in b[:6]:
-            lines.append("  · " + r.render())
+        for r_ in b[:6]:
+            lines.append("  · " + r_.render())
         if len(b) > 6:
             lines.append(f"  · …（还有 {len(b) - 6} 项）")
-        viol = [r for r in b if r.out_of_cone]
+        viol = [r_ for r_ in b if r_.out_of_cone]
         lines.append(f"  M3 断言：锥外变动 {len(viol)} 处"
                      + ("（**必须为 0**）" if not viol else " ‼ 违规"))
+    if r is not None:
+        lines.append("── 流程 B′ · 删除（§10.2 C）──")
+        if not r:
+            # ⚠️ 「没删」与「删了但什么都没发生」必须分得开。
+            lines.append("  删除 0 项（**本趟没跑**）—— 未删与删了无变化不共用一行")
+        else:
+            empt = sum(len(x.emptied) for x in r)
+            inv = sum(len(x.invalidated) for x in r)
+            lines.append(f"  删除 {len(r)} 项：支持集空了 {empt} 个方向；"
+                         f"追加失效账目 {inv} 条")
+            for x in r[:6]:
+                lines.append("  · " + x.render())
+            if len(r) > 6:
+                lines.append(f"  · …（还有 {len(r) - 6} 项）")
+            bad = [x for x in r if x.违规]
+            lines.append(f"  D1–D6 断言：违规 {len(bad)} 处"
+                         + ("（**必须为 0**）" if not bad else " ‼ 违规"))
+            if any(x.cover_leak is None for x in r):
+                lines.append("  ⚠️ D2/D3 **未展开**（调用方没传覆盖 oracle）"
+                             "—— 未展开 ≠ 通过")
     if d is not None:
         lines.append("── 流程 D · 自优化 ──")
         lines.append("  " + d.render().replace("\n", "\n  "))

@@ -48,9 +48,7 @@ from typing import Any, Iterable, Sequence
 
 from .direction import (
     EVENT_BORN,
-    # ⚠️ `EVENT_INVALIDATED` **故意没在这里用**：§M2 情形③（「不再被强制」）
-    #    需要「删除」流程才可达，本轮只做了插入。事件种类保留在账本里
-    #    （`§K4` 的区分靠它），等删除流程落地时再接上。
+    EVENT_INVALIDATED,
     EVENT_OUT_OF_SCOPE,
     EVENT_STAYED,
     EVENT_UNSPLITTABLE,
@@ -310,10 +308,9 @@ class Kernel:
             ② 见证被更新        → 追加 `witness_updated`（**事实**变化，不是判断）
             ④ 长出新的非平凡结构 → 追加 `born`（**涌现**）
 
-        ⚠️ **情形③「标记失效（不删）」在这里不实现** —— 它需要一条**删除/收缩**
-        流程（把某个方向作废但保留账本记录），而那条流程还没建。`EVENT_INVALIDATED`
-        因此**故意不 import**（`from .direction import …` 里没有它）。
-        留一个永不触发的事件种类，等于给读代码的人一盏永远不亮的灯。
+        ⚠️ **情形③「标记失效（不删）」由 `remove()` 实现**（§10.2 C）——
+        它需要一条**删除/收缩**流程，那条流程建在这里之外（`remove` 直接写账本，
+        不经过 `expand`）。`EVENT_INVALIDATED` 由 `remove` 产生，本函数仍不产生它。
 
         ---
 
@@ -562,6 +559,77 @@ class Kernel:
             self._members.setdefault(did, set()).add(item_id)
         self._path[item_id] = tuple(path)
         return tuple(path)
+
+    # --- 删除（§10.2 C） --------------------------------------------------
+
+    def remove(self, item_id: str) -> tuple[str, ...]:
+        """删除一个项 —— `§M2 情形③`。流程见设计文档 §10.2 C / 成熟方案 §4.7。
+
+        返回它走过的路径（= `Cone(x)`），与 `insert` 对称。
+
+        ## 只做两件事，一件都不多
+
+            ① 把 `x` 从 `items` 与 `members(D)`（`D ∈ Cone(x)`）里去掉
+            ② 对 `D ∈ Cone(x)` 的每个方向追加一条 `invalidated`（账本**只增不改**）
+
+        **不删方向、不动 `_children`、不压单子、不与兄弟合并、不把项重插。**
+        三条菜单的裁决与逐字依据：
+
+            压掉单子方向   单子只在**删掉节点之后**才出现（ART：「**now** has only
+                           one child」）；不删 ⇒ 不产生单子
+            与兄弟合并     Guttman 逐字排除：「there is no adjacency in the B-tree sense」
+            把项重插回树   CT6 的前提是 CT3 压掉了节点；不删 ⇒ **没有孤儿**
+
+        ## ⚠️ 失效的方向**继续答查询**
+
+        `invalidated` **只影响账本，不影响 `命中`** —— 本函数不碰插件、不碰遍历。
+        若把它实现成「不参与检索」，那些项还在语料里、查询可能命中 ⇒ **假阴**
+        ⇒ §K8 的**唯一**禁令被破。这是本流程最容易写错的一处，而且写错了**不报错**。
+
+        ## ⚠️ 「不再被强制」的准确含义是「**x 不再强制它**」
+
+        所以事件带 `members_after`：**支持集空了**才叫「这个方向已失效」，
+        还剩支持者就只是「少了一个支持者」。折叠规则在 `Ledger.status_of()` ——
+        它读 `members_after == 0`，**不读**「有没有出现过 `invalidated`」。
+        （读后者的话，删任何一项都会把整条路径标成「已失效」，而那些方向**明明还活着**。）
+
+        ## ③「向上收缩父的 payload」**没有做**，理由在 §10.2 C
+
+        设计文档原来把 ③ 写成**硬要求**（Guttman `CondenseTree` CT4 的对应），
+        理由是「删掉 x 后 members 变小，**若 payload 跟着收窄**，`∪覆盖(子)` 就变小
+        ⇒ 父不跟着收窄就红」。而**本设计里没有任何东西从 members 重算 payload**：
+
+            `payload` 由**插件声明**、`Direction` **不可变**（§K4 的结构保证）
+            删一个成员**不改变**任何 `payload`
+            ⇒ `覆盖(父)` 与 `∪覆盖(子)` **两边都不动**
+            ⇒ `B18` / `B16` 在删除路径上**按构造不变**（实测见 `MEASUREMENTS` 结果十一）
+
+        ⇒ ③ 的前提是 payload 为**派生聚合**（R-tree AT3 / GiST PR2 的
+          "E.p is the **Union** of all entries on N"），本设计**不满足** ——
+          「改父的键」这条路在 §10.2 A 已经因为同一个理由被排除过
+          （根是**外生**的 ⇒ 改它等于替人改声明）。采纳 ③ 得先推翻 §K4 的不可变。
+        """
+        if item_id not in self.items:
+            raise KeyError(item_id)
+        path = tuple(self._path.get(item_id, ()))
+
+        # ① 从 `items` 与 `members(D)`（`D ∈ Cone(x)`）里去掉。
+        #    只碰路径上的方向 ⇒ 「变动 ⊆ `Cone(x)`」（`D4`）**按构造**成立。
+        del self.items[item_id]
+        for did in path:
+            self._members.get(did, set()).discard(item_id)
+
+        # ② 账本**只增不改**：只 `append`，不修改任何既有条目（`D5` / `B9`）。
+        for did in path:
+            self.ledger.append(
+                EVENT_INVALIDATED, did, item=item_id,
+                members_after=len(self._members.get(did, ())),
+                reason="§10.2 C：x 不再强制这个方向（支持集少了一个）")
+
+        # 锥是**插入时**的记账，项走了就作废 —— 留着会让 `cone()` 回答一个
+        # 已经不在内核里的项。判据要的那一份由**返回值**给出（`D4` 用）。
+        self._path.pop(item_id, None)
+        return path
 
     # --- 遍历循环（§R0–§R5） ----------------------------------------------
 
@@ -819,6 +887,13 @@ class Kernel:
         unsplit = [e for e in self.ledger if e.kind == EVENT_UNSPLITTABLE]
         oos = [e for e in self.ledger if e.kind == EVENT_OUT_OF_SCOPE]
         stayed = [e for e in self.ledger if e.kind == EVENT_STAYED]
+        # ★ 删除路径（§10.2 C）两个数，**分开报** —— 理由与「认识 / 纳入」同源：
+        #   一个是**结构**事实（支持集空了），一个是**账本**事实（记了没有）。
+        #   合并成一个数，就把「方向空了、却没人记账」这个静默状态藏掉了（`D1`）。
+        empty = [d.did for d in dirs if not self._members.get(d.did)]
+        emptied = {e.did for e in self.ledger
+                   if e.kind == EVENT_INVALIDATED
+                   and e.detail.get("members_after") == 0}
         return {
             "方向": len(self._dirs),
             "有子层": len(self._children),
@@ -834,6 +909,12 @@ class Kernel:
             "根覆盖之外": len(oos),
             # ★ 「范围损失」与「划分代价」也分开报（§10.2 出路 (4)）。
             "滞留": len(stayed),
+            # ★ 删除路径（§10.2 C）：**结构**事实与**账本**事实分开报。
+            #   健康的内核（没删过）里 `空方向` 恒为 0 —— §K2 判空不建，
+            #   每个方向都被真的分配过成员。删除**可以**让它变空，那时
+            #   `空方向 == 已失效方向` 才是对的（`D1` 查的就是这条）。
+            "空方向": len(empty),
+            "已失效方向": len(emptied),
             "最大扇出": max(fans) if fans else 0,
             "最大叶容量": max(caps) if caps else 0,
             "平均叶容量": round(sum(caps) / len(caps), 2) if caps else 0.0,
