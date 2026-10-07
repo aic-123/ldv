@@ -43,6 +43,7 @@
 
 from __future__ import annotations
 
+from contextlib import ExitStack
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Sequence
 
@@ -196,6 +197,29 @@ class Kernel:
         self._dirs[did] = d
         self.ledger.append(EVENT_BORN, did, rank=rank, origin=origin, parent=parent)
         return d
+
+    # --- 并发钩子（§10.2 D 的 P8） -----------------------------------------
+    #
+    # ⚠️ **内核不知道锁。** 它**没有** `locks=` 构造参数 —— §4.3 说得很死：
+    #    构造时只接受一个插件和一批项（多出 `weights=` / `objective=` 就该 `B12` 红）。
+    #    并发是**调用方**的事，不是内核的能力。
+    #
+    # 但**锁的作用域由锥决定**，而锥只有内核知道（`§K3`：失效范围 ⊆ `Cone(x)`）。
+    # ⇒ 这里留一个**默认什么都不做**的插入点：写操作每走到一个方向，
+    #   就进出一次 `_step_guard(did)`。`core/locking.py` 的 `LockedKernel`
+    #   把它换成真的锁。
+    #
+    # ⚠️ 默认实现是**空操作** ⇒ 单线程路径**逐字不变**
+    #    （`B15` / 全部读数一个都不动 —— 见 `MEASUREMENTS` 结果十二）。
+
+    def _step_guard(self, did: str) -> Any:
+        """并发钩子 —— 默认**空操作**。见上面的小节。
+
+        入参是**方向 id**（不是方向对象）：锁的粒度就是方向，
+        而作用域（哪些方向）由**锥**定，不由这个函数定。
+        """
+        return _NO_GUARD
+
 
     # --- 读 ---------------------------------------------------------------
 
@@ -422,7 +446,20 @@ class Kernel:
 
         ⚠️ **判空的两条路径都不建方向**（§K2 的字面），代价仍然搬到**叶容量**上。
             `None` 路径与「切不动」路径的**代价完全一样**，区别只在**归因**。
+
+        ## ⚠️ 它**会改结构**，所以 `query` 的遍历路径上也经过写操作
+
+        `expand` 建子方向、写 `_children` / `_expanded` / `_tried` —— 它不是读。
+        而 `query` 在遍历时**调用**它（`§R1` 之后）。⇒ 并发下**查询也会写**，
+        所以这一层必须自己守一次（不能只靠 `insert` / `remove` 在锥上守）。
+
+        重复进同一把锁由 `core/locking.py` 的 `RLock` 承担：
+        `insert` 已经在锥上握着 `d`，这里再进一次，计数加一而已。
         """
+        with self._step_guard(d.did):
+            return self._expand_inner(d)
+
+    def _expand_inner(self, d: Direction) -> tuple[Direction, ...]:
         if d.did in self._children:
             return self.children_of(d)
 
@@ -509,54 +546,81 @@ class Kernel:
         ⚠️ 代价是**范围**，不是正确性：那些项在这条方向上检不出来，
            但它们**在账上**。这正是这一条的全部价值 ——
            把一个静默的状态换成一条显式的记录。
+
+        ## ★ 为什么不把「记成员」**随行写**（这是 P8 里一处真的绊脚石）
+
+        成员那一笔写在**下降结束之后**（`for did in path`），不是每走到一层就写。
+        这不是随手写的顺序，它**决定了分裂语义**：
+
+            随行写   走到 d 时先 `members(d) += x`，再 `expand(d)`
+                     ⇒ **祖先**会看见这个新项 ⇒ 祖先**可能因为这次插入而分裂**
+            末尾写   走到 d 时 `members(d)` 里**还没有** x
+                     ⇒ 祖先的分裂**不受这次插入影响**（只有叶会在落地后重判）
+
+        两者**不是**同一个算法：随行写会让「先建 6 维护 30」的结构与批建**不同**，
+        而 `test_emergence` ③ 钉住的正是「尺度与分辨率**不随建法变化**」。
+
+        ⇒ 后果直接落在并发上：**手递手（crabbing）不能顺手做** ——
+          末尾那一笔要写**整条锥**，而手递手到那时已经放掉了祖先的锁。
+          本实现因此**持有整条锥**（`core/locking.py`），
+          这与 `§10.2 D` 说的「根是**唯一公共争用点**」一致，
+          但「同时持有几把锁」是**另一个读数**（见 `MEASUREMENTS` 结果十二）。
         """
         if item is not None:
             self.items[item_id] = item
         if item_id not in self.items:
             raise KeyError(item_id)
-        if self._outside_root(item_id):
-            self.ledger.append(EVENT_OUT_OF_SCOPE, self.root.did, item=item_id,
-                               reason="§I1：根对单元素查询判「否」⇒ 按证明落在根覆盖之外")
-            self._path[item_id] = ()
-            return ()
+        # 根要**单独**守一次：`_outside_root` 会写账本，而它发生在下降之前。
+        with self._step_guard(self.root.did):
+            if self._outside_root(item_id):
+                self.ledger.append(EVENT_OUT_OF_SCOPE, self.root.did, item=item_id,
+                                   reason="§I1：根对单元素查询判「否」⇒ 按证明落在根覆盖之外")
+                self._path[item_id] = ()
+                return ()
         path: list[str] = []
-        d = self.root
-        while True:
-            path.append(d.did)
-            kids = self.expand(d)
-            if not kids:
-                # 叶：**先把项落下来，再看落下来之后分不分得开**（§M2 情形④）。
-                #
-                # ⚠️ 这一步不能省。只在「进入一个方向时」试展开的话，
-                #    刚落地的那一项永远轮不到被考虑 —— 它的叶带着**落它之前**
-                #    的结论。落完再试一次，才闭合。
-                self._members.setdefault(d.did, set()).add(item_id)
+        # ★ 下降的每一步都进出一次 `_step_guard` ⇒ **拿锁的方向集合 = 走过的路径**。
+        #   `ExitStack` 让「进」的顺序 = 下降顺序 = **秩递增** ⇒ 与 `remove` 同序
+        #   ⇒ 良序 ⇒ 不死锁（Lehman & Yao 1981 §6.1）。
+        with ExitStack() as stack:
+            d = self.root
+            while True:
+                stack.enter_context(self._step_guard(d.did))
+                path.append(d.did)
                 kids = self.expand(d)
                 if not kids:
+                    # 叶：**先把项落下来，再看落下来之后分不分得开**（§M2 情形④）。
+                    #
+                    # ⚠️ 这一步不能省。只在「进入一个方向时」试展开的话，
+                    #    刚落地的那一项永远轮不到被考虑 —— 它的叶带着**落它之前**
+                    #    的结论。落完再试一次，才闭合。
+                    self._members.setdefault(d.did, set()).add(item_id)
+                    kids = self.expand(d)
+                    if not kids:
+                        break
+                    # 落下去之后长出了新层 ⇒ 这一项也得往下走。
+                    # 每层子方向的成员是父的**真子集**（另一侧非空），所以一定终止。
+                # ★ 只进入「没有**证明**不收它」的子方向（§10.2 出路 (4)）。
+                #   见 `_refuses`：`是` 与 `未展开` 都放行，只有「否」是证明。
+                ok = [k for k in kids if not self._refuses(k, item_id)]
+                if not ok:
+                    # 每个子方向都证明不收它 ⇒ **停在这一层**，项留在父方向。
+                    #
+                    # 为什么不拒绝（出路 (3) 的读法）：拒绝会让项从**成员集**里消失，
+                    # 而 `B1` 的 ground truth 正是「成员 ∩ 查询」——
+                    # 于是「健全性变绿」会**部分来自数据变少**。留在父方向则：
+                    # 项仍可检索（父的 `命中` 说「是」）、`B1` 的 ground truth 不动，
+                    # 代价只落在**划分**上（`B4` 要收窄成「漏的恰好是账上那些」）。
+                    # 外部印证：X-tree 的 supernode ——
+                    #   "created during insertion **only if there is no other possibility**"
+                    self.ledger.append(EVENT_STAYED, d.did, item=item_id,
+                                       reason="§10.2 出路 (4)：每个子方向都证明不收它 ⇒ 留在这一层",
+                                       kids=tuple(k.did for k in kids))
                     break
-                # 落下去之后长出了新层 ⇒ 这一项也得往下走。
-                # 每层子方向的成员是父的**真子集**（另一侧非空），所以一定终止。
-            # ★ 只进入「没有**证明**不收它」的子方向（§10.2 出路 (4)）。
-            #   见 `_refuses`：`是` 与 `未展开` 都放行，只有「否」是证明。
-            ok = [k for k in kids if not self._refuses(k, item_id)]
-            if not ok:
-                # 每个子方向都证明不收它 ⇒ **停在这一层**，项留在父方向。
-                #
-                # 为什么不拒绝（出路 (3) 的读法）：拒绝会让项从**成员集**里消失，
-                # 而 `B1` 的 ground truth 正是「成员 ∩ 查询」——
-                # 于是「健全性变绿」会**部分来自数据变少**。留在父方向则：
-                # 项仍可检索（父的 `命中` 说「是」）、`B1` 的 ground truth 不动，
-                # 代价只落在**划分**上（`B4` 要收窄成「漏的恰好是账上那些」）。
-                # 外部印证：X-tree 的 supernode ——
-                #   "created during insertion **only if there is no other possibility**"
-                self.ledger.append(EVENT_STAYED, d.did, item=item_id,
-                                   reason="§10.2 出路 (4)：每个子方向都证明不收它 ⇒ 留在这一层",
-                                   kids=tuple(k.did for k in kids))
-                break
-            nxt = min(ok, key=lambda k: (call_penalty(self.plugin, k, self.items[item_id]), k.did))
-            d = nxt
-        for did in path:
-            self._members.setdefault(did, set()).add(item_id)
+                nxt = min(ok, key=lambda k: (call_penalty(self.plugin, k, self.items[item_id]), k.did))
+                d = nxt
+            # ⚠️ 这一笔**必须在下降结束之后**写 —— 见下面「为什么不随行写」。
+            for did in path:
+                self._members.setdefault(did, set()).add(item_id)
         self._path[item_id] = tuple(path)
         return tuple(path)
 
@@ -613,18 +677,25 @@ class Kernel:
             raise KeyError(item_id)
         path = tuple(self._path.get(item_id, ()))
 
-        # ① 从 `items` 与 `members(D)`（`D ∈ Cone(x)`）里去掉。
-        #    只碰路径上的方向 ⇒ 「变动 ⊆ `Cone(x)`」（`D4`）**按构造**成立。
-        del self.items[item_id]
-        for did in path:
-            self._members.get(did, set()).discard(item_id)
+        # ★ 锁的**作用域 = 锥**（`§10.2 D` 的 P8）。锥在这里是**已知的**
+        #   （插入时记下的），所以一次拿齐、按**秩递增**拿 ⇒ 与 `insert` 同序
+        #   ⇒ 良序 ⇒ 不死锁。
+        with ExitStack() as stack:
+            for did in path:
+                stack.enter_context(self._step_guard(did))
 
-        # ② 账本**只增不改**：只 `append`，不修改任何既有条目（`D5` / `B9`）。
-        for did in path:
-            self.ledger.append(
-                EVENT_INVALIDATED, did, item=item_id,
-                members_after=len(self._members.get(did, ())),
-                reason="§10.2 C：x 不再强制这个方向（支持集少了一个）")
+            # ① 从 `items` 与 `members(D)`（`D ∈ Cone(x)`）里去掉。
+            #    只碰路径上的方向 ⇒ 「变动 ⊆ `Cone(x)`」（`D4`）**按构造**成立。
+            del self.items[item_id]
+            for did in path:
+                self._members.get(did, set()).discard(item_id)
+
+            # ② 账本**只增不改**：只 `append`，不修改任何既有条目（`D5` / `B9`）。
+            for did in path:
+                self.ledger.append(
+                    EVENT_INVALIDATED, did, item=item_id,
+                    members_after=len(self._members.get(did, ())),
+                    reason="§10.2 C：x 不再强制这个方向（支持集少了一个）")
 
         # 锥是**插入时**的记账，项走了就作废 —— 留着会让 `cone()` 回答一个
         # 已经不在内核里的项。判据要的那一份由**返回值**给出（`D4` 用）。
@@ -932,6 +1003,29 @@ def _did_order(did: str) -> tuple[int, str]:
     if did.startswith("D") and did[1:].isdigit():
         return (int(did[1:]), "")
     return (1 << 30, did)
+
+
+class _NoGuard:
+    """`Kernel._step_guard` 的默认实现 —— **什么都不做**。
+
+    它存在的唯一理由是**把「这里有一个可插入点」写出来**：
+    一个默认空操作的钩子，与「忘了加钩子」，在单线程读数上**长得一模一样**
+    （`MEASUREMENTS` 结果十二把两边都量了 —— 逐项相同）。
+
+    ⚠️ 复用一个实例（不是每次新建）—— 它是**无状态**的，`__exit__` 恒返回 `False`
+       （不吞异常）。
+    """
+
+    __slots__ = ()
+
+    def __enter__(self) -> "_NoGuard":
+        return self
+
+    def __exit__(self, *exc: Any) -> bool:
+        return False
+
+
+_NO_GUARD = _NoGuard()
 
 
 def _probe(parent: Direction, payload: Any, slot: int = 0) -> Direction:

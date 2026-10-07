@@ -3031,6 +3031,392 @@ def test_deletion_path() -> None:
                      if others else "；只此一条红"))
 
 
+# ═══ 持久化（§10.2 D 的 P6） ═════════════════════════════════════════════════
+#
+# `§10.2 D` 的裁决：**持久化层只认 `_children` 为权威边**，
+# `parent` / `witness` **从 `_children` 重算，不独立存**。
+#
+# 四条判据 + 两个「错一处」的对照。⚠️ 对照的**关键性质**：
+#   两个对照在**未漂移**的存档上产出**完全相同**的结果 —— 它们**只在漂移后才分得开**。
+#   所以「读回来对」这一条**单独不足以**证明只存了一份；
+#   注入必须造出**漂移的存档**。
+
+def _persist_build(cls, which, nodes, edges, locks=None):
+    from ldv.core.locking import LockedKernel
+    from ldv.plugins.reach import ReachPlugin
+    from ldv.plugins.sequence import SequencePlugin
+
+    if which == "keyset":
+        plug = KeysetPlugin()
+        root = plug.merge([])
+    elif which == "reach":
+        plug = ReachPlugin(edges, traverse_budget=10_000)
+        root = frozenset(nodes)
+    elif which == "sequence":
+        plug = SequencePlugin(sequences(nodes, edges))
+        root = frozenset({()})
+    else:
+        raise ValueError(which)
+    assert cls is not LockedKernel
+    k = cls(plug, items(nodes))
+    k.build(root)
+    for nid in sorted(nodes):
+        k.insert(nid)
+    k.remove(sorted(nodes)[0])          # 让删除路径的账也进存档
+    return k, plug
+
+
+def _drift(data: dict, how: str) -> dict:
+    """把一份**带派生边**的存档弄漂 —— `how` 是漂多少。
+
+    ⚠️ 这里漂的是**派生边**（`parent` / `witness`），**不动权威边**（`子`）。
+    那正是「各存一份」的失效形态：两份**曾经**一致，后来只改了一份。
+    """
+    rows = [r for r in data["方向"] if r.get("parent") is not None]
+    if not rows:
+        return data
+    if how == "全量":
+        rows = rows
+    elif how == "一处":
+        rows = rows[len(rows) // 2:len(rows) // 2 + 1]
+    else:
+        raise ValueError(how)
+    first = data["方向"][0]["did"]
+    for r in rows:
+        r["parent"] = first
+        r["witness"] = [first]
+    return data
+
+
+def test_persistence() -> None:
+    """★ `§10.2 D` 的 **P6**：落盘只认权威边，派生边**读回时现算**。
+
+    七条断言：
+
+      1. **往返逐字相同**（三个方向 × 批建 + 删一项）—— `from_dict(to_dict(k))` 的内核
+         与原件在 `_fingerprint` 上**逐项相等**
+      2. **存档里没有派生边** —— `方向` 的每一行**不含** `parent` / `witness`
+      3. **派生边可由权威边重算** —— 与内存里的 `parent` / `witness` 逐项相符
+      4. **存档幂等** —— 同一份结构产出**同一份字节**（`canon` 定序，不是 `repr`）
+      5. ★ **注入：漂移的存档** —— 权威 loader 读回**仍等于原件**（绿）
+      6. ★ **对照：信任派生边的 loader** —— 同一份漂移存档 ⇒ 读回**不等于**原件（红）
+      7. ★ **反向判据**：**未漂移**时两个 loader **同输出** ⇒ 对照**只在漂移后分得开**
+         （防「这条判据其实只是复述了 loader 的实现」）
+    """
+    import json
+
+    from ldv.checks._fixtures import load
+    from ldv.core import persist as P
+    from ldv.core.kernel import Kernel as _K
+
+    loaded = load()
+    if loaded is None:
+        PASS.append("持久化（跳过：语料目录不在）")
+        return
+    nodes, edges, _ = loaded
+
+    whichs = ("keyset", "reach", "sequence")
+
+    # --- ①②③④ 基线 ---------------------------------------------------------
+    for which in whichs:
+        k, plug = _persist_build(_K, which, nodes, edges)
+        data = P.to_dict(k)
+        k2 = P.from_dict(json.loads(json.dumps(data)), plug)
+
+        ok(f"★ [P6] {which}：**往返逐字相同**（方向/子/成员/锥/账本/使用/编号逐项相等）",
+           P._fingerprint(k) == P._fingerprint(k2),
+           f"方向 {len(k.all_directions())}｜账本 {len(k.ledger)} 条")
+
+        leaked = [r["did"] for r in data["方向"] if "parent" in r or "witness" in r]
+        ok(f"★ [P6] {which}：存档的 `方向` 里**没有** `parent` / `witness`"
+           "（有它就等于「各存一份」）", not leaked, f"{leaked[:3]}")
+
+        derived = P.derive_parents({p: tuple(v) for p, v in data["子"].items()},
+                                   data["根"])
+        bad = [d.did for d in k.all_directions() if derived.get(d.did) != d.parent]
+        bad += [d.did for d in k.all_directions()
+                if d.witness != (() if d.parent is None else (d.parent,))]
+        ok(f"★ [P6] {which}：**派生边可由权威边重算**（`parent` / `witness` 逐项相符）",
+           not bad, f"不符 {bad[:3]}")
+
+        s1 = json.dumps(P.to_dict(k), sort_keys=True)
+        s2 = json.dumps(P.to_dict(P.from_dict(json.loads(s1), plug)), sort_keys=True)
+        ok(f"★ [P6] {which}：**存档幂等**（同一份结构 ⇒ 同一份字节）",
+           s1 == s2, f"{len(s1)} 字节")
+        print(f"    · {which:8s} 往返 ✓｜存档 {len(s1):>7} 字节"
+              f"｜派生边 {len(leaked)} 行｜重算不符 {len(bad)}｜幂等 {s1 == s2}")
+
+    # --- ⑤⑥⑦ 漂移注入 + 对照 ------------------------------------------------
+    for which in whichs:
+        k, plug = _persist_build(_K, which, nodes, edges)
+        want = P._fingerprint(k)
+
+        for how in ("全量", "一处"):
+            drifted = _drift(P._to_dict_storing_derived(k), how)
+            a = P.from_dict(json.loads(json.dumps(drifted)), plug)
+            b = P._from_dict_trusting_derived(json.loads(json.dumps(drifted)), plug)
+            ok(f"★ [P6] {which}·{how}漂移：**权威 loader 读回仍等于原件**"
+               "（它根本不看那两栏）", P._fingerprint(a) == want,
+               "漂了派生边也不该动结构")
+            ok(f"★★ [P6] {which}·{how}漂移：**信任派生边的 loader 读回 ≠ 原件**"
+               "（这条就是「各存一份」的失效形态）", P._fingerprint(b) != want,
+               f"漂了 {how}")
+            print(f"    · {which:8s} {how}漂移：权威 loader "
+                  f"{'==' if P._fingerprint(a) == want else '≠'} 原件"
+                  f"｜双份 loader {'==' if P._fingerprint(b) == want else '≠'} 原件"
+                  + ("  ← ★ 对照在这里分开了" if P._fingerprint(b) != want else ""))
+
+        # ⑦ 反向判据：未漂移时两者**同输出**
+        clean = P._to_dict_storing_derived(k)
+        a0 = P.from_dict(json.loads(json.dumps(clean)), plug)
+        b0 = P._from_dict_trusting_derived(json.loads(json.dumps(clean)), plug)
+        ok(f"★ [P6] {which}：**未漂移**时两个 loader **同输出**"
+           "（⇒ 对照只在漂移后分得开，光测「读回来对」是测不出「只存了一份」的）",
+           P._fingerprint(a0) == P._fingerprint(b0) == want,
+           "未漂移 ⇒ 两条路都对")
+
+    # --- ⑧ 权威边自相矛盾 ⇒ 当场报错，不静默取一个 ---------------------------
+    k, plug = _persist_build(_K, "keyset", nodes, edges)
+    data = P.to_dict(k)
+    parents = [p for p, kids in data["子"].items() if kids]
+    victim = data["子"][parents[1]][0]
+    data["子"][parents[0]] = list(data["子"][parents[0]]) + [victim]
+    raised = False
+    try:
+        P.from_dict(json.loads(json.dumps(data)), plug)
+    except P.PersistenceError:
+        raised = True
+    ok("★★ [P6] **权威边不是树**（同一个子两个父）⇒ `from_dict` 当场报错，"
+       "不静默取一个 —— 「静默取一个」与「这份存档本来是好的」在读回的结构上长得一样",
+       raised, "改 `子` 之后 DAG 存档")
+
+    # --- ⑨ 格式号不符 ⇒ 报错 -------------------------------------------------
+    bad_fmt = dict(P.to_dict(k))
+    bad_fmt["格式"] = "ldv-kernel/0"
+    raised = False
+    try:
+        P.from_dict(bad_fmt, plug)
+    except P.PersistenceError:
+        raised = True
+    ok("★ [P6] 格式号不符 ⇒ 报错（不猜、不降级）", raised, "格式号改成 0")
+
+    # --- ⑩ 派生状态不落盘：`reach` 的缓存，读回后代价读数逐项相同 -------------
+    k, plug = _persist_build(_K, "reach", nodes, edges)
+    before = {d.did: [plug.penalty(d, k.items[i]) for i in sorted(k.members_of(d))]
+              for d in k.all_directions()}
+    k2 = P.from_dict(json.loads(json.dumps(P.to_dict(k))), plug)
+    after = {d.did: [plug.penalty(d, k2.items[i]) for i in sorted(k2.members_of(d))]
+             for d in k2.all_directions()}
+    ok("★ [P6] `reach` 的缓存**不落盘**（派生状态），但读回后 `代价` **逐项相同**"
+       " —— 同一条纪律在插件那一层的实例",
+       before == after, f"{len(before)} 个方向")
+
+    # --- ⑪ ★ P6 是 P1–P5 的**兑现**：读回的内核也要过 `B13` -------------------
+    #
+    # `B13`（含 P4 树性）只保证**内存里**两条边不打架。落盘/读回是**第二个入口** ——
+    # 一份漂移的存档读回来，两条边就打架了，而「检查还在、还绿」正是 `§10.2 D`
+    # 那句 ⚠️ 说的症状。所以这里拿 `B13` 去量**读回来的**内核。
+    from ldv.checks._framework import Report
+    from ldv.checks.structure import b13_rank_well_founded
+
+    for which in whichs:
+        k, plug = _persist_build(_K, which, nodes, edges)
+        clean_loaded = P.from_dict(json.loads(json.dumps(P.to_dict(k))), plug)
+        rc = Report(plugin=which, expects=("B13",))
+        b13_rank_well_founded(clean_loaded, rc)
+
+        drifted = _drift(P._to_dict_storing_derived(k), "一处")
+        trust = P._from_dict_trusting_derived(json.loads(json.dumps(drifted)), plug)
+        rt = Report(plugin=which, expects=("B13",))
+        b13_rank_well_founded(trust, rt)
+
+        ok(f"★★ [P6] {which}：**读回的内核也要过 `B13`**（树性在第二个入口上仍成立）",
+           rc.assertions[0].result is Tri.YES,
+           f"B13 = {rc.assertions[0].result}；{rc.assertions[0].detail[:60]}")
+        ok(f"★★ [P6] {which}：**漂移存档 + 信任派生边的 loader ⇒ `B13` 报「否」**"
+           "（「检查还在、还绿」正是这里的反例 —— 它这次没绿）",
+           rt.assertions[0].result is Tri.NO,
+           f"B13 = {rt.assertions[0].result}；{rt.assertions[0].detail[:60]}")
+        print(f"    · {which:8s} 读回后 B13：只认权威边 {rc.assertions[0].result}"
+              f"｜信任派生边 {rt.assertions[0].result}"
+              f"（{str(rt.assertions[0].detail)[:40]}…）")
+
+
+# ═══ 并发（§10.2 D 的 P8） ═══════════════════════════════════════════════════
+#
+# `§10.2 D` 的裁决：**锁沿路径局部化，根是公共争用点**。
+#
+# ⚠️ 这里的判据守的是**作用域**，不是「线程安全」。两件事必须分开：
+#   一个把锁的范围搞对、却漏了共享状态的实现，与一个真的安全的实现，
+#   在「作用域」这个读数上**长得一模一样**。
+
+def _lock_scope(k, fn, *a):
+    """跑一次写操作，读**实际拿过**的锁集合（不是「应该拿的」）。"""
+    k.locks.taken.clear()
+    fn(*a)
+    return {did for _, did in k.locks.taken}
+
+
+def _mutex_broken(locks, key: str = "D0", timeout: float = 0.4) -> bool:
+    """**确定性**地测互斥：用 barrier 逼两个线程**同时**想进同一个临界区。
+
+        正确锁   第一个进去、卡在 barrier 上、超时；第二个被挡在外面
+                 ⇒ 两个都超时 ⇒ 返回 False（互斥成立）
+        空锁     两个都进去 ⇒ barrier 放行 ⇒ 返回 True（互斥被破）
+
+    ⚠️ 为什么**不用**并发压力测试：实测（`outputs/_probe_locks.py` ⑤）
+       **空锁**在 8 线程 × 120 项的压力下也**全绿** —— 临界区太短、GIL 帮了忙。
+       一个「空锁与真锁长得一样」的测法，测不出任何东西。
+    """
+    import threading
+
+    both: list[bool] = []
+    barrier = threading.Barrier(2, timeout=timeout)
+
+    def worker() -> None:
+        with locks.guard(key):
+            try:
+                barrier.wait()
+                both.append(True)
+            except threading.BrokenBarrierError:
+                pass
+
+    ts = [threading.Thread(target=worker) for _ in range(2)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    return bool(both)
+
+
+def test_lock_scope() -> None:
+    """★ `§10.2 D` 的 **P8**：锁沿**路径**局部化。
+
+    五条断言（三个方向各一遍）：
+
+      1. **作用域 = 锥**（`insert` / `remove` 拿的锁**恰好**是它走过的路径）
+      2. **根是唯一公共争用点**（所有锥的**公共**交 == `{根}`）
+      3. **与扇出无关**（对照：扇出锁的集合**随扇出变** ⇒ 红）
+      4. ★ **互斥**（barrier 探针）：真锁绿、**空锁红**（已知答案）
+      5. ★ **对照**：全局锁 / 扇出锁 ⇒ 判据 1、2 红（真耦合，见下）
+    """
+    from ldv.checks._fixtures import load
+    from ldv.core.kernel import Kernel as _K
+    from ldv.core.locking import FanoutLocks, GlobalLocks, LockedKernel, NoLocks
+
+    loaded = load()
+    if loaded is None:
+        PASS.append("并发（跳过：语料目录不在）")
+        return
+    nodes, edges, _ = loaded
+    ids = sorted(nodes)
+    whichs = ("keyset", "reach", "sequence")
+
+    def build_locked(which, locks=None):
+        from ldv.plugins.reach import ReachPlugin
+        from ldv.plugins.sequence import SequencePlugin
+
+        if which == "keyset":
+            plug = KeysetPlugin()
+            root = plug.merge([])
+        elif which == "reach":
+            plug = ReachPlugin(edges, traverse_budget=10_000)
+            root = frozenset(nodes)
+        else:
+            plug = SequencePlugin(sequences(nodes, edges))
+            root = frozenset({()})
+        k = LockedKernel(plug, items(nodes), locks=locks)
+        k.build(root)
+        for nid in ids:
+            k.insert(nid)
+        return k
+
+    # --- ①②③ 基线 -----------------------------------------------------------
+    for which in whichs:
+        k = build_locked(which)
+        bad_i = [x for x in ids if _lock_scope(k, k.insert, x) != set(k.cone(x))]
+        ok(f"★ [P8] {which}：**作用域 = 锥**（`insert` 拿的锁恰好是它走过的路径）",
+           not bad_i, f"不符 {len(bad_i)}/{len(ids)}：{bad_i[:2]}")
+
+        # ⚠️ `remove` 会真的把项删掉 ⇒ 另起一个内核；而且锥要在**删之前**取
+        #    （`remove` 结尾会 `_path.pop`，删完再问 `cone()` 是空元组）。
+        kr = build_locked(which)
+        bad_r = []
+        for x in ids[:8]:
+            want = set(kr.cone(x))
+            if _lock_scope(kr, kr.remove, x) != want:
+                bad_r.append(x)
+        ok(f"★ [P8] {which}：**作用域 = 锥**（`remove` 同）",
+           not bad_r, f"不符 {len(bad_r)}/8：{bad_r[:2]}")
+
+        cones = [set(k.cone(x)) for x in ids]
+        cones = [c for c in cones if c]
+        common = set.intersection(*cones) if cones else set()
+        ok(f"★ [P8] {which}：**根是唯一公共争用点**（所有锥的公共交 == {{根}}）",
+           common == {k.root.did}, f"公共交 = {sorted(common)}，根 = {k.root.did}")
+
+        path_sizes = [len(_lock_scope(k, k.insert, x)) for x in ids]
+        k2 = build_locked(which)
+        k2.locks = FanoutLocks(
+            lambda did, _k=k2: [c.did for c in _k.children_of(_k.direction(did))])
+        fan_sizes = [len(_lock_scope(k2, k2.insert, x)) for x in ids]
+        ok(f"★ [P8] {which}：作用域**与扇出无关** —— 路径锁 max {max(path_sizes)}"
+           f" < 扇出锁 max {max(fan_sizes)}（扇出不常数 ⇒ 扇出锁的集合无界）",
+           max(path_sizes) < max(fan_sizes),
+           f"路径 {max(path_sizes)} vs 扇出 {max(fan_sizes)}")
+        print(f"    · {which:8s} 作用域 = 锥（insert {len(ids)}/{len(ids)}、"
+              f"remove {8 - len(bad_r)}/8）｜公共交 {sorted(common)}"
+              f"｜路径锁 max {max(path_sizes)} vs 扇出锁 max {max(fan_sizes)}")
+
+    # --- ④ 互斥（barrier，**确定性**） ---------------------------------------
+    from ldv.core.locking import PathLocks as _PL
+    ok("★ [P8] **互斥成立**：真锁下两个线程不能同时进同一个方向的临界区"
+       "（barrier 逼它们同时进 ⇒ 超时 ⇒ 没进去过）",
+       not _mutex_broken(_PL()), "PathLocks")
+    ok("★★ [P8] **已知答案对照**：**空锁**下两个线程**同时进去**了 ⇒ 探针会红",
+       _mutex_broken(NoLocks()), "NoLocks")
+    ok("★ [P8] 全局锁也互斥（它只是**范围太大**，不是没锁）",
+       not _mutex_broken(GlobalLocks()), "GlobalLocks")
+
+    # --- ⑤ 对照：全局锁 / 扇出锁 ⇒ 判据 1、2 红 ------------------------------
+    #
+    # ⚠️ **真耦合**：判据 1（作用域 = 锥）与判据 2（公共交 = 根）在**本批语料上**
+    #    由同一个事实推出（锥都从根开头、且没有别的方向在所有锥上）⇒
+    #    两个对照会**同时**带红两条。这里**照实打印**，不挑一条来报 ——
+    #    一个「只报自己那条」的对照是**被挑选过的**证据。
+    for which in whichs:
+        for code, mk in (("全局锁", GlobalLocks), ("扇出锁", None)):
+            if mk is None:
+                k3 = build_locked(which)
+                k3.locks = FanoutLocks(
+                    lambda did, _k=k3: [c.did for c in _k.children_of(_k.direction(did))])
+            else:
+                k3 = build_locked(which, locks=mk())
+            s1 = [x for x in ids if _lock_scope(k3, k3.insert, x) != set(k3.cone(x))]
+            # ⚠️ 这里量的是**锁管理器实际拿的**作用域，**不是**内核的锥 ——
+            #    拿内核的锥去比，对照当然还是「公共交 = 根」（锥没变），
+            #    判据 2 就永远红不了。**读数要跟读数比。**
+            scopes = [_lock_scope(k3, k3.insert, x) for x in ids]
+            common = set.intersection(*scopes) if scopes else set()
+            ok(f"★ [P8] {which}·{code} 对照：**作用域 ≠ 锥** ⇒ 判据 1 红"
+               "（否则判据 1 是空转）", bool(s1), f"不符 {len(s1)}/{len(ids)}")
+            ok(f"★ [P8] {which}·{code} 对照：**公共交 ≠ {{根}}** ⇒ 判据 2 红",
+               common != {k3.root.did}, f"公共交 {len(common)} 个：{sorted(common)[:3]}")
+
+    # --- ⑥ 反向判据：单线程路径**逐字不变**（钩子默认空操作） -----------------
+    k = build_locked("keyset")
+    k0 = _K(k.plugin, k.items)
+    k0.build(k.plugin.merge([]))
+    for nid in ids:
+        k0.insert(nid)
+    ok("★ [P8] **反向判据**：`LockedKernel`（锥上拿锁）与 `Kernel`（空钩子）"
+       "跑出来**逐字相同** —— 加锁不改语义（否则「作用域」这件事是拿正确性换的）",
+       [(d.did, d.rank, d.payload, d.parent) for d in k.all_directions()]
+       == [(d.did, d.rank, d.payload, d.parent) for d in k0.all_directions()]
+       and k.stats() == k0.stats(),
+       f"方向 {len(k.all_directions())} vs {len(k0.all_directions())}")
+
+
 def main() -> int:
     for fn in (test_tri, test_loader, test_kernel, test_selfopt, test_sequence,
                test_flows, test_emergence, test_divergence, test_equivalence,
@@ -3038,7 +3424,8 @@ def main() -> int:
                test_cover_leak_baseline, test_cover_oracle_transparency,
                test_b3_reduction_premise, test_reach_cache_premise,
                test_reach_cache_transparency, test_tree_premise,
-               test_deletion_path, test_query_hit_items):
+               test_deletion_path, test_persistence, test_lock_scope,
+               test_query_hit_items):
         fn()
     total = len(PASS) + len(FAIL)
     for f in FAIL:
