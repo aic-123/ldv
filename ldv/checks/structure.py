@@ -3,7 +3,7 @@
     B7  见证完备 §K3  —— 不存在没有见证的方向（根除外，根是外生的）
     B8  失效局部 §K3  —— 插入 x 后的变动集合 ⊆ `Cone(x)`
     B9  不覆盖   §K4  —— 历史记录只增不改
-    B13 秩良基   §K5  —— 方向图无环、无自环
+    B13 良基树   §K5  —— 方向图无环、无自环、**每方向恰好一个父**
 
 ---
 
@@ -157,7 +157,52 @@ def b9_ledger_append_only(kernel: Any, rep: Report) -> None:
 # --- B13 --------------------------------------------------------------------
 
 def b13_rank_well_founded(kernel: Any, rep: Report) -> None:
-    """§K5 良基秩：`rank = 1 + max(rank(父))`，无环、无自环。"""
+    """§K5 良基秩 **+ 树性**：`rank = 1 + rank(父)`，无环、无自环、**每方向恰好一个父**。
+
+    ## 为什么「树性」并进这一条，而不是另开一条
+
+    两者守的是**同一个东西的形状** —— 方向图。分开写会出现一条「无环但有多父」
+    的中间态，而那个中间态**没有任何设计含义**。
+
+    ## ★ 为什么树性非查不可（这是它进来的理由）
+
+    `§10.2 D`（持久化）的路线**押在「入度是常数」上**：
+
+        树（每方向一个父）  ⇒ node-copying ⇒ 访问旧版本 **O(1)**
+        DAG（一个方向多父） ⇒ 只能 fat node ⇒ 访问旧版本 **O(log m)**
+
+    而这条前提**原来没有任何检查守着**：`§K5` 的原文写的是
+    `rank = 1 + max(rank(父))` —— 那个 `max` 是**为 DAG 写的**；
+    本函数原来只查「无环 / 无自环 / 见证更粗」，**对 DAG 照样放行**。
+    ⇒ 把入度改成 2 之后 `B13` 仍报「是」（`outputs/_probe_b13_gap.py` 实测）。
+
+    这正是本仓库一直在防的形状：**前提成立与否，判据上长得一模一样**。
+
+    ## ⚠️ 「入度」在实现里有**两条边**，必须说清查的是哪条
+
+        `_children[父] = (子, …)`   语义边：**父 → 子**
+        `Direction.parent = 父`     存储边：**子 → 父**（反指针）
+        `Direction.witness = (父,)` §6.1：见证指向**更粗**的层
+
+    按**父→子**算，每个子方向恰好 1 个前驱（常数）；
+    按**子→父**算，「前驱」= **扇出**，而 §I4 是 k 叉 ⇒ **不常数**
+    （实测 36 项语料上 `sequence` 扇出到 **7**）。
+
+    Driscoll 的 `p` 是**指针前驱** —— 所以持久化层**必须**把 `_children`
+    当权威边、把 `parent`/`witness` 当**派生索引**。本函数查的就是
+    「两条边互为转置」，即**派生索引没有跑偏**。
+
+    ## 四组断言
+
+        ① 无自环             `d ∉ d.witness`
+        ② 见证更粗且存在      `rank(见证) < rank(d)`
+        ③ 父链终止（无环）    逐级上溯必须落到根
+        ④ **树性**            非根方向恰好一个父；根没有父；
+                              `parent` 与 `_children` **互为转置**；
+                              `witness == (parent,)`（§6.1）
+
+    扇出（node-copying 的成本侧）**报在 detail 里** —— 它是读数，不进退出码。
+    """
     bad: list[str] = []
     dirs = kernel.all_directions()
     by_id = {d.did: d for d in dirs}
@@ -189,9 +234,47 @@ def b13_rank_well_founded(kernel: Any, rep: Report) -> None:
         else:
             if cur.parent is not None:
                 bad.append(f"{d.did} 的父链超长（疑似成环）")
-    rep.add("B13", "秩良基：方向图无环、无自环",
+
+    # --- ④ 树性：语义入度（`_children` 的反图）必须恰好是「非根 1 / 根 0」 -----
+    # ⚠️ 从**建出来的结构**现算，不看 `parent` 字段自己怎么说 ——
+    #    否则「两条边打架」这种情形会各自自洽、合起来矛盾。
+    sem: dict[str, int] = {d.did: 0 for d in dirs}
+    fanout: dict[str, int] = {}
+    for p in dirs:
+        kids = kernel.children_of(p)
+        fanout[p.did] = len(kids)
+        for c in kids:
+            sem[c.did] = sem.get(c.did, 0) + 1
+    for d in dirs:
+        if d.origin == ORIGIN_EXOGENOUS:
+            if sem[d.did] != 0:
+                bad.append(f"外生方向 {d.did} 有 {sem[d.did]} 个父（它是入口，不许有父）")
+            if d.parent is not None:
+                bad.append(f"外生方向 {d.did} 的 parent 字段非空（{d.parent}）")
+            continue
+        if sem[d.did] != 1:
+            bad.append(f"{d.did} 有 {sem[d.did]} 个父（树性要求恰好 1）"
+                       + ("—— 这是 DAG，`§10.2 D` 的 node-copying 路线不再成立"
+                          if sem[d.did] >= 2 else "—— 孤儿方向"))
+        # 两条边必须互为转置
+        if d.parent is None:
+            bad.append(f"{d.did} 非外生却没有 parent 字段")
+        else:
+            par = by_id.get(d.parent)
+            if par is None:
+                bad.append(f"{d.did} 的 parent={d.parent} 不在方向表里")
+            elif d.did not in [c.did for c in kernel.children_of(par)]:
+                bad.append(f"{d.did}.parent={d.parent}，但它不在那个父的子列表里（两条边打架）")
+        if d.witness != (d.parent,):
+            bad.append(f"{d.did}.witness={d.witness} 与 parent={d.parent} 不符"
+                       "（§6.1：子.witness = (父,)）")
+
+    mx_fan = max(fanout.values()) if fanout else 0
+    rep.add("B13", "良基树：方向图无环、无自环、每方向恰好一个父",
             Tri.NO if bad else Tri.YES,
-            f"{len(bad)} 处违例：{bad[:2]}" if bad else f"{len(dirs)} 个方向全部良基")
+            f"{len(bad)} 处违例：{bad[:2]}" if bad
+            else f"{len(dirs)} 个方向全部良基；扇出 max {mx_fan}"
+                 f"（node-copying 的成本侧读数，不进退出码）")
 
 
 # --- B15 --------------------------------------------------------------------

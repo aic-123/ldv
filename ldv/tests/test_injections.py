@@ -406,6 +406,33 @@ def inj_b13(nodes, edges, injected: bool) -> Report:
     return rep
 
 
+def inj_b13_two_parents(nodes, edges, injected: bool) -> Report:
+    """`B13` 的**第二条**判据：**树性**（每方向恰好一个父）。
+
+    注入的是**最贴近判据的那条边** —— `_children` 是唯一写「父 → 子」的地方，
+    所以把一个已有的子方向**再挂到第二个父**下面，就造出了一个 **DAG**：
+
+        语义入度  1 → 2
+
+    ⚠️ **这条注入是实测挑出来的**：改之前 `B13` 对这种结构**照样报「是」**
+       （`outputs/_probe_b13_gap.py` 的读数），而 `§10.2 D` 的持久化路线
+       正押在「入度 = 1」上 ⇒ 前提**没有任何检查守着**。
+
+    ⚠️ **注入必须造在「父→子」这条边上，不能只改 `parent` 字段**：
+       只改 `parent` 会让两条边**打架**（那是另一组断言），
+       而入度本身没变 —— 那就测不到树性。
+    """
+    kernel, _ = build_keyset(nodes)
+    if injected:
+        parents = [d for d in kernel.all_directions() if kernel.children_of(d)]
+        p1, p2 = parents[0], parents[1]
+        victim = kernel.children_of(p2)[0]
+        kernel._children[p1.did] = tuple(kernel._children[p1.did]) + (victim.did,)  # noqa: SLF001
+    rep = _rep()
+    b13_rank_well_founded(kernel, rep)
+    return rep
+
+
 # ═══ B14 ═════════════════════════════════════════════════════════════════════
 
 def inj_b14(nodes, edges, injected: bool) -> Report:
@@ -915,9 +942,12 @@ def metric_soundness(nodes: Any, edges: Any, injected: bool) -> bool:
     return soundness_profile(k, coverage_of("keyset", nodes, edges))["越界成员数"] == 0
 
 
-# 「覆盖不漏」（§1 硬要求表**第四行**）也是度量。注入：`sequence` 的 `劈开`
+# 「覆盖不漏」（§1 表**第四行**，⬜ 2026-10-07 已降级）也是度量。注入：`sequence` 的 `劈开`
 # **少报桶** —— 父的覆盖里那些「下一个符号没被枚举到」的项，任何子方向都收不住。
-# ⇒ 这正是 §10.2 对 C 描述的那条机制，也是「覆盖不漏」和「健全性」是**两条独立机制**的证据。
+# ⇒ 这正是 §10.2 对 C 描述的那条机制。
+# ⚠️ 但它**不是**「与健全性并列的另一条独立机制」：实测漏项与滞留项是**同一批**
+#    （16 == 16，双向差 0，见 `outputs/_probe_leak_vs_stay.py`）⇒ 两者是同一条件的两种处置。
+#    这里注入的「少报桶」**同时**造出漏与滞留，正是这一点的直接证据。
 
 def metric_cover_leak(nodes: Any, edges: Any, injected: bool) -> bool:
     """「覆盖不漏是否成立」—— 基线 True，注入 False。"""
@@ -963,6 +993,7 @@ EXTRA_CASES: dict[str, tuple[str, Callable]] = {
     "B11·位置敏感": ("B11", inj_b11_uniform),
     "B4·滞留要记账": ("B4", inj_b4_stay_unaccounted),
     "B16·维护路径": ("B16", inj_b16_maintenance),
+    "B13·树性": ("B13", inj_b13_two_parents),
 }
 
 

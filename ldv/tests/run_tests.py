@@ -152,7 +152,7 @@ def test_kernel() -> None:
     if loaded is None:
         return
     nodes, edges, _ = loaded
-    k, plug = build_keyset(nodes)
+    k, _ = build_keyset(nodes)
 
     ok("根是外生的", k.root.origin == ORIGIN_EXOGENOUS)
     ok("根没有父", k.root.parent is None)
@@ -201,7 +201,7 @@ def test_kernel() -> None:
     ok("「无信号」不产记录", k.record_usage(d, {"outcome": None}) is None)
 
     # reach：偏函数，拒绝遍历时返回未展开
-    kr, pr = build_reach(nodes, edges, traverse_budget=1)
+    kr, _ = build_reach(nodes, edges, traverse_budget=1)
     rres = kr.query(Query(ideal=frozenset(nodes)))
     ok("reach 超预算 ⇒ 未展开（不是否）", rres.counts["未展开"] > 0, str(rres.counts))
 
@@ -342,7 +342,7 @@ def test_flows() -> None:
     if loaded is None:
         PASS.append("流程 A/B/D（跳过：语料目录不在）")
         return
-    nodes, edges, _ = loaded
+    nodes = loaded[0]
 
     from ldv.checks._fixtures import items as make_items, keyset_queries
     from ldv.flow import insert_items, make_params, run_optimize, run_query
@@ -377,7 +377,7 @@ def test_flows() -> None:
 
     # ★ 核心：遍历**不**设展示
     kq, _ = build_keyset(nodes)
-    res = kq.query(qs[0])
+    kq.query(qs[0])
     ok("A：遍历本身不设展示（展示是显式的一步）", kq.shown == ())
     ok("A：遍历留下的是「前沿」（内省用），不是展示",
        kq._last_frontier != () and kq.shown != kq._last_frontier)  # noqa: SLF001
@@ -1269,7 +1269,6 @@ def test_stay_at_parent() -> None:
     # 这份夹具（sequence，先建 2 维护 34）实测滞留 32 —— 见 §10.2 出路 (4)。
     k = _build(ids[:2])
     st = k.stats()
-    d0 = k.root
 
     # ① 非空转
     ok("★ [留在父方向] 非空转：这份夹具上确实有滞留（否则下面全在查空气）",
@@ -1582,16 +1581,703 @@ def test_cover_leak_baseline() -> None:
     #: 上面那条会红；若哪个方向的既存违规被修好了而基线没动，上面那条也会红。
     nonzero = {k: v["漏项数"] for k, v in real.items() if v["漏项数"]}
     ok("★ [B18] 非空条目只有 `sequence|maintenance` 一处（其余 5 条都是 0 漏）"
-       " —— 基线的形状与 §1 硬要求表的第四行对得上",
+       " —— 基线的形状与 §1 表第四行对得上（该行 2026-10-07 已降级）",
        set(nonzero) == {"sequence|maintenance"},
        f"非零条目：{nonzero}")
+
+
+def _ref_cover(which: str, nodes, edges):
+    """**参考实现** —— 改动前那一版**逐字**：不规范化、不去重、正向闭包。
+
+    它慢，但**独立**：生产实现走的是「按 payload 规范形去重 + `reach` 用反向闭包」。
+    两者在同一条定义上各写一遍，对不上就说明有一边错了。
+
+    这正是 McConnell 等 2011 把「**独立**的 checker」当硬要求的那个形状：
+    拿被检查对象的算法当参照，两边会**一起**错（`false-green` 形状 3「共享盲点」）。
+    """
+    from ldv.checks._fixtures import SEQ_END, _forward_closure, _is_prefix, sequences
+
+    if which == "keyset":
+        keys = {i: nodes[i].keys for i in nodes}
+
+        def cover(payload):
+            req, forb = payload
+            req, forb = frozenset(req), frozenset(forb)
+            return frozenset(i for i in nodes
+                             if req <= keys[i] and not (keys[i] & forb))
+
+        return cover
+
+    if which == "sequence":
+        seqs = {i: tuple(v) + (SEQ_END,) for i, v in sequences(nodes, edges).items()}
+
+        def cover(payload):
+            return frozenset(i for i in nodes
+                             if any(_is_prefix(tuple(p), seqs[i]) for p in payload))
+
+        return cover
+
+    if which == "reach":
+        fwd = _forward_closure(edges, universe=nodes)
+
+        def cover(payload):
+            anchors = set(payload)
+            return frozenset(x for x in nodes if fwd.get(x, frozenset()) & anchors)
+
+        return cover
+
+    raise ValueError(which)
+
+
+def _wrong_key_cache(fn):
+    """**注入**：键取错 —— 按 `len(payload)` 而不是按 payload 本身。
+
+    真实里最容易犯的正是这个（「长度差不多就当成同一个」），
+    而它的症状**不是报错**，是**静默串台**：第二个 payload 拿到第一个的覆盖
+    ⇒ 判据拿错的覆盖去比 ⇒ **假绿**。
+
+    ⚠️ 三个方向**都会撞**：`keyset` 的 payload 恒为 2 元组（`len` 恒 2）、
+       `reach` 按锚点数撞、`sequence` 按前缀数撞。
+    """
+    memo: dict[int, frozenset[str]] = {}
+
+    def cover(payload):
+        k = len(payload)
+        got = memo.get(k)
+        if got is not None:
+            return got
+        val = fn(payload)
+        memo[k] = val
+        return val
+
+    return cover
+
+
+def test_cover_oracle_transparency() -> None:
+    """★ 外生覆盖 oracle：**换实现不许改变答案** —— 两个改动分开对照，且三个方向都查。
+
+    ## 为什么这条必须单独存在
+
+    `coverage_of` 是覆盖族的 **ground truth**（`B16` / 健全性 / 覆盖不漏 / 进步量）。
+    它算错时**错的是判据的答案本身**，而且错法很隐蔽：
+
+        少算一项   ⇒ 某方向被报「成员越界」  ⇒ 假红
+        多算一项   ⇒ 真的越界被盖住          ⇒ **假绿**
+
+    「跑一遍 `run_checks` 是绿的」**查不出这两种** —— 它本来就是绿的。
+
+    ## 依据（逐字）
+
+    Acar / Blelloch / Harper 2002（POPL，§2 末「Side Effects」）：
+
+    > Also, the memoization of the kind done by lazy languages will not affect the
+    > correctness of change-propagation, **because the value remains the same whether
+    > it has been calculated or not.**
+
+    同一节还给了**反面**，所以「纯」是前提不是顺手一提：
+
+    > **function caching requires purely functional code**, but our framework involves
+    > side-effects in its implementation.
+
+    ## ★ 两个改动必须**分开**对照（这是本测试的重点）
+
+    这一次同时动了两件事，混在一起就分不清谁错了：
+
+        改动 1  `reach` 的**单次调用算法**：正向闭包 `fwd[x] & anchors`
+                ⇒ 反向闭包 `∪_{a ∈ payload} rev[a]`
+        改动 2  **同一 payload 算几遍**：`Cover` 按规范形去重
+
+    ⇒ 三臂对同一个参考实现比：
+
+        臂 A  `dedup=False`  ⇒ 只含改动 1
+        臂 B  `dedup=True`   ⇒ 改动 1 + 2
+        臂 C  A vs B         ⇒ **只**含改动 2
+
+    读法（这一步才是「分开」的用处）：
+
+        A 红、B 红、C 绿  ⇒ 两臂**一致地**错 ⇒ 问题在**去重之前**（`canon` / `raw`）
+        A 绿、B 红、C 红  ⇒ 只有带缓存的那一臂错 ⇒ 问题在**缓存**里
+        A 绿、B 绿、C 红  ⇒ 不可能（C 是 A、B 的推论）—— 出现就是键的哈希/等价坏了
+
+    ⚠️ **只留 C 是不够的**：C 是同义反复。`canon` 产出的**就是** `raw` 的入参，
+       所以「键决定答案」按构造成立 —— C 查不出 `canon` **丢信息**。
+       丢信息要拿**参考实现**比（A / B 干的活）。
+
+    ## ★ 而且**对照的顺序**本身也是对照的一部分
+
+    踩过（实测）：原来先跑一句 `nonempty = sum(1 for p in payloads if b_arm(p))`
+    来证明「不是空转」，而那一步**把臂 B 的缓存烤热了** ——
+    于是后面比对时每一次调用都是**命中**、返回的都是**存进去的正确值**，
+    ⇒ 注入「缓存返回错值」之后，② ③ 仍然报「**0 处不同**」，变异被**掩盖**。
+
+    ⇒ 现在的顺序是：**先把参考值全算出来**，再让每个臂各跑一遍（各用全新实例）。
+      「先算参考、再跑臂」不是为了好看 —— 它是这条测试**能不能红**的前提。
+
+    ## 逐条钉住（每条都能红）
+
+        ① 三臂在**非空**的 payload 上比（否则「相同」可能只是「都返回空集」）
+        ② 臂 A vs 参考：`reach` 的**反向闭包**那一步干净
+        ③ 臂 B vs 参考：加上去重之后仍然干净
+        ④ 臂 C：A 与 B 逐项相同
+        ⑤ **注入**：键取错（按 `len`）⇒ 与参考必须**对不上**（判据不是空转）
+        ⑥ 去重**确实在发生**（命中 > 0）—— 度量，不进退出码
+
+    ## 变异验证（都跑过，不是推的）
+
+        canon 丢信息（`frozenset(sorted(p)[:1])`）  ⇒ ② 红、③ 红、④ 绿
+          读法：两臂**一致地**错 ⇒ 问题在**去重之前**
+        缓存返回错值（`next(iter(memo.values()))`）⇒ ② 绿、③ 红、④ 红
+          读法：只有带缓存的那一臂错 ⇒ 问题在**缓存**里
+        （两次都是**精确**命中对应的臂，不是「一片红」—— 这就是把两个改动
+          分开对照的用处。）
+    """
+    from ldv.checks._fixtures import build_incremental, coverage_of, make_builder
+
+    loaded = load()
+    if loaded is None:
+        ok("★ [oracle] 语料在（这条测试要真语料，缺了就报「跳过」不是「过」）", False,
+           "找不到语料")
+        return
+    nodes, edges, _ = loaded
+    ids = sorted(nodes)
+
+    total_nonempty = 0
+    total_payloads = 0
+    stats_line: list[str] = []
+
+    for which in ("keyset", "reach", "sequence"):
+        # --- payload 序列：两个内核的全部方向（覆盖族要的就是这些） ----------
+        #: ⚠️ `build_keyset` 只收 `nodes`（它不需要图）—— 三个方向签名不齐，
+        #:   所以这里用 lambda 包一层，不用「按名字取函数再统一调用」。
+        mk = make_builder(which, nodes, edges)
+        builders = {"keyset": lambda: build_keyset(nodes),
+                    "reach": lambda: build_reach(nodes, edges),
+                    "sequence": lambda: build_sequence(nodes, edges)}
+        batch = builders[which]()[0]
+        inc = build_incremental(mk, nodes, ids[:6], ids[6:])
+        payloads: list = []
+        for k in (batch, inc):
+            for d in k.all_directions():
+                payloads.append(d.payload)
+        total_payloads += len(payloads)
+
+        ref = _ref_cover(which, nodes, edges)                  # 改动前逐字
+
+        # ⚠️ **先把参考值全算出来，再让每个臂各跑一遍** —— 顺序不能反。
+        #    踩过：原来先跑 `nonempty = sum(1 for p in payloads if b_arm(p))`，
+        #    那一步**把臂 B 的缓存烤热了**，于是后面比对时每一次调用都是**命中**、
+        #    返回的都是正确值 ⇒ **变异被掩盖**（实测：注入「缓存返回错值」后
+        #    ② ③ 仍然报「0 处不同」）。**「对照的顺序」本身也是对照的一部分。**
+        ref_vals = [ref(p) for p in payloads]
+
+        a_arm = coverage_of(which, nodes, edges, dedup=False)   # 臂 A：只换算法
+        b_arm = coverage_of(which, nodes, edges, dedup=True)    # 臂 B：算法 + 去重
+        a_vals = [a_arm(p) for p in payloads]
+        b_vals = [b_arm(p) for p in payloads]
+
+        def diff(xs, ys) -> list[tuple[int, list[str]]]:
+            bad = []
+            for i, (x, y) in enumerate(zip(xs, ys)):
+                if x != y:
+                    bad.append((i, sorted(x ^ y)[:3]))
+            return bad
+
+        # --- ① 这批 payload **不是空转**：覆盖集必须非空 --------------------
+        #: 拿**参考值**判，不拿臂 —— 否则这一步又会把某个臂的缓存烤热。
+        nonempty = sum(1 for v in ref_vals if v)
+        total_nonempty += nonempty
+        ok(f"★ [oracle·{which}] 对照用的 payload **真的算出东西**"
+           f"（否则「相同」可能只是「都空」）",
+           nonempty > 0, f"非空 {nonempty}/{len(payloads)}")
+
+        # --- ② 臂 A vs 参考 -------------------------------------------------
+        d_a = diff(a_vals, ref_vals)
+        ok(f"★ [oracle·{which}] 臂 A（`dedup=False`）与**参考实现**逐项相同"
+           f" —— 单次调用的算法那一步是干净的",
+           not d_a, f"{len(payloads)} 个 payload 有 {len(d_a)} 处不同：{d_a[:2]}")
+
+        # --- ③ 臂 B vs 参考 -------------------------------------------------
+        d_b = diff(b_vals, ref_vals)
+        ok(f"★ [oracle·{which}] 臂 B（生产：`dedup=True`）与**参考实现**逐项相同",
+           not d_b, f"{len(payloads)} 个 payload 有 {len(d_b)} 处不同：{d_b[:2]}")
+
+        # --- ④ 臂 C：A vs B -------------------------------------------------
+        d_c = diff(b_vals, a_vals)
+        ok(f"★ [oracle·{which}] 臂 C：`dedup=True` 与 `dedup=False` 逐项相同"
+           f"（Acar：值算没算都一样）",
+           not d_c, f"{len(payloads)} 个 payload 有 {len(d_c)} 处不同：{d_c[:2]}")
+
+        # --- ⑤ 注入：键取错 ⇒ 与参考**必须**对不上 --------------------------
+        wrong = _wrong_key_cache(ref)
+        w_vals = [wrong(p) for p in payloads]
+        d_w = diff(w_vals, ref_vals)
+        ok(f"★ [oracle·{which}] 注入「键取错（按 len）」⇒ 与参考**必须**对不上"
+           f"（判据不是空转）",
+           bool(d_w), f"注入后仍然全同 —— 那 ②③ 就是空转（{len(payloads)} 个 payload）")
+
+        # --- ⑥ 去重确实在发生（度量） ---------------------------------------
+        #: ⚠️ **另起一个全新的 oracle** —— 上面那个的 memo 已经被对照跑热了，
+        #:   拿它数命中会**数的是对照的热度**，不是真实调用形状。
+        fresh = coverage_of(which, nodes, edges)
+        for k in (batch, inc):
+            for d in k.all_directions():
+                fresh(d.payload)          # 健全性 / `B16`
+            for d in k.all_directions():
+                if k.children_of(d):
+                    fresh(d.payload)
+                    for kid in k.children_of(d):
+                        fresh(kid.payload)  # 覆盖不漏 / 进步量
+        st = fresh.stats
+        ok(f"★ [oracle·{which}] 去重**确实在发生**（命中 > 0）"
+           f" —— 否则缓存是直通，白占内存",
+           st["命中"] > 0, f"读数 {st}")
+        stats_line.append(f"{which} 调用 {st['调用']} / 命中 {st['命中']}"
+                          f"（不同 payload {st['不同 payload']}）")
+
+    ok("★ [oracle] 三个方向的 payload 都**非空**（上面那条逐方向查过，这里查总数）",
+       total_nonempty > 0, f"非空合计 {total_nonempty}/{total_payloads}")
+    print(f"    · 覆盖 oracle 读数：{'；'.join(stats_line)}（**度量**，不进退出码）")
+
+
+def _ref_b3(kernel, plugin) -> tuple[str, str]:
+    """**改动前逐字**的 `b3_penalty_comparable` —— 含那个三重循环。只返回结论。
+
+    它存在的唯一理由：证明「删掉三重循环」**不改变判定**。
+    没有它，那条删除就只是「我觉得它没用」—— 而本仓库不吃这个。
+    """
+    from ldv.core.interfaces import call_penalty
+
+    bad: list[str] = []
+    checked = 0
+    for rank in sorted({d.rank for d in kernel.all_directions()}):
+        layer = [d for d in kernel.all_directions() if d.rank == rank]
+        if len(layer) < 2:
+            continue
+        table: dict[str, list[float]] = {}
+        for d in layer:
+            vals: list[float] = []
+            for i in sorted(kernel.items):
+                try:
+                    vals.append(call_penalty(plugin, d, kernel.items[i]))
+                except Exception as exc:  # noqa: BLE001 - 插件是外部代码
+                    bad.append(f"{d.did} 的代价抛异常：{type(exc).__name__}: {exc}")
+                    vals.append(float("nan"))
+            table[d.did] = vals
+            checked += len(vals)
+            if any(v != v for v in vals):
+                bad.append(f"{d.did} 的代价里有 NaN（不可比）")
+        ids = sorted(table)
+        for i in range(len(ids)):
+            for j in range(i + 1, len(ids)):
+                for a, b in zip(table[ids[i]], table[ids[j]]):
+                    if not (a < b or a == b or a > b):
+                        bad.append(f"{ids[i]} vs {ids[j]} 的一项不可比：{a} / {b}")
+                        break
+    if checked == 0:
+        return "未展开", ""
+    return ("否" if bad else "是"), f"{len(bad)} 处不可比"
+
+
+def _prod_b3(kernel, plugin) -> tuple[str, str]:
+    from ldv.checks._framework import Report
+    from ldv.checks.contract import b3_penalty_comparable
+
+    rep = Report(plugin="B3 对照", expects=("B3",))
+    b3_penalty_comparable(kernel, plugin, rep)
+    if rep.skipped:
+        return "未展开", ""
+    if rep.red:
+        return "否", rep.red[0].detail
+    return "是", rep.assertions[0].detail
+
+
+class _NaNPenalty:
+    """注入：`§I3` 返回 **NaN** —— `call_penalty` 必须把它挡下来。"""
+
+    def __init__(self, name: str = "注入·NaN") -> None:
+        self.name = name
+
+    def penalty(self, d: object, item: object) -> float:
+        return float("nan")
+
+
+def test_b3_reduction_premise() -> None:
+    """★ `B3` 的**三重循环删掉了** —— 这条钉住「删它的前提」+「删了不改判定」。
+
+    ## 为什么非删不可
+
+    `b3_penalty_comparable` 原来是三层循环：层内两两配对、每对**逐项**比。
+    那是 **`O(层内方向数² × 项数)`**。3907 项 / reach 有 **7813 个方向** ⇒
+    **小时级**。而 `B3` 是**判据**（`B1–B19`）⇒ `--no-probes` **关不掉它**。
+
+    ⇒ **它才是「全量 `--no-probes` 跑不完」的主因** —— 不是覆盖族（那个只有 0.69 s）。
+
+    ## 删它的依据（一条蕴含链，不是经验）
+
+        前提   `call_penalty` 只可能返回**有限 float**
+               —— 非数 / NaN / ±inf 全在它里面抛（`core/interfaces.py:190-196`）
+        推论   两个**有限 float** 之间，`a < b or a == b or a > b` **恒为真**
+               —— IEEE-754 里「三个都不成立」当且仅当有一方是 NaN（无序）
+        ⇒ 那个循环**永远 append 不了东西**。
+
+    它唯一可能命中的情形，是 `b3` 自己塞进去的 `float("nan")` —— 而那一行**已经报过**。
+
+    ## ★ 前提必须被**检查**，不许靠读代码断言
+
+    这就是本仓库反复说的那条：**「靠读代码断言的前提」= 一条将来会静默失效的规矩。**
+    ⇒ ① 直接钉 `call_penalty` 的守卫（NaN / 非数 / ±inf / 插件抛异常，四种都必须抛）。
+    那一条破了，三重循环就得加回来。
+
+    ## 逐条钉住
+
+        ① 前提：`call_penalty` 对 NaN / 非数 / ±inf / 抛异常 —— **四种都必须抛**
+        ② 正常插件：参考（旧）与生产（新）判定**相同**，且都是「是」
+        ③ 注入 NaN：参考与生产判定**相同**，且都是「否」 —— 删掉循环**没把红的漏掉**
+        ④ 对照不是空转：② 是「是」、③ 是「否」⇒ 这个对照**能红也能绿**
+    """
+    from ldv.checks._framework import Report
+    from ldv.checks.contract import b3_penalty_comparable
+    from ldv.core.interfaces import PluginContractError, call_penalty
+
+    loaded = load()
+    if loaded is None:
+        ok("★ [B3] 语料在（不在就报跳过，不报通过）", False, "找不到语料")
+        return
+    nodes, edges, _ = loaded
+    kernel, plugin = build_reach(nodes, edges)
+
+    # --- ① 前提：`call_penalty` 的四种守卫 -----------------------------------
+    class _Bad:
+        def __init__(self, val):
+            self.name = "注入"
+            self._val = val
+
+        def penalty(self, d, item):
+            return self._val
+
+    def _probe(val):
+        return lambda: call_penalty(_Bad(val), next(iter(kernel.all_directions())),
+                                    kernel.items[sorted(kernel.items)[0]])
+
+    for label, val in (("NaN", float("nan")), ("+inf", float("inf")),
+                       ("-inf", float("-inf")), ("非数（str）", "小")):
+        try:
+            _probe(val)()
+            ok(f"★ [B3] 前提：`call_penalty` 对 **{label}** 必须抛"
+               f"（不抛 ⇒ 三重循环就不能删）",
+               False, f"它放行了 {val!r}")
+        except PluginContractError:
+            ok(f"★ [B3] 前提：`call_penalty` 对 **{label}** 必须抛"
+               f"（不抛 ⇒ 三重循环就不能删）", True)
+
+    class _Raiser:
+        name = "注入·抛异常"
+
+        def penalty(self, d, item):
+            raise RuntimeError("故意炸")
+
+    try:
+        call_penalty(_Raiser(), next(iter(kernel.all_directions())),
+                     kernel.items[sorted(kernel.items)[0]])
+        ok("★ [B3] 前提：插件抛异常时 `call_penalty` 必须转成 `PluginContractError`",
+           False, "它放行了")
+    except PluginContractError:
+        ok("★ [B3] 前提：插件抛异常时 `call_penalty` 必须转成 `PluginContractError`", True)
+
+    # --- ② 正常插件：新旧判定必须相同 --------------------------------------
+    ref_v, ref_d = _ref_b3(kernel, plugin)
+    new_v, new_d = _prod_b3(kernel, plugin)
+    ok("★ [B3] 正常插件：**参考（旧）与生产（新）判定相同**，且都是「是」",
+       ref_v == new_v == "是", f"旧 {ref_v}（{ref_d}）/ 新 {new_v}（{new_d}）")
+
+    # --- ③ 注入 NaN：新旧判定必须相同，且都得是「否」 ----------------------
+    nan_plugin = _NaNPenalty()
+    ref_v2, ref_d2 = _ref_b3(kernel, nan_plugin)
+    new_v2, new_d2 = _prod_b3(kernel, nan_plugin)
+    ok("★ [B3] 注入 NaN：**参考（旧）与生产（新）判定相同**，且都是「否」"
+       f" —— 删掉三重循环**没把该红的漏掉**",
+       ref_v2 == new_v2 == "否", f"旧 {ref_v2}（{ref_d2}）/ 新 {new_v2}（{new_d2}）")
+
+    # --- ④ 对照不是空转 -----------------------------------------------------
+    ok("★ [B3] 这个对照**能红也能绿**（② 是「是」、③ 是「否」）—— 不是空转",
+       ref_v == "是" and ref_v2 == "否",
+       f"正常 {ref_v} / 注入 {ref_v2}")
+
+    # --- ⑤ 删掉的那些消息是**冗余**的，不是唯一来源 ------------------------
+    #: 旧版对同一个 NaN 会报**两遍**：一次「有 NaN」，一次「两两不可比」。
+    #: ⇒ 旧版的条目数**必须多于**新版。若两边一样多，说明那个循环当时根本没在跑 ——
+    #:   那「删掉它」就不是等价变换，而是删掉了一个**真在工作**的东西。
+    def _n(detail: str) -> int:
+        head = (detail or "").split(" ")[0]
+        return int(head) if head.isdigit() else -1
+
+    ok("★ [B3] 旧版对注入报的条目数**多于**新版 —— 证明那个循环当时**确实在跑**，"
+       f"而且它报的是**重复**",
+       _n(ref_d2) > _n(new_d2) > 0, f"旧 {ref_d2} / 新 {new_d2}")
+
+    # --- ⑥ 生产实现里**确实没有**那个三重循环 -------------------------------
+    import inspect
+    src = inspect.getsource(b3_penalty_comparable)
+    ok("★ [B3] 生产实现里**确实没有**三层嵌套循环（源码级确认，防止悄悄加回来）",
+       "for i in range(len(ids))" not in src,
+       "源码里又出现了 `for i in range(len(ids))` —— 那个 O(L²n) 回来了")
+
+    # --- ⑦ ★ `checked` 必须**数到每一个方向** ---------------------------------
+    #: 这条专门钉一个**真实发生过的回归**：删三重循环时，那三行记账
+    #: （`table[...] = vals` / `checked +=` / NaN 检查）**掉出了** `for d in layer:` 循环体
+    #: ⇒ 每层**只记最后一个方向**，而 `B3` 依旧报「是」。
+    #:
+    #: ⚠️ 上面 ①–⑥ **全都照过**：异常条目仍按方向产生（那个内层循环没动），
+    #:    所以 ⑤ 的「旧 > 新」还成立。**只有数 `checked` 抓得住它。**
+    dirs = kernel.all_directions()
+    n_items = len(kernel.items)
+    sizes = [sum(1 for d in dirs if d.rank == r) for r in {d.rank for d in dirs}]
+    expect = sum(s for s in sizes if s >= 2) * n_items
+    got = _n(new_d)
+    ok("★ [B3] `checked` **数到了每一个方向**（= Σ_层 层内方向数 × 项数）"
+       " —— 少了就是记账行又掉出循环体了",
+       expect > 0 and got == expect,
+       f"报 {got} / 应 {expect}（层内方向数 {sorted(sizes, reverse=True)[:6]}，项数 {n_items}）")
+
+    # --- ⑧ 建表的规模 = Σ_层 方向数 × 项数（**不是** 方向数² × 项数）----------
+    class _Counting:
+        name = "计数"
+
+        def __init__(self, inner):
+            self._inner = inner
+            self.calls = 0
+
+        def penalty(self, d, item):
+            self.calls += 1
+            return self._inner.penalty(d, item)
+
+    cnt = _Counting(plugin)
+    _prod_b3(kernel, cnt)
+    ok("★ [B3] `call_penalty` 的调用数 = Σ_层 方向数 × 项数"
+       "（建表是**线性**规模，不是两两配对）",
+       cnt.calls == expect, f"实调 {cnt.calls} / 应 {expect}")
+
+
+# ═══ 树性：`§10.2 D` 的持久化前提（§K5 / B13） ═══════════════════════════════
+
+def test_tree_premise() -> None:
+    """★ 「每方向**恰好一个父**」是 `§10.2 D` 的**前提**，而它原来没有任何检查守着。
+
+    持久化的路线**押在入度上**（Driscoll 等 1989）：
+
+        树（一个父）  ⇒ node-copying ⇒ 访问旧版本 **O(1)**
+        DAG（多个父） ⇒ 只能 fat node ⇒ 访问旧版本 **O(log m)**
+
+    而 `§K5` 的原文是 `rank = 1 + max(rank(父))` —— 那个 `max` 是**为 DAG 写的**；
+    `B13` 原来只查「无环 / 无自环 / 见证更粗」⇒ **对 DAG 照样放行**
+    （实测见 `outputs/_probe_b13_gap.py`：入度改成 2，`B13` 仍报「是」）。
+
+    ⇒ 这是「空转与通过长得一模一样」的又一形态：**前提成立与否，判据上长得一样。**
+
+    ## 五条断言
+
+      1. 三个插件 × 批建 / 维护：**语义入度 max = 1**，外生方向入度 = 0
+      2. 两条边**互为转置**（`parent` / `witness` 与 `_children` 不打架）
+      3. **非退化前提**：扇出 max > 1 —— 否则「恰好一个父」可能只是
+         「每个方向本来就只有一个子」的副产品，那这条断言什么都没测
+      4. ★ 把入度**注入成 2**（造 DAG）⇒ `B13` 必须报「否」
+      5. ★ **反向判据**：还原成树 ⇒ `B13` 必须报「是」—— 防「永远红」
+    """
+    from ldv.checks._fixtures import (
+        build_incremental, build_keyset, build_reach, build_sequence,
+        load, make_builder,
+    )
+    from ldv.checks._framework import Report
+    from ldv.checks.structure import b13_rank_well_founded
+
+    loaded = load()
+    if loaded is None:
+        PASS.append("树性（跳过：语料目录不在）")
+        return
+    nodes, edges, _ = loaded
+
+    def sem_deg(k):
+        deg = {d.did: 0 for d in k.all_directions()}
+        fan = {}
+        for p in k.all_directions():
+            kids = k.children_of(p)
+            fan[p.did] = len(kids)
+            for c in kids:
+                deg[c.did] = deg.get(c.did, 0) + 1
+        return deg, fan
+
+    def transposed(k):
+        """两条边互为转置吗？返回不符处。"""
+        by_id = {d.did: d for d in k.all_directions()}
+        bad = []
+        for p in k.all_directions():
+            for c in k.children_of(p):
+                if c.parent != p.did:
+                    bad.append(f"{c.did}.parent={c.parent} ≠ 实际父 {p.did}")
+                if c.witness != (p.did,):
+                    bad.append(f"{c.did}.witness={c.witness} ≠ ({p.did},)")
+        for d in k.all_directions():
+            if d.origin == ORIGIN_EXOGENOUS:
+                continue
+            if d.parent is None or d.parent not in by_id:
+                bad.append(f"{d.did}.parent={d.parent} 不可用")
+            elif d.did not in [c.did for c in k.children_of(by_id[d.parent])]:
+                bad.append(f"{d.did} 不在其父 {d.parent} 的子列表里")
+        return bad
+
+    # --- ① 基线：三个插件 × 两条路径，语义入度必须是 1 ------------------------
+    kernels: list[tuple[str, object]] = []
+    for which in ("keyset", "reach", "sequence"):
+        k, _ = (build_keyset(nodes) if which == "keyset"
+                else (build_reach(nodes, edges) if which == "reach"
+                      else build_sequence(nodes, edges)))
+        kernels.append((f"{which}·批建", k))
+    ids = sorted(nodes)
+    for which in ("keyset", "reach", "sequence"):
+        mk = make_builder(which, nodes, edges)
+        kernels.append((f"{which}·维护", build_incremental(mk, nodes, ids[:6], ids[6:])))
+
+    worst_in, worst_fan, worst_tr = 0, 0, []
+    for tag, k in kernels:
+        deg, fan = sem_deg(k)
+        mx = max(deg.values()) if deg else 0
+        worst_in = max(worst_in, mx)
+        worst_fan = max(worst_fan, max(fan.values()) if fan else 0)
+        worst_tr += [f"{tag}:{m}" for m in transposed(k)]
+        ok(f"★ [树性] {tag}：非根方向**恰好一个父**（语义入度 max = 1）",
+           mx == 1, f"实测 {mx}")
+        roots_bad = [d.did for d in k.all_directions()
+                     if d.origin == ORIGIN_EXOGENOUS and deg[d.did] != 0]
+        ok(f"★ [树性] {tag}：外生方向（根）**没有父**", not roots_bad, f"{roots_bad[:2]}")
+
+    ok("★ [树性] 两条边**互为转置**（`parent` / `witness` 与 `_children` 不打架）",
+       not worst_tr, f"{worst_tr[:2]}")
+    ok("★ [树性] 非退化前提：扇出 max > 1"
+       "（否则「恰好一个父」可能只是「每个方向本来就只有一个子」的副产品）",
+       worst_fan > 1, f"扇出 max = {worst_fan}")
+
+    # --- ④ 注入：把入度改成 2（造 DAG）⇒ B13 必须红 -------------------------
+    k, _ = build_keyset(nodes)
+    parents = [d for d in k.all_directions() if k.children_of(d)]
+    p1, p2 = parents[0], parents[1]
+    victim = k.children_of(p2)[0]
+    k._children[p1.did] = tuple(k._children[p1.did]) + (victim.did,)  # noqa: SLF001
+    deg, _fan = sem_deg(k)
+    ok("★ [树性] 注入生效：语义入度真的变成了 2",
+       max(deg.values()) == 2, f"实测 max = {max(deg.values())}")
+    rep = Report(plugin="keyset", expects=("B13",))
+    b13_rank_well_founded(k, rep)
+    ok("★★ [树性] **`B13` 对 DAG 必须报「否」**"
+       " —— 改之前它对 DAG 照样报「是」，`§10.2 D` 的前提因此没被守",
+       rep.assertions[0].result is Tri.NO,
+       f"B13 = {rep.assertions[0].result}；{rep.assertions[0].detail[:60]}")
+
+    # --- ⑤ 反向判据：还原成树 ⇒ B13 必须绿（防「永远红」） -------------------
+    k2, _ = build_keyset(nodes)
+    rep2 = Report(plugin="keyset", expects=("B13",))
+    b13_rank_well_founded(k2, rep2)
+    ok("★ [树性] 反向判据：正常树上 `B13` 报「是」（防「永远红」）",
+       rep2.assertions[0].result is Tri.YES,
+       f"B13 = {rep2.assertions[0].result}；{rep2.assertions[0].detail[:60]}")
+
+
+# ═══ 查询结果的 `hit_items` 必须**每个说「是」的方向都收** ═══════════════════
+
+def test_query_hit_items() -> None:
+    """★ `hit_items` 只在**叶**上收成员 ⇒ 停在**内部**方向的滞留项**静默地少**。
+
+    出路 (4)（§10.2 B，已落地）让项可以停在**内部**方向。而 `query` 原来是：
+
+        说「是」⇒ 有子方向就往下走（**不收自己的成员**）；没有子方向才收
+
+    ⇒ 一个停在内部方向的项，**父的 `命中` 说「是」**，但它**不进** `hit_items`。
+    实测（`outputs/_probe_leak_vs_stay.py`，`sequence` 先建 6 维护 30）：
+
+        滞留项 16 个 ⇒ 进 `hit_items` 的 **0 个**
+
+    而 `QueryResult.render()` 照样印「**命中 0 项**」—— 名字像答案、实际不全。
+    这正是本仓库反复要防的形状：**少掉的部分不会让任何东西变红。**
+
+    ## 五条断言
+
+      1. **非退化前提**：这份夹具上**确实有滞留**（否则下面全在查空气）
+      2. ★ **完整性**：每个说「是」的方向，其 `members ∩ ideal` **必须**在 `hit_items` 里
+      3. **可靠性**：`hit_items ⊆ ideal`（不许把不相关的项塞进来）
+      4. ★ **反向判据**：`hit_items` **不许**包含「不在任何说「是」方向成员里」的项
+         —— 防「干脆把 `ideal` 原样返回」（那会让 2 变恒真）
+      5. ★ **三态不许被 `hit_items` 带偏**：`status` 必须**只**由 `yes` / `unexpanded` 决定
+         —— 原来的 `if hits: status = …` 是**空操作**（`fold(是, 未展开) == 未展开`），
+            留着它会让「改成每个方向都收」悄悄改掉三态
+    """
+    from ldv.checks._fixtures import build_incremental, load, make_builder
+
+    loaded = load()
+    if loaded is None:
+        PASS.append("查询命中项（跳过：语料目录不在）")
+        return
+    nodes, edges, _ = loaded
+    ids = sorted(nodes)
+    k = build_incremental(make_builder("sequence", nodes, edges),
+                          nodes, ids[:6], ids[6:])
+
+    # --- ① 非退化前提：真有滞留 -------------------------------------------
+    stay = sum(len(k.stayed_of(d)) for d in k.all_directions())
+    ok("★ [hit_items] 非退化前提：这份夹具上**确实有滞留**（否则下面全在查空气）",
+       stay > 0, f"滞留 {stay} 项")
+
+    # --- ②③④ 逐项查一遍 ---------------------------------------------------
+    missed: list[str] = []
+    extra: list[str] = []
+    not_in_ideal: list[str] = []
+    checked = 0
+    for d in k.all_directions():
+        for x in sorted(k.members_of(d)):
+            q = Query(ideal=frozenset({x}))
+            r = k.query(q)
+            checked += 1
+            if x not in r.hit_items:
+                missed.append(f"{d.did}:{x}")
+            if not r.hit_items <= q.ideal:
+                not_in_ideal.append(d.did)
+    # 反向：随机挑若干**不在任何「是」方向成员里**的项，不许出现
+    for x in ids[:12]:
+        q = Query(ideal=frozenset({x}))
+        r = k.query(q)
+        in_yes = set()
+        for did in r.yes:
+            in_yes |= set(k.members_of(k.direction(did)))
+        if (r.hit_items - in_yes):
+            extra.append(f"{x}:{sorted(r.hit_items - in_yes)[:2]}")
+
+    ok("★ [hit_items] 完整性：每个说「是」的方向的 `members ∩ ideal` **都在** `hit_items` 里",
+       not missed, f"{len(missed)}/{checked} 项没进：{missed[:3]}")
+    ok("★ [hit_items] 可靠性：`hit_items ⊆ ideal`", not not_in_ideal,
+       f"{not_in_ideal[:3]}")
+    ok("★ [hit_items] 反向判据：`hit_items` **不许**多出「不在任何「是」方向成员里」的项"
+       "（防「把 `ideal` 原样返回」）", not extra, f"{extra[:3]}")
+
+    # --- ⑤ 三态只由 yes / unexpanded 决定 ---------------------------------
+    bad_status: list[str] = []
+    for x in ids[:12]:
+        q = Query(ideal=frozenset({x}))
+        r = k.query(q)
+        want = (Tri.YES if r.yes and not r.unexpanded
+                else fold(Tri.YES, Tri.UNEXPANDED) if r.yes
+                else Tri.UNEXPANDED if r.unexpanded else Tri.NO)
+        if r.status is not want:
+            bad_status.append(f"{x}: {r.status} ≠ {want}")
+    ok("★ [hit_items] 三态**只由 `yes` / `unexpanded` 决定**"
+       "（原来的 `if hits: status = …` 是空操作，留着会被这个改动悄悄改掉）",
+       not bad_status, f"{bad_status[:3]}")
 
 
 def main() -> int:
     for fn in (test_tri, test_loader, test_kernel, test_selfopt, test_sequence,
                test_flows, test_emergence, test_divergence, test_equivalence,
                test_rebuild, test_out_of_scope, test_stay_at_parent,
-               test_cover_leak_baseline):
+               test_cover_leak_baseline, test_cover_oracle_transparency,
+               test_b3_reduction_premise, test_tree_premise,
+               test_query_hit_items):
         fn()
     total = len(PASS) + len(FAIL)
     for f in FAIL:

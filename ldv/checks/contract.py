@@ -131,7 +131,7 @@ def cover_nesting_profile(kernel: Any, plugin: Any,
     return {"已展开方向数": checked, "越界次数": len(bad), "例子": bad[:2]}
 
 
-# --- §1 硬要求表第三 / 第四行 -------------------------------------------------
+# --- §1 硬要求表第三 / 第四行（第四行 ⬜ 2026-10-07 已降级）--------------------
 #
 # ⚠️ **健全性（第三行）与覆盖不漏（第四行）不在这里** —— 它们与 `B16` / `B18` / `B19`
 #    一起放在 `checks/coverage.py`。理由只有一条：那一族**共用一个外生覆盖定义**
@@ -227,34 +227,61 @@ def b3_penalty_comparable(kernel: Any, plugin: Any, rep: Report) -> None:
 
     ⚠️ 插件抛异常要**记成违例**，不许让检查崩掉。
        检查崩掉 = 这一条静默消失 = 「空转与通过长得一模一样」。
+
+    ## 复杂度：`O(层内方向数 × 项数)` —— **不是** `O(层内方向数² × 项数)`
+
+    这里原来是三层循环（层内两两配对、每对逐项比）。那是 **`O(L²n)`**：
+    3907 项 / reach 有 7813 个方向 ⇒ **小时级**。而它是**判据**（`B1–B19`），
+    `--no-probes` **关不掉它** ⇒ **它才是全量套件跑不完的主因**。
+
+    那个循环**证明上不可能命中**（理由见函数体注释），已删除。
+    前提由 `test_b3_reduction_premise` 钉住 —— **前提一破就得加回来**。
+
+    ⚠️ 删循环时另外两处**必须同时看**，否则省下的时间会从别的地方回来：
+
+    ① **排序只做一次**。`sorted(kernel.items)` 原来在 `for d in layer:` **里面**
+       ⇒ 每层重排 `L` 次 ⇒ 多花 `O(L × n log n)`。
+    ② **`table` 只写不读**了（原来只有那个三重循环读它）⇒ 删掉。
+       留着的话，全量上是 7813 列 × 3907 项 ≈ **244 MB** 白占。
+
+    ⚠️ 还有一条**不属于性能**的：那三行记账（`table[...]` / `checked +=` / NaN 检查）
+    必须留在 `for d in layer:` **体内**。掉出去 ⇒ 每层只记最后一个方向，
+    而 `B3` 依旧报「是」—— 「空转与通过长得一模一样」。
+    `test_b3_reduction_premise` ⑦ 专门钉这一条。
     """
     bad: list[str] = []
     checked = 0
+    #: ⚠️ **只排一次**。`kernel.items` 在 `B3` 全程不变，而它若待在方向循环里，
+    #:    每层就要重排 `L` 次。列与列的**逐项对齐**靠的就是「所有列同序」——
+    #:    同序由这一行保证，不是靠每列各排一次。
+    items_sorted = sorted(kernel.items)
     for rank in sorted({d.rank for d in kernel.all_directions()}):
         layer = [d for d in kernel.all_directions() if d.rank == rank]
         if len(layer) < 2:
             continue
-        table: dict[str, list[float]] = {}
         for d in layer:
             vals: list[float] = []
-            for i in sorted(kernel.items):
+            for i in items_sorted:
                 try:
                     vals.append(call_penalty(plugin, d, kernel.items[i]))
                 except Exception as exc:  # noqa: BLE001 - 插件是外部代码
                     bad.append(f"{d.did} 的代价抛异常：{type(exc).__name__}: {exc}")
                     vals.append(float("nan"))
-            table[d.did] = vals
             checked += len(vals)
-            if any(v != v for v in vals):       # NaN
+            if any(v != v for v in vals):   # NaN
                 bad.append(f"{d.did} 的代价里有 NaN（不可比）")
-        # 两两可比 = 任意两列逐项都满足 <、==、> 恰好一个
-        ids = sorted(table)
-        for i in range(len(ids)):
-            for j in range(i + 1, len(ids)):
-                for a, b in zip(table[ids[i]], table[ids[j]]):
-                    if not (a < b or a == b or a > b):
-                        bad.append(f"{ids[i]} vs {ids[j]} 的一项不可比：{a} / {b}")
-                        break
+    # ⚠️ 这里**没有**「两两逐项」的三重循环 —— 它**证明上不可能命中**，删掉了。
+    #
+    #    前提：`call_penalty` 只可能返回**有限 float**。非数 / NaN / ±inf 全在它里面抛
+    #          （`ldv/core/interfaces.py:190-196`）⇒ 上面每一个代价值都是有限 float。
+    #    推论：**两个有限 float 之间 `a < b or a == b or a > b` 恒为真**
+    #          —— IEEE-754 里「三个都不成立」当且仅当有一方是 NaN（无序）。
+    #    ⇒ 那个 `O(层内方向数² × 项数)` 的循环**永远 append 不了东西**。
+    #      它唯一可能命中的情形，是上面自己塞进去的 `float("nan")`，而那一行**已经报过**。
+    #
+    #    ⚠️ **前提必须被检查，不许靠读代码断言**：`test_b3_reduction_premise`
+    #       钉住「`call_penalty` 对 NaN / 非数 / ±inf 必须抛」。那条一破，
+    #       这个循环就得加回来 —— 而**加回来是 O(L²n)**（见 `MEASUREMENTS` 结果八）。
     if checked == 0:
         rep.add("B3", "代价可比", Tri.UNEXPANDED, "没有任何一层有 ≥2 个方向")
         return

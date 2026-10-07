@@ -15,7 +15,8 @@
 ---
 ## 先分清「判据」与「探针」—— 这决定了该关哪一个
 
-    判据（进退出码）   B1–B19。贵的**主要**是 `B15`（3 次整建）与 `B8`（n 次插入）
+    判据（进退出码）   B1–B19。**全量上最贵的是 `B3`**（见下），
+                       其次是 `B15`（3 次整建）与 `B8`（n 次插入）
     探针（只报不判）   十个度量。贵的是 `规范重建`（O(n) 次重建 × 每次 O(n)）
 
 ⚠️ 别把「判据贵」全记在 `B8` / `B15` 头上：实测 281 项上两者合计 **2.9 s**，
@@ -23,8 +24,24 @@
    十几条判据里。**要指名道姓得先逐块计时**（`outputs/_measure_b8_scaling.py`
    与 `outputs/_measure_cover_cost.py` 记了两次「形状对得上但因果不成立」）。
 
+⚠️ **全量上 `B3` 是最大的一块**（3907 项 / reach）：它的**建表**那半是
+   `层内方向数 × 项数` 次 `call_penalty` —— 7813 × 3907 = **30.5M 次**，
+   而每次 `reach.penalty` 内部跑一遍 BFS。
+   ⇒ 它的**三重循环**那半（`O(L²n)`，全量 **379 亿次**迭代）**已经删掉** ——
+   那一段证明上不可能命中，见 `ldv/MEASUREMENTS.md` 结果八；
+   **剩下的建表那半**是「插件对同一 payload 反复重算」那个病，位置在**插件里**。
+
+⚠️ 覆盖族（健全性 / `B16` / 覆盖不漏 / 进步量）也调同一个 oracle，但它**已经不是大头**：
+   3907 项上整族 **0.69 s**（改前 49.71 s —— 那个 oracle 按**正向**闭包逐项扫，
+   且 85% 的调用在**重算**）。读数、根因与「**渐近没修**」那条边界见
+   `ldv/MEASUREMENTS.md` 结果七。
+   ⚠️ 它的**探针**（`覆盖 oracle（度量…）`那一行）报 `调用 / 命中 / 不同 payload` ——
+   只报一个「快了 N 倍」不够：一个「从来没命中」的缓存与一个「全命中」的缓存，
+   在**判据的结论**上长得一模一样。
+
 ⇒ **关探针是安全的**：它们**不进退出码**，关掉它们**不可能把红变成绿**。
-   实测（281 项语料，`outputs/_profile_runone.py`）：
+   实测（281 项语料，`outputs/_profile_runone_prod.py` —— 它**包生产 `run_one`**，
+   不抄一份序列，所以剖面不会跟生产漂）：
 
     方向       整趟      其中 `规范重建`   关掉探针后
     ──────────────────────────────────────────────────
@@ -179,21 +196,37 @@ def run_one(which: str, loaded, probes: bool = True) -> Report:
     b16_members_covered(kernel, cover, rep, path="批建")
     b16_members_covered(inc, cover, rep, path="维护")
 
-    # 覆盖不漏**只在批建路径上是判据**：维护路径 baseline 里有既存违规
-    # （sequence 16 漏 / 2 对），那是**另一条机制**（§1 硬要求表第四行），
-    # 根记账 / 项留在父方向修的是健全性，不是它 —— 所以走 baseline 守卫。
+    # 覆盖不漏（§1 表第四行，⬜ 2026-10-07 已降级）**只在批建路径上是判据**：
+    # 维护路径 baseline 里有既存违规（sequence 16 漏 / 2 对）。⚠️ 那**不是**「另一条
+    # 机制」—— 实测漏项与滞留项是**同一批**（16 == 16，双向差 0）⇒ 它与「滞留 == 0」
+    # 是**同一个条件**，而后者已被出路 (4) 用「代价在划分」换掉 ⇒ 降级为
+    # 「度量 + baseline 守卫」。见 §10.2 B 末。
     rep.note(render_soundness(soundness_profile(kernel, cover),
                               soundness_profile(inc, cover), which))
     leak_b, leak_i = cover_leak_profile(kernel, cover), cover_leak_profile(inc, cover)
     rep.note(render_cover_leak(leak_b, leak_i, which))
-    b18_cover_leak_baseline(leak_obs(which, kernel, inc, cover), rep,
-                            corpus=corpus_fingerprint(nodes, edges))
+    # ⚠️ **别在这里再调 `leak_obs`** —— 它会把上面两个 profile 重算一遍。
+    #   那正是本仓库在防的形状的一种：多算一遍**看不出**（结果一模一样），
+    #   只看得见它慢。`leak_obs` 现在只留给 `--write-cover-leak-baseline` 用。
+    b18_cover_leak_baseline({f"{which}|batch": leak_b, f"{which}|maintenance": leak_i},
+                            rep, corpus=corpus_fingerprint(nodes, edges))
 
     # B19 —— 进步量守卫。**跨次数**的性质：反复声称能分、却连续 N 次没让覆盖变细。
     # 与 `§K2 判空`（单次性质）不是一回事，不能合并。
     prog = progress_profile(kernel, cover)
     rep.note(render_progress(prog, which))
     b19_progress_guard(prog, rep)
+
+    # ★ 覆盖 oracle 的**代价读数**（度量，不进退出码）。
+    #   ⚠️ **只报一个「快了 N 倍」不够**：一个「从来没命中」的缓存与一个「全命中」的
+    #   缓存，在**判据的结论**上长得一模一样 —— 那正是本仓库一直在防的形状。
+    #   所以两个数都报：去重有没有真的发生、代价落到内存上多少。
+    #   为什么这一条重要：覆盖族是本仓库**唯一**随语料超线性的地方（见 `_fixtures`
+    #   的「代价的形状」那段），而它贵在**同一个 payload 被反复要**。
+    _cs = cover.stats
+    rep.note(f"覆盖 oracle（度量，不进退出码）：调用 {_cs['调用']} 次，"
+             f"去重命中 {_cs['命中']} 次（不同 payload {_cs['不同 payload']} 个，"
+             f"缓存元素 {_cs['缓存元素数']} 个）")
 
     # B17 —— 「叶 = 不可分等价类」。**外生 oracle**，不调插件（否则共享盲点）。
     # 它同时是 `C8` §7 第 2 步的实测：判空点上有没有可搬的区分信息。

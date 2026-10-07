@@ -62,7 +62,13 @@ class Direction:
     did: str
     rank: int                       # 根为 1；**秩越大越细**（见 README 的方向约定）
     payload: Any
-    witness: tuple[str, ...]        # 生成它的那组**更细**方向（§I2：粗 = 合并(细)）
+    #: 生成它的那组**更粗**方向 —— ⚠️ 方向是**向上**指的，不是向下。
+    #: §6.1：`子.witness = (父,)`，而 `父.rank < 子.rank` ⇒ 循环在结构上不可能。
+    #: （`§K1` 的「层 n+1 的见证 ⊆ 层 ≤n」与 `§I2` 的「粗 = 合并(细)」两条一起读
+    #:  只有这一种读法；读成「见证 = 子方向」会与 §K1 直接冲突。）
+    #: ⚠️ 它是**元组**，但当前构造恒为**一元**（单父）；多父是**具名留白**，
+    #:  见 §10.2 D —— 启用它会让持久化从 node-copying 掉到 fat node。
+    witness: tuple[str, ...]
     origin: str
     parent: str | None
 

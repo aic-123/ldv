@@ -357,6 +357,26 @@ def _forward_closure(edges: dict[str, frozenset[str]],
     return out
 
 
+def _reverse_closure(edges: dict[str, frozenset[str]],
+                     universe: Iterable[str] | None = None) -> dict[str, frozenset[str]]:
+    """每个项**反向**闭包：能走到它的项（含它自己）。
+
+    ⚠️ 这是**同一段 `_forward_closure` 喂反向图**，不是另写一份遍历。
+       两份手写的遍历会**一起**错（`false-green` 形状 3「共享盲点」）；
+       这里要的是「同一段已验证的代码 + 不同的输入」。
+
+    为什么需要它：`reach` 的覆盖是「能走到锚点的**所有**项」，按定义就是
+    `∪_{a ∈ payload} rev[a]`。原来的实现按正向闭包算
+    （`fwd[x] & anchors`，逐项扫），**代价形状完全不同** —— 见 `coverage_of`。
+    """
+    starts = list(universe) if universe is not None else list(edges)
+    rev: dict[str, set[str]] = {n: set() for n in starts}
+    for src, dsts in edges.items():
+        for dst in dsts:
+            rev.setdefault(dst, set()).add(src)
+    return _forward_closure({k: frozenset(v) for k, v in rev.items()}, universe=starts)
+
+
 def _mutually_reachable(edges: dict[str, frozenset[str]]) -> dict[str, frozenset[str]]:
     """每个项的**强连通分量**（= 与它互相可达的项，含它自己）。"""
     fwd = _forward_closure(edges)
@@ -403,6 +423,28 @@ def equiv_classes(which: str, nodes: dict[str, Node],
 #    不只是实现问题。GiST 1995 明说 `Consistent` **允许不精确** ——
 #    "an accurate test for satisfiability is not required here" ——
 #    所以「用精确性代理判一个只要求不许假阴的量」是判据选错了，不是插件写错了。
+#
+# --- 代价的形状：为什么 `reach` 要按**反向**闭包算 ---------------------------
+#
+# 这一族是**唯一**随语料超线性增长的地方（`README` 的「已知的未做」）。形状是：
+#
+#     覆盖族在 `run_checks.run_one` 里分**七八块**读同一个 oracle
+#     ⇒ 同一个 payload 被**反复**要（实测 281 项：调用 4552 次、不同 payload 680 个）
+#
+#     而 `reach` 的单次调用原来按**正向**闭包逐项扫：
+#         `{x : fwd[x] ∩ anchors ≠ ∅}`   代价 O(Σ_x min(|fwd[x]|, |anchors|))
+#     覆盖的定义却允许按**锚点**逐个并：
+#         `∪_{a ∈ payload} rev[a]`       代价 O(Σ_{a ∈ payload} |rev[a]|)
+#
+# ⇒ 两件事**分开量、分开记**：换单次调用的算法（`_reverse_closure`）与
+#   换「同一 payload 算几遍」（`Cover` 的去重）。混在一起就分不清收益来自哪一边。
+#
+# ⚠️ 这**不是**把超线性修掉了。McConnell 等 2011 §6 第 2 条说得很清楚 ——
+#    "**Ideally**, the running time of a checker is linear in the size of its input"
+#    ——「Ideally」是**理想**，不是硬要求；Mehlhorn 2010 §3 更直接地给了反例
+#    （3-连通性：线性算法有，但**没有一个是 certifying 的**，最快的 certifying
+#    是 O(n²)，且"remains a challenge"）。⇒ 这里是**常数因子与单次形状**的改进，
+#    渐近问题记在文档里，**不声称解决了**。
 
 #: 方向 C 的「序列到此为止」哨兵 —— **与 `plugins/sequence.py` 的 `END` 同值**。
 #: oracle 自己实现前缀关系、不 import 插件的代码；这里只复制这条**约定**。
@@ -413,42 +455,132 @@ def _is_prefix(p: tuple[str, ...], s: tuple[str, ...]) -> bool:
     return len(p) <= len(s) and s[:len(p)] == p
 
 
+_EMPTY: frozenset[str] = frozenset()
+
+
+class Cover:
+    """`cover(payload) -> frozenset[str]`，**按 payload 的规范形去重**，并把命中数报出来。
+
+    ## 为什么去重是允许的 —— 前提只有一条：**纯**
+
+    Acar / Blelloch / Harper 2002（POPL，§2 末「Side Effects」）：
+
+    > Also, **the memoization of the kind done by lazy languages will not affect the
+    > correctness of change-propagation, because the value remains the same whether it
+    > has been calculated or not.**
+
+    ⇒ 「值算没算都一样」是**理由**，不是同义反复：它把「去重是否改变答案」
+      归约成「`cover` 是不是纯函数」。这里的 `cover` 闭包住 `nodes` / `edges` / `rev`
+      （构造时固定），调用不写任何东西、不读外部状态 ⇒ **纯**。
+
+    ⚠️ 同一节还给了**反面**，所以「纯」不是顺手一提：
+
+    > The problem is that **function caching and modifiables interact in subtle ways —
+    > function caching requires purely functional code**, but our framework involves
+    > side-effects in its implementation.
+
+    ⇒ 这条前提**必须被检查**，不能靠读代码断言。判据在
+      `run_tests.test_cover_oracle_transparency`：去重前后**逐项相同**；
+      注入一个「键取错」的缓存就红。
+
+    ## 为什么键是 payload 的**规范形**，不能是 `did`
+
+    `did = f"D{内核计数器}"`（`core/kernel.py::_new`）—— **每个内核各自从 0 开始**。
+    批建内核的 `D3` 与维护内核的 `D3` 是**两个不同的方向**。
+
+    ⇒ 按 `did` 去重会把两份覆盖**串台** ⇒ 判据拿错的覆盖去比 ⇒ **假绿**。
+      所以键取 `coverage_of` **本来就要做的那一步规范化**（`frozenset(req)` 等），
+      不引入任何新假设 —— 也正因为这样，**跨内核**共享是定义上成立的，不是巧合。
+
+    ## 读数的形状（两个数，缺一个都看不出来）
+
+        `调用` / `命中` / `不同 payload`   ⇒ 去重**有没有真的发生**
+        `缓存元素数`                        ⇒ 代价落在**内存**上多少
+
+    ⚠️ **只报倍数不够**：一个「从来没命中」的缓存与一个「全命中」的缓存在
+       判据的结论上**长得一模一样** —— 那正是本仓库一直在防的形状。
+    """
+
+    def __init__(self, which: str, fn: Any, canon: Any, dedup: bool = True) -> None:
+        self.which = which
+        self._fn = fn                 # 收**规范形**，不再自己解构 payload
+        self._canon = canon
+        self._dedup = dedup
+        self._memo: dict[Any, frozenset[str]] = {}
+        self.calls = 0
+        self.hits = 0
+
+    def __call__(self, payload: Any) -> frozenset[str]:
+        self.calls += 1
+        key = self._canon(payload)        # ← 只消费 payload **一次**
+        if self._dedup:
+            got = self._memo.get(key)
+            if got is not None:
+                self.hits += 1
+                return got
+        val = self._fn(key)
+        if self._dedup:
+            self._memo[key] = val
+        return val
+
+    @property
+    def stats(self) -> dict[str, int]:
+        return {"调用": self.calls, "命中": self.hits,
+                "不同 payload": self.calls - self.hits,
+                "缓存元素数": sum(len(v) for v in self._memo.values())}
+
+
 def coverage_of(which: str, nodes: dict[str, Node],
-                edges: dict[str, frozenset[str]]) -> Any:
+                edges: dict[str, frozenset[str]], dedup: bool = True) -> Cover:
     """返回 `cover(payload) -> frozenset[str]`（只落在语料内的那部分）。
 
     与 `equiv_classes` **并列**放在夹具里 —— 两者是同一类东西：按方向的定义重算，
     不调被测对象。`B16` / 健全性 / 覆盖不漏 / 进步量守卫 四条共用它。
+
+    ## `dedup=False` 是给**单变量对照**用的，不是给生产用的
+
+    它让同一个 oracle 的**两种算法**能并排跑：`dedup=True` 与 `dedup=False`
+    在**同一批 payload** 上必须**逐项相同**。这正是 Acar 那条前提的判据形态。
+
+    ⚠️ **两条路的 `raw` 是同一个函数** —— 所以这条对照验的是**去重**，不是 `raw`。
+       `raw` 本身由「与参考实现逐项相同」那条对照验（`run_tests` 里另有一条，
+       参考实现是 `_forward_closure` 版本，即改动前的那一个）。
     """
     if which == "keyset":
         keys = {i: nodes[i].keys for i in nodes}
 
-        def cover_keyset(payload: Any) -> frozenset[str]:
-            req, forb = payload
-            req, forb = frozenset(req), frozenset(forb)
+        def raw_keyset(key: Any) -> frozenset[str]:
+            req, forb = key
             return frozenset(i for i in nodes
                              if req <= keys[i] and not (keys[i] & forb))
 
-        return cover_keyset
+        return Cover(which, raw_keyset,
+                     lambda p: (frozenset(p[0]), frozenset(p[1])), dedup)
 
     if which == "sequence":
         seqs = {i: tuple(v) + (SEQ_END,) for i, v in sequences(nodes, edges).items()}
 
-        def cover_sequence(payload: Any) -> frozenset[str]:
+        def raw_sequence(key: Any) -> frozenset[str]:
             return frozenset(
                 i for i in nodes
-                if any(_is_prefix(tuple(p), seqs[i]) for p in payload)
+                if any(_is_prefix(p, seqs[i]) for p in key)
             )
 
-        return cover_sequence
+        return Cover(which, raw_sequence,
+                     lambda p: tuple(tuple(x) for x in p), dedup)
 
     if which == "reach":
-        fwd = _forward_closure(edges, universe=nodes)
+        # ★ 反向闭包，不是正向。覆盖的定义就是「能走到锚点的**所有**项」
+        #   = `∪_{a ∈ payload} rev[a]` —— 按锚点逐个并，而不是逐项扫一遍。
+        rev = _reverse_closure(edges, universe=nodes)
 
-        def cover_reach(payload: Any) -> frozenset[str]:
-            anchors = set(payload)
-            return frozenset(x for x in nodes if fwd.get(x, frozenset()) & anchors)
+        def raw_reach(key: Any) -> frozenset[str]:
+            out: set[str] = set()
+            for a in key:
+                out |= rev.get(a, _EMPTY)
+            return frozenset(out)
 
-        return cover_reach
+        return Cover(which, raw_reach, lambda p: frozenset(p), dedup)
 
     raise ValueError(which)
+

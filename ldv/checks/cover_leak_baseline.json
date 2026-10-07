@@ -1,5 +1,5 @@
 {
-  "_note": "覆盖不漏（§1 硬要求表第四行）的**冻结基线**。由 `python -m ldv.run_checks --write-cover-leak-baseline` 生成。新增违规会红；条目不再发生也会红（ESLint `--prune-suppressions` 那条纪律）。`语料` 是**本基线是在哪份语料上冻的** —— 换了语料这条守卫报「跳过」，不报「红」：**「baseline 是别的语料的」与「新增违规」必须分得开**。",
+  "_note": "覆盖不漏（§1 表第四行，⬜ 2026-10-07 已降级为「度量 + baseline 守卫」）的**冻结基线**。由 `python -m ldv.run_checks --write-cover-leak-baseline` 生成。新增违规会红；条目不再发生也会红（ESLint `--prune-suppressions` 那条纪律）。`语料` 是**本基线是在哪份语料上冻的** —— 换了语料这条守卫报「跳过」，不报「红」：**「baseline 是别的语料的」与「新增违规」必须分得开**。",
   "基线": {
     "keyset|batch": {
       "漏的对数": 0,

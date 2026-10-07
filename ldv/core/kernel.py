@@ -103,6 +103,11 @@ class QueryResult:
     """`R3` 的产物。**三态分开记** —— 不许把「未展开」并进「否」（§K6 / B10）。"""
 
     status: Tri
+    #: 本次遍历里，**说「是」的方向**存着的、且在 `ideal` 里的项。
+    #: ⚠️ 它**不是**「所有应该命中的项」—— 遍历会剪枝（说「否」的分支不往下走），
+    #:    所以它是**对这次遍历而言**的答案，不是对 `ideal` 而言的。
+    #: ⚠️ 它必须**每个说「是」的方向都收**（含停在**内部**方向的滞留项）。
+    #:    只在叶上收会让滞留项**静默地少** —— 父的 `命中` 说「是」，而这里没有它。
     hit_items: frozenset[str] = frozenset()
     yes: tuple[str, ...] = ()           # 说「是」的方向
     no: tuple[str, ...] = ()            # 说「否」的方向
@@ -583,11 +588,17 @@ class Kernel:
                 trace.append((d.did, str(v)))
                 if v is Tri.YES:                                # §R2 分支一
                     yes.append(d.did)
+                    # ★ 成员要**每个说「是」的方向都收**，不能只在叶上收。
+                    #   出路 (4) 之后，项可以**停在内部方向**（滞留）⇒ 只在叶上收
+                    #   会把它**静默地漏掉**：父的 `命中` 说「是」，而 `hit_items` 里没有它。
+                    #   实测（`outputs/_probe_leak_vs_stay.py`）：16 个滞留项
+                    #   **一个都没进** `hit_items`，而 `render()` 照样印「命中 0 项」。
+                    #   注入验证（`test_query_hit_items`）：改回只在叶上收
+                    #   ⇒ **289 条里只有那条完整性断言红**（24/86 项没进）。
+                    hits |= {i for i in self._members.get(d.did, ()) if i in q.ideal}
                     kids = self.expand(d)
                     if kids:
                         nxt.extend(kids)
-                    else:
-                        hits |= {i for i in self._members.get(d.did, ()) if i in q.ideal}
                 elif v is Tri.NO:                               # §R2 分支二
                     no.append(d.did)
                 else:                                           # §R2 分支三 —— 独立第三值
@@ -603,8 +614,12 @@ class Kernel:
             status = Tri.UNEXPANDED
         else:
             status = Tri.NO
-        if hits:
-            status = Tri.YES if not unexp else Tri.UNEXPANDED
+        # ⚠️ 这里原来还有一段 `if hits: status = Tri.YES if not unexp else Tri.UNEXPANDED`。
+        #    它是**空操作**：`hits` 非空 ⇒ 至少有一个方向说了「是」⇒ 上面两个分支
+        #    给出的正是同一个值（`fold(是, 未展开) == 未展开`，见 `core/tri.py`）。
+        #    留着它会让读者以为「有没有命中项」参与了三态判定 —— 而它没有。
+        #    （删掉它同时解掉一个副作用：`hits` 改成「每个说「是」的方向都收」之后，
+        #      若这段还在，语义会被它悄悄改掉。）
 
         return QueryResult(status=status, hit_items=frozenset(hits),
                            yes=tuple(yes), no=tuple(no), unexpanded=tuple(unexp),
