@@ -36,11 +36,37 @@ GiST 的键是自包含的，本设计的方向允许不自包含 ⇒ 插件必�
 
 ⇒ 组内每一项到自己的 payload 距离都是 0 ⇒ 必在 `reachable` 里。
 **若这两条不一致，`B1`（假阴）就会红。**
+
+---
+
+## 缓存：键是 `payload`，值是**整条 BFS 输出**
+
+这个插件每次 `代价` / `命中` / `劈开` 都要跑一遍图遍历。全量语料上
+`b3` 一块要调 `call_penalty` **30,521,484** 次（7813 个方向 × 3907 项）——
+**它一块就超过 71 分钟**。修法不是「预计算」，是**把键选对**：
+
+    键 `(item, payload)`   →  30.5M 个键  ⇒  复用 ≈ 1×   ⇒  缓存无用
+    键 `payload`           →  ≤ 7813 个键 ⇒  复用 ≈ 3907×  ⇒  缓存成立
+
+⇒ **同一个键必须能回答「这个 payload 下所有项的代价」**，所以缓存的**值**
+不是标量，是**这一遍遍历的全部结果**（`{项: 距离}`）。
+键与值的粒度是同一件事的两面 —— 只换键不换值，缓存仍然无用。
+
+**为什么 1 格就够**：`b3` 的访问顺序是 `for d in layer: for i in items`
+（`checks/contract.py`）—— 同一个 payload **连续用满 n 次**。
+这里留 `CACHE_MAXSIZE` 格只是为了别的调用顺序不至于来回打穿，代价 < 3 MB。
+
+⚠️ **成立的前提是「图在 `__init__` 之后只读」**（Acar / Blelloch / Harper 2002 §2
+把它点名为**关键要求**：「值算没算都一样」由**数据持久**保证）。
+这条**必须被检查，不许靠读代码断言** —— 图一旦可变，缓存就是**假绿**
+（stale 值 = 「空转与通过长得一模一样」）。见 `test_reach_cache_premise`。
+
+⚠️ 缓存**不改变数值语义**：`test_reach_cache_transparency` 三臂对照钉住这一条。
 """
 
 from __future__ import annotations
 
-from collections import deque
+from collections import OrderedDict, deque
 from typing import Any, Iterable, Sequence
 
 from ..core.direction import Direction
@@ -55,20 +81,96 @@ class ReachPlugin:
 
     name = "reach"
 
+    #: 缓存最多留几个 payload 的遍历输出。**1 格就能覆盖 `b3` 的访问顺序**
+    #: （同一 payload 连续用满 n 次），留几格只是为了让别的调用顺序不打穿。
+    CACHE_MAXSIZE = 8
+
     def __init__(self, edges: dict[str, Iterable[str]],
-                 traverse_budget: int = 10_000) -> None:
+                 traverse_budget: int = 10_000, cache: bool = True) -> None:
         self.edges: dict[str, frozenset[str]] = {k: frozenset(v) for k, v in edges.items()}
         self._rev: dict[str, set[str]] = {k: set() for k in self.edges}
         for src, dsts in self.edges.items():
             for dst in dsts:
                 self._rev.setdefault(dst, set()).add(src)
+        #: 汇点（无出边的项）—— **图的函数**，原来每次 `signature` 都重算一遍（O(n)）。
+        self._sinks: frozenset[str] = frozenset(n for n in self.edges if not self.edges[n])
+        #: 走不到锚点时给的有限值。⚠️ **必须存成属性**：它在热路径里当
+        #: `dict.get(k, self._far)` 的默认值用，而**默认值是每次求值的** ——
+        #: 写成 `@property` 就等于给 30.5M 次调用各加一个函数调用。
+        self._far: float = float(len(self.edges) + 1)
         self.traverse_budget = traverse_budget
+
+        # --- 缓存：键 = payload，值 = 整条 BFS 输出（见模块 docstring）------
+        self.cache = bool(cache)
+        self._dist_cache: OrderedDict[frozenset[str], dict[str, float]] = OrderedDict()
+        self._reach_cache: OrderedDict[frozenset[str], frozenset[str]] = OrderedDict()
+        self._sig_cache: dict[str, frozenset[str]] = {}
+        #: 读数（**度量**，不进退出码）—— 用来看缓存到底有没有在命中。
+        self.n_distance = 0
+        self.n_distance_hit = 0
+        self.n_reachable = 0
+        self.n_reachable_hit = 0
+        self.n_signature = 0
+        self.n_signature_hit = 0
+
+    def cache_stats(self) -> dict[str, int]:
+        """缓存读数 —— 供测试与测量脚本读，**不参与任何判据**。"""
+        return {
+            "distance 调用": self.n_distance,
+            "distance 命中": self.n_distance_hit,
+            "reachable 调用": self.n_reachable,
+            "reachable 命中": self.n_reachable_hit,
+            "signature 调用": self.n_signature,
+            "signature 命中": self.n_signature_hit,
+            "不同 payload（距离）": len(self._dist_cache),
+            "不同 payload（可达）": len(self._reach_cache),
+        }
 
     # --- 图 ---------------------------------------------------------------
 
+    def _distances(self, anchors: frozenset[str]) -> dict[str, float]:
+        """**一遍**多源反向 BFS ⇒ **所有项**到最近锚点的距离（整条 BFS 输出）。
+
+        值与 `distance(item, anchors)` 逐项相同：原式是「从 item 正向 BFS 找锚点」，
+        这里是从**全部锚点**在**反向图**上同时出发 —— 反向图里
+        「锚点走几步到 item」就是正向图里「item 走几步到锚点」，多源只是把
+        n 次单源并成 1 次。**键与值的粒度必须同时换**：键换成 payload 之后，
+        值若是标量，就会被同一 payload 的后一项覆盖。
+
+        返回的字典**只含可达项**；调用方对缺失键取 `|V|+1`（与原来一致）。
+        """
+        if self.cache:
+            got = self._dist_cache.get(anchors)
+            if got is not None:
+                self.n_distance_hit += 1
+                self._dist_cache.move_to_end(anchors)
+                return got
+        out: dict[str, float] = dict.fromkeys(anchors, 0.0)
+        q = deque(out)
+        while q:
+            cur = q.popleft()
+            nxt_d = out[cur] + 1.0
+            for prev in self._rev.get(cur, ()):
+                if prev not in out:
+                    out[prev] = nxt_d
+                    q.append(prev)
+        if self.cache:
+            self._dist_cache[anchors] = out
+            if len(self._dist_cache) > self.CACHE_MAXSIZE:
+                self._dist_cache.popitem(last=False)
+        return out
+
     def reachable(self, anchors: Iterable[str]) -> frozenset[str]:
         """能走到任一锚点的项（含锚点自身）—— **反向** BFS。"""
-        seen = set(anchors)
+        key = frozenset(anchors)
+        self.n_reachable += 1
+        if self.cache:
+            got = self._reach_cache.get(key)
+            if got is not None:
+                self.n_reachable_hit += 1
+                self._reach_cache.move_to_end(key)
+                return got
+        seen = set(key)
         q = deque(seen)
         while q:
             cur = q.popleft()
@@ -76,42 +178,46 @@ class ReachPlugin:
                 if prev not in seen:
                     seen.add(prev)
                     q.append(prev)
-        return frozenset(seen)
+        out = frozenset(seen)
+        if self.cache:
+            self._reach_cache[key] = out
+            if len(self._reach_cache) > self.CACHE_MAXSIZE:
+                self._reach_cache.popitem(last=False)
+        return out
 
     def distance(self, item_id: str, anchors: frozenset[str]) -> float:
         """到最近锚点的步数。走不到返回 `|V|+1`（有限值 —— `§I3` 要求可比）。"""
-        if item_id in anchors:
-            return 0.0
-        seen = {item_id}
-        q = deque([(item_id, 0)])
-        while q:
-            cur, dist = q.popleft()
-            for nxt in self.edges.get(cur, ()):
-                if nxt in anchors:
-                    return float(dist + 1)
-                if nxt not in seen:
-                    seen.add(nxt)
-                    q.append((nxt, dist + 1))
-        return float(len(self.edges) + 1)
+        self.n_distance += 1
+        return self._distances(frozenset(anchors)).get(item_id, self._far)
 
     def signature(self, item_id: str) -> frozenset[str]:
         """该项能到达的**汇点**（无出边的项）之集合。走不到汇点 ⇒ 退化成自己。"""
-        sinks = {n for n in self.edges if not self.edges[n]}
+        self.n_signature += 1
+        if self.cache:
+            got = self._sig_cache.get(item_id)
+            if got is not None:
+                self.n_signature_hit += 1
+                return got
+        sinks = self._sinks
         if item_id in sinks:
-            return frozenset({item_id})
-        seen = {item_id}
-        q = deque([item_id])
-        found: set[str] = set()
-        while q:
-            cur = q.popleft()
-            if cur in sinks:
-                found.add(cur)
-                continue
-            for nxt in self.edges.get(cur, ()):
-                if nxt not in seen:
-                    seen.add(nxt)
-                    q.append(nxt)
-        return frozenset(found) or frozenset({item_id})
+            out = frozenset({item_id})
+        else:
+            seen = {item_id}
+            q = deque([item_id])
+            found: set[str] = set()
+            while q:
+                cur = q.popleft()
+                if cur in sinks:
+                    found.add(cur)
+                    continue
+                for nxt in self.edges.get(cur, ()):
+                    if nxt not in seen:
+                        seen.add(nxt)
+                        q.append(nxt)
+            out = frozenset(found) or frozenset({item_id})
+        if self.cache:
+            self._sig_cache[item_id] = out
+        return out
 
     # --- §I2 合并 ---------------------------------------------------------
 
@@ -133,6 +239,11 @@ class ReachPlugin:
 
         §I3 只要求「同一层内两两可比」。距离满足：全序、有限、同一量纲。
         **内核不参与折算** —— 所以「走几步算贵」由这里说了算。
+
+        ⚠️ 这是全量上被调 **30.5M 次**的那条路径（`b3` 一块）。
+        它现在走 `_distances(payload)` —— 键是 `payload`、值是**整条 BFS 输出**，
+        于是同一个 payload 下的 n 项**共用一遍遍历**（见模块 docstring）。
+        返回值与改造前**逐项相同**（`test_reach_cache_transparency`）。
         """
         return self.distance(str(item["id"]), frozenset(d.payload))
 
@@ -178,7 +289,7 @@ class ReachPlugin:
         ids = sorted(str(it["id"]) for it in items)
         if len(ids) < 2:
             return None
-        sinks = frozenset(n for n in self.edges if not self.edges[n])
+        sinks = self._sinks           # 图的函数 —— 在 `__init__` 里算过一次
         ordered = sorted(
             ids,
             key=lambda i: (sorted(self.signature(i)),

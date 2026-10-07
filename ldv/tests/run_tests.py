@@ -1911,6 +1911,8 @@ def test_b3_reduction_premise() -> None:
     **小时级**。而 `B3` 是**判据**（`B1–B19`）⇒ `--no-probes` **关不掉它**。
 
     ⇒ **它才是「全量 `--no-probes` 跑不完」的主因** —— 不是覆盖族（那个只有 0.69 s）。
+    删掉之后 `b3` 在 3907 项上是 **38.85 s**；剩下的是 `O(Ln)` = **30,521,484 次**
+    `call_penalty`，瓶颈因此**移到插件里**（见 `plugins/reach.py` 的缓存一节）。
 
     ## 删它的依据（一条蕴含链，不是经验）
 
@@ -2271,12 +2273,399 @@ def test_query_hit_items() -> None:
        not bad_status, f"{bad_status[:3]}")
 
 
+# ═══ reach 插件缓存：前提 + 透明性 ═══════════════════════════════════════════
+
+#: 图状态的三个载体。**缓存的前提就是它们不被写** —— 名单写在这里，别散在函数里。
+_GRAPH_ATTRS = ("edges", "_rev", "_sinks")
+_MUTATORS = ("add", "update", "pop", "remove", "clear", "discard", "setdefault",
+             "append", "extend", "insert")
+
+
+def _graph_writes_outside_init(cls: type) -> list[str]:
+    """AST 扫 `cls` 的源码：图状态有没有在 `__init__` **之外**被写。
+
+    ⚠️ **用 AST 不用 grep**：`reach.py` 的 docstring 里就写着
+    「`self.edges` 只在 `__init__` 里被读」这句话 —— grep 会把**注释**
+    当成写入报出来（假红），也会漏掉 `self._rev.add(...)` 这种就地改（假绿）。
+    AST 只看语法上的赋值 / 调用目标。
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(cls)))
+    bad: list[str] = []
+
+    def _is_graph_attr(node: ast.AST) -> str | None:
+        if (isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name)
+                and node.value.id == "self" and node.attr in _GRAPH_ATTRS):
+            return node.attr
+        return None
+
+    for fn in [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]:
+        if fn.name == "__init__":
+            continue
+        for sub in ast.walk(fn):
+            targets: list[ast.AST] = []
+            if isinstance(sub, ast.Assign):
+                targets = list(sub.targets)
+            elif isinstance(sub, (ast.AugAssign, ast.AnnAssign)):
+                targets = [sub.target]
+            for t in targets:
+                for n in ast.walk(t):
+                    a = _is_graph_attr(n)
+                    if a:
+                        bad.append(f"{fn.name}() 第 {sub.lineno} 行写了 self.{a}")
+            if isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute):
+                obj = sub.func.value
+                if isinstance(obj, ast.Subscript):
+                    a = _is_graph_attr(obj.value)
+                    if a:
+                        bad.append(f"{fn.name}() 第 {sub.lineno} 行就地改 self.{a}[...]")
+                a = _is_graph_attr(obj)
+                if a and sub.func.attr in _MUTATORS:
+                    bad.append(f"{fn.name}() 第 {sub.lineno} 行 self.{a}.{sub.func.attr}()")
+    return bad
+
+
+def _graph_fingerprint(plug: Any) -> tuple:
+    """图状态的指纹 —— 三个载体逐项排好序。"""
+    return (
+        tuple(sorted((k, tuple(sorted(v))) for k, v in plug.edges.items())),
+        tuple(sorted((k, tuple(sorted(v))) for k, v in plug._rev.items())),
+        tuple(sorted(plug._sinks)),
+    )
+
+
+class _MutatingReach:
+    """**已知答案的对照组**：构造之后**改图** —— 前提检查必须把它抓出来。
+
+    没有这个类，「AST 扫不出写入」可能只是**扫描器不会扫**（空转），
+    而不是**代码干净**。两者的输出长得一模一样。
+    """
+
+    def __init__(self, edges: dict[str, Any]) -> None:
+        self.edges = {k: frozenset(v) for k, v in edges.items()}
+        self._rev: dict[str, set[str]] = {}
+        self._sinks: frozenset[str] = frozenset()
+
+    def penalty(self, d: Any, item: Any) -> float:
+        self.edges[str(item["id"])] = frozenset()      # ← 构造之后写图
+        self._rev.setdefault("x", set()).add("y")      # ← 就地改
+        return 0.0
+
+
+def test_reach_cache_premise() -> None:
+    """★ 缓存的**前提**：「图在 `__init__` 之后只读」—— 这条必须被检查。
+
+    ## 为什么缓存需要一个前提
+
+    插件的缓存键是 `payload`、值是**整条 BFS 输出**（见 `plugins/reach.py` 模块
+    docstring）。键能选得这么粗，靠的是**同一个 payload 的答案永远一样** ——
+    而这一条等价于**图不变**。
+
+    Acar / Blelloch / Harper 2002（POPL，§2）把它点名为**关键要求**：
+
+    > **The key requirement, therefore, is not that there are no side-effects,
+    > but rather that all data is persistent** (i.e., the closure's environment
+    > cannot be modified).
+
+    ⇒ 图一旦可变，缓存里就是**过期值**：判据照旧报「是」，而它比的是**上一版图的答案**
+    —— 「空转与通过长得一模一样」。
+
+    ## 三条，每条都能红
+
+        ① **静态**：AST 扫出「`self.edges` / `self._rev` / `self._sinks`
+           只在 `__init__` 里被写」
+        ② **对照**：拿一个**构造后改图**的类跑同一个扫描 ⇒ **必须扫得出来**
+           （否则 ① 只是「扫描器不会扫」）
+        ③ **行为**：把插件跑完一遍完整用法（`hit` / `penalty` / `split` / `merge`）
+           ⇒ 图指纹**逐项未变**
+    """
+    from ldv.plugins.reach import ReachPlugin
+
+    # --- ① 静态：写入只在 __init__ 里 ------------------------------------
+    bad = _graph_writes_outside_init(ReachPlugin)
+    ok("★ [缓存前提] `ReachPlugin` 的图状态（`edges` / `_rev` / `_sinks`）"
+       "**只在 `__init__` 里被写**",
+       not bad, f"`__init__` 之外有 {len(bad)} 处写入：{bad[:3]}")
+
+    # --- ② 对照：扫描器**真的会扫** --------------------------------------
+    caught = _graph_writes_outside_init(_MutatingReach)
+    ok("★ [缓存前提] 对照：一个**构造后改图**的类 ⇒ 同一个扫描**必须**报出来"
+       "（否则上面那条是空转）",
+       len(caught) >= 2, f"只报出 {len(caught)} 处：{caught[:3]}")
+
+    # --- ③ 行为：跑完一遍完整用法，图指纹不变 ----------------------------
+    loaded = load()
+    if loaded is None:
+        ok("★ [缓存前提] 语料在（这条测试要真语料，缺了就报「跳过」不是「过」）",
+           False, "找不到语料")
+        return
+    nodes, edges, _ = loaded
+    plug = ReachPlugin(edges)
+    before = _graph_fingerprint(plug)
+
+    k, _ = build_reach(nodes, edges)
+    items_sorted = sorted(k.items)
+    for d in k.all_directions():
+        plug.hit(d, Query(ideal=frozenset({items_sorted[0]})))
+        plug.reachable(frozenset(d.payload))
+        for i in items_sorted:
+            plug.penalty(d, k.items[i])
+        if k.children_of(d):
+            plug.merge(list(k.children_of(d)))          # 子方向是 `Direction` 对象
+    for i in items_sorted:
+        plug.signature(i)
+
+    after = _graph_fingerprint(plug)
+    ok("★ [缓存前提] 行为侧：跑完 `hit` / `penalty` / `split` / `merge` 之后"
+       "**图指纹逐项未变**",
+       before == after,
+       "图被改过 —— 缓存里的值是过期的（假绿）")
+    st = plug.cache_stats()
+    ok("★ [缓存前提] 这一遍确实**用到了缓存**（命中 > 0）—— 否则前提查的是空气",
+       st["distance 命中"] > 0 and st["reachable 命中"] > 0, f"读数 {st}")
+    print(f"    · reach 缓存读数：{st}（**度量**，不进退出码）")
+
+
+def test_reach_cache_transparency() -> None:
+    """★ 缓存**不许改变数值** —— 三臂对照，两个改动分开查。
+
+    ## 这次同时动了两件事
+
+        改动 1  **算法**：`distance` 从「每项一遍正向 BFS」改成
+                「一遍**多源反向** BFS ⇒ 所有项的距离」
+        改动 2  **缓存**：键 `payload`，值 = 整条 BFS 输出
+
+    混在一起就分不清谁错了 ⇒ 三臂对**参考实现**比：
+
+        臂 REF      **改动前逐字**的 `distance` / `reachable` / `signature`
+        臂 NO-CACHE 改动 1，缓存关
+        臂 CACHE    改动 1 + 2
+
+    读法：
+
+        REF≠NO-CACHE           ⇒ 问题在**算法**（多源反向 BFS 写错了）
+        NO-CACHE 绿、CACHE 红  ⇒ 问题在**缓存**（串台 / 过期）
+        两臂一致地红           ⇒ 问题在**两边共用的那部分**（图的构造）
+
+    ⚠️ **顺序**：先把参考值**全**算出来，再让每个臂各跑一遍（各用全新实例）。
+       反过来的话，预热步骤会把某个臂的缓存烤热 ⇒ 注入被掩盖
+       （`test_cover_oracle_transparency` 实测踩过这一条）。
+
+    ## 逐条钉住
+
+        ① 对照用的 payload **真的算出东西**（距离不全为 0）—— 否则「相同」可能只是「都空」
+        ② 臂 NO-CACHE vs REF 逐项相同（**算法**那一步干净）
+        ③ 臂 CACHE vs REF 逐项相同（**Acar：值算没算都一样**）
+        ④ 臂 CACHE vs NO-CACHE 逐项相同（只含缓存那一步）
+        ⑤ **注入**「缓存返回错值（串台）」⇒ ③ 必须红，而 ② 必须**仍然绿**
+           —— 精确命中「问题在缓存里」，不是一片红
+        ⑥ 缓存确实在命中（度量，不进退出码）
+    """
+    from ldv.plugins.reach import ReachPlugin
+
+    loaded = load()
+    if loaded is None:
+        ok("★ [缓存透明] 语料在（这条测试要真语料，缺了就报「跳过」不是「过」）",
+           False, "找不到语料")
+        return
+    nodes, edges, _ = loaded
+    edges = {k: frozenset(v) for k, v in edges.items()}
+    rev: dict[str, set[str]] = {k: set() for k in edges}
+    for src, dsts in edges.items():
+        for dst in dsts:
+            rev.setdefault(dst, set()).add(src)
+
+    k, _ = build_reach(nodes, edges)
+    items_sorted = sorted(k.items)
+    dirs = sorted(k.all_directions(), key=lambda d: (d.rank, d.did))
+
+    #: 生产顺序（`checks/contract.py` 的 `b3`）：同层内**同一个 payload 连续用满 n 次**
+    pairs: list[tuple[Any, str]] = []
+    for rank in sorted({d.rank for d in dirs}):
+        layer = [d for d in dirs if d.rank == rank]
+        if len(layer) < 2:
+            continue
+        for d in layer:
+            for i in items_sorted:
+                pairs.append((d, i))
+    payloads = [frozenset(d.payload) for d, _ in pairs]
+
+    # --- 参考实现（改动前逐字）—— **先全算出来** ------------------------
+    ref_pen = [_ref_distance(edges, i, frozenset(d.payload)) for d, i in pairs]
+    ref_reach = [_ref_reachable(rev, frozenset(d.payload)) for d in dirs]
+    ref_sig = [_ref_signature(edges, i) for i in items_sorted]
+
+    # --- ① 对照不是空转：距离里必须有非 0 项 ----------------------------
+    nonzero = sum(1 for v in ref_pen if v)
+    ok("★ [缓存透明] 对照用的代价值**真的算出东西**（有非 0 距离）"
+       "—— 否则「相同」可能只是「都返回同一个常数」",
+       nonzero > 0, f"非 0 {nonzero}/{len(ref_pen)}")
+
+    # --- 三个臂（各用全新实例） ------------------------------------------
+    probe = Query(ideal=frozenset({items_sorted[0]}))
+
+    def arm(cache: bool, cls: type = ReachPlugin):
+        p = cls(edges, cache=cache)
+        #: 代价按 `b3` 的顺序：`for d in layer: for i in items` —— 同一 payload 连续 n 次
+        pen = [p.penalty(d, k.items[i]) for d, i in pairs]
+        rea = []
+        for d in dirs:
+            #: ⚠️ 同一个 payload **连着问两遍**才是生产的形状：`hit` 内部**也**调
+            #:    `reachable`（`b2` 的 109k 次就是它）。只问一遍的话可达那一路
+            #:    命中恒为 0 —— 量出来的是**测试的形状**，不是生产的。
+            rea.append(p.reachable(frozenset(d.payload)))   # 第一遍：算
+            p.hit(d, probe)                                 # 第二遍：命中
+        sig = [p.signature(i) for i in items_sorted]
+        return p, pen, rea, sig
+
+    p_nc, pen_nc, rea_nc, sig_nc = arm(False)
+    p_c, pen_c, rea_c, sig_c = arm(True)
+
+    def diff(xs, ys) -> list[str]:
+        return [f"#{i}: {x!r} ≠ {y!r}" for i, (x, y) in enumerate(zip(xs, ys)) if x != y]
+
+    # --- ② 算法那一步：NO-CACHE vs REF -----------------------------------
+    d_pen = diff(pen_nc, ref_pen)
+    ok("★ [缓存透明] 臂 NO-CACHE 的 `penalty` 与**参考实现**逐项相同"
+       "（多源反向 BFS 那一步干净）",
+       not d_pen, f"{len(pairs)} 对里有 {len(d_pen)} 处不同：{d_pen[:2]}")
+    ok("★ [缓存透明] 臂 NO-CACHE 的 `reachable` / `signature` 与参考逐项相同",
+       not diff(rea_nc, ref_reach) and not diff(sig_nc, ref_sig),
+       f"reachable {len(diff(rea_nc, ref_reach))} 处 / "
+       f"signature {len(diff(sig_nc, ref_sig))} 处")
+
+    # --- ③ 加上缓存：CACHE vs REF ----------------------------------------
+    d_pen_c = diff(pen_c, ref_pen)
+    ok("★ [缓存透明] 臂 CACHE 的 `penalty` 与**参考实现**逐项相同"
+       "（Acar：值算没算都一样）",
+       not d_pen_c, f"{len(pairs)} 对里有 {len(d_pen_c)} 处不同：{d_pen_c[:2]}")
+    ok("★ [缓存透明] 臂 CACHE 的 `reachable` / `signature` 与参考逐项相同",
+       not diff(rea_c, ref_reach) and not diff(sig_c, ref_sig),
+       f"reachable {len(diff(rea_c, ref_reach))} 处 / "
+       f"signature {len(diff(sig_c, ref_sig))} 处")
+
+    # --- ④ 只含缓存那一步：CACHE vs NO-CACHE ------------------------------
+    d_c = diff(pen_c, pen_nc)
+    ok("★ [缓存透明] 臂 CACHE 与 NO-CACHE 的 `penalty` 逐项相同（只含缓存那一步）",
+       not d_c, f"{len(d_c)} 处不同：{d_c[:2]}")
+
+    # --- ⑤ 注入：缓存**串台** ⇒ ③ 红，② 仍绿 -----------------------------
+    #: ⚠️ 注入必须**继承** `ReachPlugin` 而不是包一层：`penalty` 内部调的是
+    #:    `self.distance` / `self._distances`，包一层的话 `self` 是**被包的实例**，
+    #:    覆盖永远轮不到 —— 注入会静默失效（那才是最坏的一种「注入」）。
+    class _WrongKeyReach(ReachPlugin):   # noqa: D401
+        """**注入**：键取错 —— 命中时返回缓存里**第一个** payload 的结果。
+
+        真实里最容易犯的正是这个（「反正都是同一批项，差不多就复用」），
+        而它的症状**不是报错**，是**静默串台**：第二个 payload 拿到第一个的答案
+        ⇒ 判据拿错的值去比 ⇒ **假绿**。所以它必须**只**打缓存那一路。
+        """
+
+        def _distances(self, anchors: frozenset[str]) -> dict[str, float]:
+            if self.cache and self._dist_cache:
+                self.n_distance_hit += 1
+                return next(iter(self._dist_cache.values()))     # ← 串台
+            return super()._distances(anchors)
+
+        def reachable(self, anchors: Any) -> frozenset[str]:
+            if self.cache and self._reach_cache:
+                self.n_reachable_hit += 1
+                return next(iter(self._reach_cache.values()))    # ← 串台
+            return super().reachable(anchors)
+
+    _, pen_bad, rea_bad, sig_bad = arm(True, _WrongKeyReach)
+    d_bad = diff(pen_bad, ref_pen)
+    ok("★ [缓存透明] 注入「缓存返回**别的 payload** 的值（串台）」"
+       "⇒ 与参考**必须**对不上（③ 不是空转）",
+       bool(d_bad), f"注入后仍然全同 —— 那 ③ 就是空转（{len(pairs)} 对）")
+    _, pen_bad_nc, _, _ = arm(False, _WrongKeyReach)
+    ok("★ [缓存透明] 同一次注入**精确**命中：关掉缓存那一臂**仍然绿**"
+       "（⇒ 问题在缓存里，不是一片红）",
+       not diff(pen_bad_nc, ref_pen),
+       f"关掉缓存也红了 {len(diff(pen_bad_nc, ref_pen))} 处 ⇒ 注入没打在缓存上")
+    ok("★ [缓存透明] 同一次注入在 `reachable` 那一路也**必须**对不上",
+       bool(diff(rea_bad, ref_reach)),
+       "可达缓存那一路注入后仍然全同 ⇒ 那条注入没打上")
+    ok("★ [缓存透明] 注入也**只**打 `penalty` / `reachable` 两处缓存，"
+       "`signature` 那一路不受影响（对照，说明注入不是无差别污染）",
+       not diff(sig_bad, ref_sig), f"{len(diff(sig_bad, ref_sig))} 处不同")
+
+    # --- ⑥ 缓存确实在命中（度量） ----------------------------------------
+    st = p_c.cache_stats()
+    ok("★ [缓存透明] 缓存**确实在命中**（命中 > 0）—— 否则缓存是直通，白占内存",
+       st["distance 命中"] > 0 and st["reachable 命中"] > 0, f"读数 {st}")
+    print(f"    · reach 缓存读数：调用 {st['distance 调用']} / 命中 {st['distance 命中']}"
+          f"（可达 {st['reachable 调用']}/{st['reachable 命中']}）"
+          f"（**度量**，不进退出码）")
+
+
+def _ref_distance(edges: dict[str, frozenset[str]], item_id: str,
+                  anchors: frozenset[str]) -> float:
+    """**改动前逐字**的 `ReachPlugin.distance` —— 每项一遍**正向** BFS。"""
+    from collections import deque
+
+    if item_id in anchors:
+        return 0.0
+    seen = {item_id}
+    q = deque([(item_id, 0)])
+    while q:
+        cur, dist = q.popleft()
+        for nxt in edges.get(cur, ()):
+            if nxt in anchors:
+                return float(dist + 1)
+            if nxt not in seen:
+                seen.add(nxt)
+                q.append((nxt, dist + 1))
+    return float(len(edges) + 1)
+
+
+def _ref_reachable(rev: dict[str, set[str]], anchors: frozenset[str]) -> frozenset[str]:
+    """**改动前逐字**的 `ReachPlugin.reachable` —— 单源反向 BFS。"""
+    from collections import deque
+
+    seen = set(anchors)
+    q = deque(seen)
+    while q:
+        cur = q.popleft()
+        for prev in rev.get(cur, ()):
+            if prev not in seen:
+                seen.add(prev)
+                q.append(prev)
+    return frozenset(seen)
+
+
+def _ref_signature(edges: dict[str, frozenset[str]], item_id: str) -> frozenset[str]:
+    """**改动前逐字**的 `ReachPlugin.signature`（含每次重算 `sinks`）。"""
+    from collections import deque
+
+    sinks = {n for n in edges if not edges[n]}
+    if item_id in sinks:
+        return frozenset({item_id})
+    seen = {item_id}
+    q = deque([item_id])
+    found: set[str] = set()
+    while q:
+        cur = q.popleft()
+        if cur in sinks:
+            found.add(cur)
+            continue
+        for nxt in edges.get(cur, ()):
+            if nxt not in seen:
+                seen.add(nxt)
+                q.append(nxt)
+    return frozenset(found) or frozenset({item_id})
+
+
 def main() -> int:
     for fn in (test_tri, test_loader, test_kernel, test_selfopt, test_sequence,
                test_flows, test_emergence, test_divergence, test_equivalence,
                test_rebuild, test_out_of_scope, test_stay_at_parent,
                test_cover_leak_baseline, test_cover_oracle_transparency,
-               test_b3_reduction_premise, test_tree_premise,
+               test_b3_reduction_premise, test_reach_cache_premise,
+               test_reach_cache_transparency, test_tree_premise,
                test_query_hit_items):
         fn()
     total = len(PASS) + len(FAIL)

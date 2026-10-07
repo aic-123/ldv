@@ -237,6 +237,11 @@ def b3_penalty_comparable(kernel: Any, plugin: Any, rep: Report) -> None:
     那个循环**证明上不可能命中**（理由见函数体注释），已删除。
     前提由 `test_b3_reduction_premise` 钉住 —— **前提一破就得加回来**。
 
+    ⚠️ 删掉之后 `b3` 在 3907 项上是 **38.85 s**（读数见 `MEASUREMENTS` 结果八）。
+    它剩下的形状是 `O(Ln)` = **30,521,484 次** `call_penalty`，
+    所以真正的瓶颈**移到了插件里**（每次调用内部跑一遍图遍历）——
+    那一条由 `plugins/reach.py` 的缓存治，与本函数无关。
+
     ⚠️ 删循环时另外两处**必须同时看**，否则省下的时间会从别的地方回来：
 
     ① **排序只做一次**。`sorted(kernel.items)` 原来在 `for d in layer:` **里面**
