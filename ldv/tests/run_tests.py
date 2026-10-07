@@ -939,10 +939,22 @@ def test_equivalence() -> None:
 
     ★ **⑤ 用的合环图是人工造的；缺口在公开数据集上也露了** ——
       OpenAlex 引用图切片（281 项 / 1008 边）有 6 个 ≥2 的强连通分量
-      ⇒ `B17`(reach) 红，被拆开的类正好 6 个（`ldv/tests/test_intake.py`）。
+      ⇒ `B17`(reach) 的读数「被拆开的等价类」正好 6 个（`ldv/tests/test_intake.py`）。
       人工小图可以被人说成「构造出来的边角情形」，公开语料不能。
-      ⇒ 也正因为这条红，`test_intake.py` 的判据 ② 从「红数为 0」改成了
-      **基线守卫** —— 「红数为 0」等于要求一条**已知的**缺口消失。
+
+    ⚠️ **2026-10-07：(b) 那一半在 `reach` 上从判据降为度量**，所以 ⑤ 断言的东西
+      也跟着换了位置：
+
+        改前  合环图上 `B17` **红**（判据非空转）
+        改后  合环图上 `B17` **过**（判据**有意**不判这条），
+              而**读数**「被拆开的等价类」> 0（**度量**非空转）
+
+      ⇒ 「判据不再红」与「现象消失」是两件事。判据是**有意**收窄的
+        （`reach` 的 `split` 比语义更细是 §K8 允许的假阳），现象仍在、由读数承担。
+        这一条对照的**作用没变**：它仍然在证明「这条判据/读数**能**动」，
+        只是从判据那一列移到了度量那一列。
+      ⇒ 也正因为 (b) 在 reach 上不判了，`test_intake.py` 的判据 ② 才有机会
+        从「基线守卫」回到更简单的形态 —— 但**先不动它**（那是另一处裁定）。
     """
     from ldv.checks._fixtures import equiv_classes
     from ldv.checks.equivalence import absorption_profile, b17_leaf_is_equivalence_class
@@ -963,7 +975,7 @@ def test_equivalence() -> None:
         cls = equiv_classes(which, nodes, edges)
         prof = absorption_profile(kernel, cls)
         rep = Report(plugin=which, expects=("B17",))
-        b17_leaf_is_equivalence_class(kernel, cls, rep)
+        b17_leaf_is_equivalence_class(kernel, cls, rep, which)
         a = rep.assertions[0]
 
         if a.result is Tri.UNEXPANDED:
@@ -1018,8 +1030,8 @@ def test_equivalence() -> None:
     base_k, _ = build_with(KeysetPlugin)
     bad_k, _ = build_with(_GiveUpEarly)
     rep_b, rep_i = Report(expects=("B17",)), Report(expects=("B17",))
-    b17_leaf_is_equivalence_class(base_k, cls_k, rep_b)
-    b17_leaf_is_equivalence_class(bad_k, cls_k, rep_i)
+    b17_leaf_is_equivalence_class(base_k, cls_k, rep_b, "keyset")
+    b17_leaf_is_equivalence_class(bad_k, cls_k, rep_i, "keyset")
     ok("注入「能分也判分不开」⇒ B17 红",
        rep_b.assertions[0].result is Tri.YES and rep_i.assertions[0].result is Tri.NO,
        f"基线 {rep_b.assertions[0].result} / 注入 {rep_i.assertions[0].result}")
@@ -1040,9 +1052,14 @@ def test_equivalence() -> None:
         ck.insert(nid)
     cyc_cls = equiv_classes("reach", cyc_nodes, cyc_edges)
     rep_c = Report(expects=("B17",))
-    b17_leaf_is_equivalence_class(ck, cyc_cls, rep_c)
-    ok("★ 非空转：合环图上 B17 **红** —— a/b 互相可达却被劈到两个子方向",
-       rep_c.assertions[0].result is Tri.NO, rep_c.assertions[0].detail)
+    b17_leaf_is_equivalence_class(ck, cyc_cls, rep_c, "reach")
+    ok("★ 非空转：合环图上 B17 **过** —— (b) 在 `reach` 上**已降为度量**，不判",
+       rep_c.assertions[0].result is Tri.YES, rep_c.assertions[0].detail)
+    cyc_torn = absorption_profile(ck, cyc_cls)["被拆开的等价类"]
+    ok("★★ 而**度量**在合环图上非空转：被拆开的等价类 > 0"
+       "（判据不再红 ≠ 现象消失；现象改由读数承担）",
+       cyc_torn > 0,
+       f"被拆开的等价类 {cyc_torn} 个 —— 若为 0，说明这条读数也是空转")
     ok("★ 且那一层是**重复覆盖**（两个子方向覆盖完全相同 ⇒ §K2 第二半的缺口）",
        ck.plugin.reachable(ck.direction("D3").payload)
        == ck.plugin.reachable(ck.direction("D4").payload),
@@ -1715,7 +1732,7 @@ def test_cover_oracle_transparency() -> None:
 
     ## 为什么这条必须单独存在
 
-    `coverage_of` 是覆盖族的 **ground truth**（`B16` / 健全性 / 覆盖不漏 / 进步量）。
+    `coverage_of` 是覆盖族的 **ground truth**（`B16` / 健全性 / 覆盖不漏 / 细化量）。
     它算错时**错的是判据的答案本身**，而且错法很隐蔽：
 
         少算一项   ⇒ 某方向被报「成员越界」  ⇒ 假红
@@ -1883,7 +1900,7 @@ def test_cover_oracle_transparency() -> None:
                 if k.children_of(d):
                     fresh(d.payload)
                     for kid in k.children_of(d):
-                        fresh(kid.payload)  # 覆盖不漏 / 进步量
+                        fresh(kid.payload)  # 覆盖不漏 / 细化量
         st = fresh.stats
         ok(f"★ [oracle·{which}] 去重**确实在发生**（命中 > 0）"
            f" —— 否则缓存是直通，白占内存",

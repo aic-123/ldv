@@ -31,7 +31,7 @@
    那一段证明上不可能命中，见 `ldv/MEASUREMENTS.md` 结果八；
    **剩下的建表那半**是「插件对同一 payload 反复重算」那个病，位置在**插件里**。
 
-⚠️ 覆盖族（健全性 / `B16` / 覆盖不漏 / 进步量）也调同一个 oracle，但它**已经不是大头**：
+⚠️ 覆盖族（健全性 / `B16` / 覆盖不漏 / 细化量）也调同一个 oracle，但它**已经不是大头**：
    3907 项上整族 **0.69 s**（改前 49.71 s —— 那个 oracle 按**正向**闭包逐项扫，
    且 85% 的调用在**重算**）。读数、根因与「**渐近没修**」那条边界见
    `ldv/MEASUREMENTS.md` 结果七。
@@ -211,7 +211,7 @@ def run_one(which: str, loaded, probes: bool = True) -> Report:
     b18_cover_leak_baseline({f"{which}|batch": leak_b, f"{which}|maintenance": leak_i},
                             rep, corpus=corpus_fingerprint(nodes, edges))
 
-    # B19 —— 进步量守卫。**跨次数**的性质：反复声称能分、却连续 N 次没让覆盖变细。
+    # B19 —— 变细守卫。**跨次数**的性质：反复声称能分、却连续 N 次没让覆盖变细。
     # 与 `§K2 判空`（单次性质）不是一回事，不能合并。
     prog = progress_profile(kernel, cover)
     rep.note(render_progress(prog, which))
@@ -230,8 +230,9 @@ def run_one(which: str, loaded, probes: bool = True) -> Report:
 
     # B17 —— 「叶 = 不可分等价类」。**外生 oracle**，不调插件（否则共享盲点）。
     # 它同时是 `C8` §7 第 2 步的实测：判空点上有没有可搬的区分信息。
+    # ⚠️ 必须把 `which` 传进去：(b) 那一半在 `reach` 上**只报不判**（§7.2）。
     classes = equiv_classes(which, nodes, edges)
-    b17_leaf_is_equivalence_class(kernel, classes, rep)
+    b17_leaf_is_equivalence_class(kernel, classes, rep, which)
 
     st = kernel.stats()
     by_rank: dict[int, int] = {}

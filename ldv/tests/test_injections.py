@@ -648,15 +648,25 @@ def inj_b18(nodes, edges, injected: bool) -> Report:
 
 # ═══ B19 ═════════════════════════════════════════════════════════════════════
 
-class _ChildKeepsParentPayload:
-    """`B19` 注入：**至少一侧**的子方向 payload 退回**父的 payload**。
+class _SplitOffOne:
+    """`B19` 注入：**每次只切掉一个**锚点，其余全给另一侧。
 
-    ⇒ 那一侧的覆盖 = 父的覆盖 ⇒ `细化量(d) = |覆盖(d)| − max_k |覆盖(k)| = 0` ⇒ 每次展开都「无进步」。
+    ⇒ 两侧的覆盖**都不比父小**（环上任意非空子集都撑满整个环）
+    ⇒ 每次展开都「没变细」，而链长 = 项数 − 1（**不靠平衡二分**）。
 
-    ⚠️ **这不是硬凑的坏代码** —— 它正是设计文档 §10.2 出路 (3)
-       「子方向的 payload 从**父的 payload** 派生」的形状：`payload(子) ⊇ payload(父)`
-       ⇒ `覆盖(子) ⊇ 覆盖(父)`（`覆盖` 对 payload 单调）⇒ 每次展开都没有细化量。
-       ⇒ 这就是 (3) 的代价的**计量形态**：它拿「覆盖变细」换了「成员正确」。
+    ## ⚠️ 两条**走不通**的注入路，写在这里免得下一个人重走
+
+        路一  「**一个**子退回父 payload」（**原注入**）
+              ⇒ 另一侧的子仍然**严格更小** ⇒ 新谓词下**不算**没变细 ⇒ 注入不红
+        路二  「**每个**子都退回父 payload」
+              ⇒ 两侧的代价都是 0 ⇒ 内核把成员全判给**靠前**那个
+              ⇒ 另一侧为空 ⇒ `§K2` 判「分不开」⇒ **这一层根本不建** ⇒ 判据「未展开」
+
+    路二的根因值得记住：`reach` 的 `代价 == 0 ⟺ 项 ∈ payload`（**不是** ∈ 覆盖）。
+    所以「两侧覆盖都 ⊇ 父」时，成员在两侧**都**是 0 分 ⇒ 必然平手。
+
+    ⇒ 能红的形状只能是「**两侧代价可区分，但覆盖都不变小**」——
+      这正是本类：一侧拿 1 个锚点、另一侧拿其余，各自的成员在自己那侧都是 0 分。
     """
 
     def __init__(self, inner):  # noqa: ANN001
@@ -667,41 +677,53 @@ class _ChildKeepsParentPayload:
         return getattr(self.inner, k)
 
     def split(self, parent, items):  # noqa: ANN001, ANN201
-        got = self.inner.split(parent, items)
-        if got is None:
+        ids = sorted(str(it["id"]) for it in items)
+        if len(ids) < 2:
             return None
-        return (got[0], frozenset(parent.payload))      # ← 注入：退回父的 payload
+        return (frozenset({ids[0]}), frozenset(ids[1:]))
 
 
-def _deep_chain(n: int = 16):
-    """一条**长度 n 的链** —— 专门用来把「无进步连续段」撑到 N=10 以上。
+def _cycle(n: int = 16):
+    """一个 `n` 项的**有向环**：`c00 → c01 → … → c{n-1} → c00`。
 
-    ⚠️ 真语料（36 项）的树只有 7 层，`N = 10` 在那里**永远不会红**。
-       「真语料上不红」与「判据是空转」是两件事 —— 要分开，就得造一个够深的输入。
-       方向 C 的 trie 深度随序列长度增长，所以这里造一条长链。
+    ⚠️ **为什么 `B19` 的夹具必须是环、不能是链**（2026-10-07 改；实测见
+       `outputs/_probe_b19_injection.py`）：
+
+        链   反向锥逐级**严格嵌套** ⇒ 任何真子集的覆盖都严格更小
+             ⇒ 「没变细」**按构造不可能出现** ⇒ 判据在这个夹具上**永远绿**
+        环   每一项的反向锥都 = **整个环**（强连通）
+             ⇒ 任意非空锚点集都撑满同一个覆盖 ⇒ 「没变细」可以**连续成立**
+
+    ⇒ 旧夹具是一条 16 项的**链**，那是给**旧谓词**（`细化量 ≤ 0`）造的 ——
+      旧谓词量的是「切得多**不匀**」，链上到处都是（实测 31/31）；
+      新谓词量的是「有没有真**变细**」，链上一次都没有（实测 **0/31**）。
+      **谓词换了聚合（`max` → `min`），夹具必须跟着换。** 两者是一对。
     """
     from ldv.corpus.loader import Node
 
-    ids = [f"s{i}" for i in range(n)]
+    ids = [f"c{i:02d}" for i in range(n)]
     nodes = {i: Node(id=i, fields={"type": i}, keys=frozenset({i})) for i in ids}
-    edges = {i: (frozenset({ids[k + 1]}) if k + 1 < n else frozenset())
-             for k, i in enumerate(ids)}
+    edges = {ids[k]: frozenset({ids[(k + 1) % n]}) for k in range(n)}
     return nodes, edges
 
 
 def inj_b19(nodes, edges, injected: bool) -> Report:
-    from ldv.plugins.sequence import SequencePlugin
+    """**基线绿 + 注入红**（同一个环、同一个方向、同一个 oracle，只有 `split` 不同）：
 
-    dn, de = _deep_chain(16)
-    # cap 拉长，否则 `sequences()` 只给 6 步 ⇒ 树只有 7 层，够不到 N=10。
-    inner = SequencePlugin(sequences(dn, de, cap=14))
-    plug = _ChildKeepsParentPayload(inner) if injected else inner
+        基线（原插件，平衡二分）      最长没变细连续段 = log2(16) = **4**  < 10 ⇒ 绿
+        注入（每次只切一个）          最长没变细连续段 = 16 − 1   = **15** ≥ 10 ⇒ 红
+    """
+    from ldv.plugins.reach import ReachPlugin
+
+    dn, de = _cycle(16)
+    inner = ReachPlugin(de)
+    plug = _SplitOffOne(inner) if injected else inner
     k = Kernel(plug, make_items(dn))
-    k.build(frozenset({()}))
+    k.build(frozenset(dn))
     for nid in sorted(dn):
         k.insert(nid)
     rep = _rep()
-    b19_progress_guard(progress_profile(k, coverage_of("sequence", dn, de)), rep)
+    b19_progress_guard(progress_profile(k, coverage_of("reach", dn, de)), rep)
     return rep
 
 
@@ -740,7 +762,7 @@ def inj_b17(nodes, edges, injected: bool) -> Report:
     for nid in sorted(nodes):
         k.insert(nid)
     rep = _rep()
-    b17_leaf_is_equivalence_class(k, equiv_classes("keyset", nodes, edges), rep)
+    b17_leaf_is_equivalence_class(k, equiv_classes("keyset", nodes, edges), rep, "keyset")
     return rep
 
 
@@ -959,22 +981,22 @@ def metric_cover_leak(nodes: Any, edges: Any, injected: bool) -> bool:
     return cover_leak_profile(k, coverage_of("sequence", nodes, edges))["漏项数"] == 0
 
 
-# 「进步量」也是度量：**每次展开的覆盖细化量**。注入：子方向退回父的 payload。
-# ⚠️ 它在**真语料**上只能量到「无进步 10/35、最长连续段 4」—— 树只有 7 层，
-#    够不到 N=10。要证明这个度量对缺陷敏感，得造一个**够深**的输入（见 `_deep_chain`）。
+# 「细化量」也是度量：**每次展开的覆盖细化量**。注入：每次只切掉一个锚点。
+# ⚠️ 夹具是**环**不是链 —— 链上「没变细」按构造不可能出现（见 `_cycle`）。
+#    读数在链上恒为 0，注入也动不了它 ⇒ 那会是一条**假绿**的度量对照。
 
 def metric_progress(nodes: Any, edges: Any, injected: bool) -> bool:
-    """「每次展开是否都让覆盖变细」—— 基线 True，注入 False。"""
-    from ldv.plugins.sequence import SequencePlugin
+    """「最长没变细连续段」这个读数 —— 基线 **4**（平衡二分的深度 `log2(16)`），注入 **15**。"""
+    from ldv.plugins.reach import ReachPlugin
 
-    dn, de = _deep_chain(16)
-    inner = SequencePlugin(sequences(dn, de, cap=14))
-    plug = _ChildKeepsParentPayload(inner) if injected else inner
+    dn, de = _cycle(16)
+    inner = ReachPlugin(de)
+    plug = _SplitOffOne(inner) if injected else inner
     k = Kernel(plug, make_items(dn))
-    k.build(frozenset({()}))
+    k.build(frozenset(dn))
     for nid in sorted(dn):
         k.insert(nid)
-    return progress_profile(k, coverage_of("sequence", dn, de))["无进步展开"] == 0
+    return progress_profile(k, coverage_of("reach", dn, de))["最长没变细连续段"] == 4
 
 
 # ═══ 驱动 ════════════════════════════════════════════════════════════════════
@@ -1092,7 +1114,7 @@ def main() -> int:
                       ("度量·覆盖嵌套", metric_cover_nesting),
                       ("度量·健全性（维护路径）", metric_soundness),
                       ("度量·覆盖不漏", metric_cover_leak),
-                      ("度量·进步量", metric_progress)):
+                      ("度量·细化量", metric_progress)):
         try:
             m_base = fn(nodes, edges, False)
             m_shot = fn(nodes, edges, True)

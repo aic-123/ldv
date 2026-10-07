@@ -535,7 +535,7 @@ def coverage_of(which: str, nodes: dict[str, Node],
     """返回 `cover(payload) -> frozenset[str]`（只落在语料内的那部分）。
 
     与 `equiv_classes` **并列**放在夹具里 —— 两者是同一类东西：按方向的定义重算，
-    不调被测对象。`B16` / 健全性 / 覆盖不漏 / 进步量守卫 四条共用它。
+    不调被测对象。`B16` / 健全性 / 覆盖不漏 / 变细守卫 四条共用它。
 
     ## `dedup=False` 是给**单变量对照**用的，不是给生产用的
 

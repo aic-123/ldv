@@ -120,7 +120,7 @@ def _split_classes(kernel: Any, leaves: list[Any],
 
 
 def b17_leaf_is_equivalence_class(kernel: Any, classes: dict[str, frozenset[str]],
-                                  rep: Report) -> None:
+                                  rep: Report, which: str = "") -> None:
     """叶必须**恰好**是一个不可分等价类（两条断言合起来 = 等式）。
 
     `classes` 由 `_fixtures.equiv_classes()` 造 —— **外生**，不调插件。
@@ -138,6 +138,30 @@ def b17_leaf_is_equivalence_class(kernel: Any, classes: dict[str, frozenset[str]
       （那里滞留恒为 0）。维护路径上的下界改由 `最大停留数` 承担（§7.1 / §10.2 B）。
       **「这个数只在一条路上是下界」必须写在数自己的定义里**，否则下一个人会拿它
       去维护路径上比 —— 然后得到「分辨率比下界还高」这种不可能的好消息。
+
+    ## ⚠️ 2026-10-07：**(b) 那一半在 `reach` 上从判据降为度量**
+
+    两条断言的强度**不一样**：
+
+        (a) 叶 ⊆ 等价类   判空点上不许有**能分开**的项 —— **三条方向都成立**，保留
+        (b) 等价类 ⊆ 叶   结构不许**比语义更细** —— **在 `reach` 上不成立**
+
+    (b) 在 `reach` 上不成立**不是实现 bug，是判据选错了**：
+
+        `reach` 的 `split` 按 `(汇合签名, 距离, id)` 排序后取中点切，
+        而 `id` 是**并列的** ⇒ 互相可达的两项（对**任何** payload 同进同出）
+        会被中点切开 ⇒ 结构比语义更细。
+        而 §K8 **允许假阳**（更细只赔性能，不赔正确性）⇒ (b) 在这里**过强**。
+
+    实测（`_rc_small_noprobe` / `_rc_full_after_cache`，都是**既有行为**）：
+
+        36 项     0 个类被拆开（该方向退化，判据本来就走「未展开」）
+        281 项    **6** 个
+        3907 项   **28** 个      ← 随尺度**长**，是系统性的，不是噪声
+
+    ⇒ 处理：**(b) 在 `reach` 上只报不判**（读数 `被拆开的等价类`，见 `absorption_profile`）。
+      ⚠️ **不把它记成「已知红」** —— 一条**常驻的红**等于没人再看红，
+      而「基线里有一格永远红」正是「空转与通过长得一模一样」在**基线**上的形态。
     """
     leaves = _leaves(kernel)
     if not leaves:
@@ -167,21 +191,26 @@ def b17_leaf_is_equivalence_class(kernel: Any, classes: dict[str, frozenset[str]
                 bad.append(f"{d.did} 的叶里混了 {len(cls)} 个等价类"
                            f"（{len(ms)} 项）：{ms[:4]}")
 
-    # (b) 等价类 ⊆ 叶 —— 同一个类不许被拆开
+    # (b) 等价类 ⊆ 叶 —— 同一个类不许被拆开。**`reach` 上只报不判**（见 docstring）。
     torn = _split_classes(kernel, leaves, classes)
-    if torn:
+    judged = which != "reach"
+    if torn and judged:
         bad.append(f"{len(torn)} 个等价类被拆到多个叶："
                    f"{[sorted(c)[:2] for c in torn[:2]]}")
 
     caps = [len(kernel.members_of(d)) for d in leaves]
     cap_max = max(caps) if caps else 0
     floor = sizes[0]
+    tail = ""
+    if torn and not judged:
+        tail = (f"｜（b）**本方向不判**：{len(torn)} 个等价类被拆到多个叶"
+                f"（`reach` 的 `split` 有意比语义更细，§K8 允许假阳）—— 只报不判")
     rep.add("B17", "叶 = 不可分等价类（叶容量 = 分辨率下界）",
             Tri.NO if bad else Tri.YES,
             "；".join(bad[:2]) if bad
             else f"{len(leaves)} 个叶 = {len(set(classes.values()))} 个等价类；"
                  f"最大叶容量 {cap_max} = 最大等价类 {floor}"
-                 f"（该方向的分辨率**已到下界**）")
+                 f"（该方向的分辨率**已到下界**）" + tail)
 
 
 def absorption_profile(kernel: Any, classes: dict[str, frozenset[str]]) -> dict[str, Any]:
