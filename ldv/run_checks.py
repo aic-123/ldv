@@ -1,4 +1,4 @@
-"""跑 B1–B19 —— 设计文档 §7。
+"""跑 B1–B20 —— 设计文档 §7。
 
     python -m ldv.run_checks                # 三个插件都跑
     python -m ldv.run_checks keyset         # 只跑方向 A（键集包含）
@@ -15,7 +15,7 @@
 ---
 ## 先分清「判据」与「探针」—— 这决定了该关哪一个
 
-    判据（进退出码）   B1–B19。**全量上最贵的是 `B3`**（见下），
+    判据（进退出码）   B1–B20。**全量上最贵的是 `B3`**（见下），
                        其次是 `B15`（3 次整建）与 `B8`（n 次插入）
     探针（只报不判）   十个度量。贵的是 `规范重建`（O(n) 次重建 × 每次 O(n)）
 
@@ -75,6 +75,8 @@ from .checks._fixtures import (
     coverage_of,
     equiv_classes,
     keyset_queries,
+    label_bearing,
+    labels,
     load,
     make_builder,
     make_keyset_root,
@@ -99,6 +101,11 @@ from .checks.coverage import (
 from .checks.divergence import divergence_profile, render_divergence
 from .checks.equivalence import absorption_profile, b17_leaf_is_equivalence_class, render_absorption
 from .checks.rebuild import rebuild_profile, render_rebuild
+from .checks.refinement import (
+    b20_semantic_refinement,
+    refinement_profile,
+    render_refinement,
+)
 from .checks.contract import (
     b1_no_false_negative,
     b2_merge_covers,
@@ -121,7 +128,7 @@ from .checks.structure import (
 
 
 PLUGIN_CODES = ("B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8", "B9", "B10", "B11",
-                "B13", "B15", "B16", "B17", "B18", "B19")
+                "B13", "B15", "B16", "B17", "B18", "B19", "B20")
 KERNEL_CODES = ("B12", "B14")
 
 #: 维护路径的初始批大小 —— 与 `C7` / `C10` 的读数口径一致（先建 6、维护 30）。
@@ -216,6 +223,16 @@ def run_one(which: str, loaded, probes: bool = True) -> Report:
     prog = progress_profile(kernel, cover)
     rep.note(render_progress(prog, which))
     b19_progress_guard(prog, rep)
+
+    # B20 —— **语义**变细守卫。`§K2` 第二半的外生判据：内核没有语义，
+    # 所以语义**只能从语料的标注来**（`_fixtures.labels`，不调插件）。
+    # 与 `B19` 成对：**一条守覆盖，一条守标签**；两条都进退出码，但**判的范围不同**。
+    # ⚠️ 判据只在**标签轴**上落（`label_bearing`，由语料决定）：
+    #   `reach` / `sequence` 的 payload 与标签无关 ⇒ 只报不判（报「未展开」）。
+    labs = labels(nodes)
+    ref = refinement_profile(kernel, labs)
+    rep.note(render_refinement(ref, which))
+    b20_semantic_refinement(ref, rep, judged=label_bearing(which, nodes))
 
     # ★ 覆盖 oracle 的**代价读数**（度量，不进退出码）。
     #   ⚠️ **只报一个「快了 N 倍」不够**：一个「从来没命中」的缓存与一个「全命中」的
@@ -356,7 +373,7 @@ def main(argv: list[str]) -> int:
         print("⚠ `--no-probes`：**贵的那几条探针本趟未跑**（`增量≡全量` / `规范重建`）。")
         print("   为什么关：`规范重建` 是 O(n) 次重建 × 每次 O(n)，281 项上 reach 要 446 s，")
         print("   3907 项上是小时级 —— 而它**只报不判**，不进退出码。")
-        print("   ⇒ **关它不可能把红变成绿**：判据（B1–B19）一条不少地全跑。")
+        print("   ⇒ **关它不可能把红变成绿**：判据（B1–B20）一条不少地全跑。")
         print("   报告里会写明哪几行未跑 —— 「没跑」与「跑了但没话说」不共用一行。")
         print()
 

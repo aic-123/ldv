@@ -71,10 +71,61 @@ from .interfaces import (
 )
 from .tri import Tri, fold
 
-#: 倾向权重的下界。`1/位置` 会随位置线性衰减，夹一个下界是为了**限住权重上界**
+#: 曝光曲线的**指数**：`propensity(k) = k ** (-EXPOSURE_ALPHA)`，再夹下界。
+#:
+#:     α = 1.0    `1/k` —— **垂直排序列表**（越往下越看不见）。**本设计的原取值**
+#:     α = 0.0    常数 1 —— **全部同时可见**（位次不产生曝光差）
+#:
+#: ## ★ 实测锚点（2026-10-07，Open Bandit Dataset，`ldv/MEASUREMENTS.md` 结果十三）
+#:
+#: 拿 OBD 的 **`random` 策略**（位次**随机分配** ⇒ 位次效应**因果可识别**）
+#: 量了真实日志里的曝光曲线：
+#:
+#:     策略·活动              实测 1 : 2 : 3          1/k 预测           拟合 α
+#:     ──────────────────────────────────────────────────────────────────────
+#:     random · men       1 : 0.975 : 0.883     1 : 0.5 : 0.333        0.105
+#:     random · women     1 : 0.984 : 1.006     1 : 0.5 : 0.333       -0.003
+#:
+#: ⇒ **`1/k` 在 k=2,3 上把倾向低估 2.0–3.1 倍** ⇒ IPS 权重被**放大**同样倍数
+#:   ⇒ 方差白白增大。**「第一位和第十位差一个量级」在*这个*界面上不成立。**
+#:
+#: ## ⚠️ 但它**量不了本设计的情形** —— 这条必须一起说
+#:
+#: OBD 的三个位次是 ZOZOTOWN 推荐位的**左 / 中 / 右三个同时可见的槽位**，
+#: **不是垂直排序列表**。所以上面那个 α ≈ 0.1 是**横向槽位**的性质，
+#: 而本设计的 `show()` 摆的是**一个竖直的方向列表**。
+#:
+#:     横向槽位（实测）  读法顺序弱 ⇒ 衰减 ≈ 0
+#:     竖直列表（未实测） 读法顺序强 ⇒ 衰减可以很大（检索里 k=1..5 全在首屏，CTR 仍陡降）
+#:
+#: ⇒ **能拿到的公开数据量的是另一种界面几何。** 本设计的几何**还没有数据**，
+#:   所以这里**保守地保留 α = 1.0**（沿用设计文档 §8.1.1 的取值），
+#:   并把参数**显式化** —— 下游的界面一旦能给出自己的位次日志，改这一个数即可标定。
+#:
+#: ⚠️ **翻案条件**：拿到「**竖直**列表 + 位次随机化」的点击日志 ⇒ 用它重跑
+#:   `ldv/tools/measure_exposure.py` 的做法，按实测值改 `EXPOSURE_ALPHA`。
+EXPOSURE_ALPHA = 1.0
+
+#: 倾向权重的下界。`k ** -α` 会随位置衰减，夹一个下界是为了**限住权重上界**
 #: （权重 = 结果 / 倾向 ≤ 1/FLOOR）。不夹的话，一个排在第 500 位的方向
 #: 会拿到 500 倍的权重，方差大到把自优化掀翻。
+#:
+#: ⚠️ **这个下界只在 α 较大时才有意义。** 实测（同上）：α ≈ 0.1 时
+#: `k ** -0.1 = 0.05` 要 `k ≈ 10^13` —— **永远碰不到**，下界成了死代码。
+#: ⇒ 下界与 α **是一对**，改 α 必须回头看一眼这个数还起不起作用。
 PROPENSITY_FLOOR = 0.05
+
+
+def exposure_propensity(position: int) -> float:
+    """曝光模型：**位次 → 倾向**。这是**唯一的实现**。
+
+    ⚠️ 检查（`checks/semantics.py` 的 `_p`）与测试（`run_tests.test_exposure_model`）
+       原来**各写了一份** `max(1.0 / position, PROPENSITY_FLOOR)`。三份同样的公式，
+       改一处就会有两处静默地**报旧值** —— 而「报的是旧公式」与「报的是新公式」
+       在输出上**长得一样**（只有一个数，没有对照）。所以抽成一个函数，谁都调它；
+       `test_exposure_model` 里那条「改 α 看三处跟不跟着动」就是守这件事的。
+    """
+    return max(float(position) ** (-EXPOSURE_ALPHA), PROPENSITY_FLOOR)
 
 
 @dataclass(frozen=True)
@@ -801,12 +852,19 @@ class Kernel:
 
         ## 曝光模型：按**位置**，不按个数
 
-            展示在第 k 位  ⇒  propensity = 1 / k      （并夹在 PROPENSITY_FLOOR 以上）
+            展示在第 k 位  ⇒  propensity = k ** (-EXPOSURE_ALPHA)
+                             （并夹在 PROPENSITY_FLOOR 以上；见那个常量的 docstring）
 
         为什么不能按「展示了几个」：那等于假设**每个位置的曝光概率相同**。
         真实检索里第一位和第十位的曝光概率差一个量级 ——
         按个数算，倾向加权会把偏差**原样带进**自优化，
         而自优化的目的恰恰是修掉这个偏差。
+
+        ⚠️ **`α` 是显式参数**（`EXPOSURE_ALPHA`），不再是写死在这行里的 `1 / k`。
+           理由：实测（Open Bandit Dataset）表明这个指数**随界面几何变**
+           （横向槽位 ≈ 0.1，竖直列表按设计取 1.0）⇒ 它是个**要标定的量**，
+           而一个写死在函数体里的常数**没法标定**，也没法被检查「有没有接线」。
+           见 `EXPOSURE_ALPHA` 的 docstring 与 `ldv/MEASUREMENTS.md` 结果十三。
 
         位置来自**展示顺序**（`show()` 设的），所以插件**无法伪造**它 ——
         这也是 §8.1 把填倾向这件事留给内核的原因。
@@ -831,7 +889,7 @@ class Kernel:
             position = shown.index(d.did) + 1        # 1-based，**曝光位次**
         except ValueError:
             position = len(shown) + 1                # 不在本次展示里 ⇒ 当作最靠后
-        propensity = max(1.0 / position, PROPENSITY_FLOOR)
+        propensity = exposure_propensity(position)
         rec = WeightedRecord(did=d.did, outcome=float(sig.outcome),
                              propensity=propensity, note=sig.note,
                              extra={"shown": list(shown), "shown_n": len(shown),

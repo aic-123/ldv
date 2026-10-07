@@ -26,7 +26,7 @@ v4 判定方式（**三条判据，任一条不成立就报**）:
 ⚠️ v3 的 docstring 写「k=28」，代码里是 `K = 10` —— 文字与代码不一致，
    而且 10 太小（偶然命中率高）。v4 把 `K` 定到 `12` 并**由覆盖比兜底**。
 """
-import sys, re, glob, unicodedata, os
+import sys, re, glob, html, unicodedata, os
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 #: 工作区根 —— `repo/docs/prior-art/` 往上**三级**（`prior-art` → `docs` → `repo` → 根）。
@@ -43,7 +43,20 @@ _WS = os.path.dirname(os.path.dirname(os.path.dirname(_HERE)))
 #: 那正是「空转与通过长得一模一样」。
 _PRIOR = os.environ.get("LDV_PRIOR_ART") or os.path.join(_WS, ".prior-art")
 _SOURCES = os.environ.get("LDV_SOURCES") or os.path.join(_WS, "sources")
-SRC_DIRS = [_PRIOR, _SOURCES]
+#: ⚠️ **第三份：网页缓存**（2026-10-07 加）。
+#: 有些引文的源**不是 PDF**，是官方网页（ESLint *Bulk Suppressions*、rustc *Lint Levels* …），
+#: 它们的正文缓存在 `<工作区根>/.webcache/*.html`。
+#: v4 只读两份 `.txt` ⇒ 那些引文**全部**被报成「缺口」——
+#: 而「源不在核验范围」与「引文写错了」长得**一模一样**，读的人会去改**本来是对的**引文。
+#: 实测：`outputs/ldv-成熟答案印证.md` 里那条 ESLint 引文覆盖比 0.64（假缺口）。
+#:
+#: ⚠️ **网页源带来的覆盖是*弱*的**：只去标签、**不去导航/页脚** ⇒ 页脚样板文字也算「命中」。
+#: 所以网页源上「覆盖比 = 1.0」只说明「这句话在这一页里出现过」，
+#: 不说明「它在正文里」——**要逐字核仍然得打开那一页**。
+_WEB = os.environ.get("LDV_WEBCACHE") or os.path.join(_WS, ".webcache")
+SRC_DIRS = [_PRIOR, _SOURCES, _WEB]
+#: 每个目录收哪些扩展名 —— `.html` **只对网页缓存那一份**开放（见上）。
+SRC_GLOBS = {_PRIOR: ("*.txt",), _SOURCES: ("*.txt",), _WEB: ("*.html",)}
 #: 旧数学排版的源：符号被换成码（`/:`→`.`、`/n28`→`(`、`/_`→`∨` …）。
 #: **只对这些源做符号码还原** —— 拿去改干净正文会把假绿引进来。
 SOFT_FILES = {"gist1995.txt"}
@@ -168,6 +181,22 @@ def norm(t: str, soft_first: bool = False, ocr_first: bool = False) -> str:
     return t.lower()
 
 
+def _read(p: str) -> str:
+    """读一份源文。`.html`（网页缓存）**先去标签、去 `script`/`style`、解实体**。
+
+    ⚠️ 只做这些 —— **不抽正文**。所以网页源上「覆盖比 = 1.0」只说明
+       「这句话在这一页里出现过」，**不说明它在正文里**（页脚样板也算）。
+       这是**故意的**：抽正文要写一个 per-site 的选择器，那等于把核验
+       变成「按我挑的那段去核」——比不核更糟。**弱但一致**胜过**强但可调**。
+    """
+    t = open(p, encoding="utf-8", errors="replace").read()
+    if p.lower().endswith((".html", ".htm")):
+        t = re.sub(r"<(script|style)\b[^>]*>.*?</\1\s*>", " ", t, flags=re.S | re.I)
+        t = re.sub(r"<[^>]+>", " ", t)
+        t = html.unescape(t)
+    return t
+
+
 def load_sources():
     """读**两份**语料（见 `SRC_DIRS`）。同名文件后读的覆盖先读的 —— 会打印出来。
 
@@ -178,14 +207,15 @@ def load_sources():
     """
     srcs, seen = {}, {}
     for d in SRC_DIRS:
-        for p in sorted(glob.glob(os.path.join(d, "*.txt"))):
-            name = os.path.basename(p)
-            if name in seen:
-                print(f"⚠️ 同名源文出现两次：{seen[name]} 与 {p} —— 用后者")
-            seen[name] = p
-            srcs[name] = norm(open(p, encoding="utf-8", errors="replace").read(),
-                              soft_first=(name in SOFT_FILES),
-                              ocr_first=(name in OCR_FILES))
+        for pat in SRC_GLOBS.get(d, ("*.txt",)):
+            for p in sorted(glob.glob(os.path.join(d, pat))):
+                name = os.path.basename(p)
+                if name in seen:
+                    print(f"⚠️ 同名源文出现两次：{seen[name]} 与 {p} —— 用后者")
+                seen[name] = p
+                srcs[name] = norm(_read(p),
+                                  soft_first=(name in SOFT_FILES),
+                                  ocr_first=(name in OCR_FILES))
     if not srcs:
         print("✗ 一份源文都没找到 —— **这不是「引文全过」，是核验根本没跑**。")
         print(f"  找过这两处：")
@@ -268,7 +298,9 @@ def main():
     for s in srcs.values():
         grams |= kgrams(s)
     flat = "".join(srcs.values())
-    print(f"源文 {len(srcs)} 份，k-gram（k={K}）集合 {len(grams)} 条，"
+    n_web = sum(1 for n in srcs if n.lower().endswith((".html", ".htm")))
+    print(f"源文 {len(srcs)} 份（其中网页缓存 {n_web} 份），"
+          f"k-gram（k={K}）集合 {len(grams)} 条，"
           f"判据：覆盖比 ≥ {COVER_MIN} 且无 ≥ {GAP_MIN} 字符的连续缺口\n")
 
     total = ok = bad_n = 0

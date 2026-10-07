@@ -38,10 +38,12 @@ from ldv.core.direction import (  # noqa: E402
     ORIGIN_EXOGENOUS,
 )
 from ldv.core.kernel import (  # noqa: E402
+    EXPOSURE_ALPHA,
     PROPENSITY_FLOOR,
     Kernel,
     Query,
     _did_order,
+    exposure_propensity,
 )
 from ldv.core.tri import Tri, fold, is_bad_hit  # noqa: E402
 from ldv.corpus.loader import CorpusError, keys_of, parse_front_matter  # noqa: E402
@@ -202,7 +204,7 @@ def test_kernel() -> None:
     ok("分辨率不够 ⇒ 未展开", res.status is Tri.UNEXPANDED)
     ok("未展开时不许印成「确定没有」", "确定没有" not in res.render())
 
-    # 倾向：内核填，均匀曝光
+    # 倾向：内核填（模型见 test_exposure_model）
     d = k.all_directions()[0]
     rec = k.record_usage(d, {"outcome": 1.0})
     ok("内核填了倾向权重", rec is not None and 0.0 < rec.propensity <= 1.0)
@@ -212,6 +214,82 @@ def test_kernel() -> None:
     kr, _ = build_reach(nodes, edges, traverse_budget=1)
     rres = kr.query(Query(ideal=frozenset(nodes)))
     ok("reach 超预算 ⇒ 未展开（不是否）", rres.counts["未展开"] > 0, str(rres.counts))
+
+
+# ═══ 曝光模型（§8.1.1） ═══════════════════════════════════════════════════════
+#
+# 这一段查三件事，**都不是读代码断言，而是「改一个数看输出跟不跟着变」**：
+#
+#     形状     位次 1 ⇒ 1.0；单调不增；下界真的生效
+#     α 接线   `EXPOSURE_ALPHA` 是**显式参数** ⇒ 改它必须改变输出
+#     单一实现 改 α 之后，**检查侧**（`checks/semantics._p`）与**内核侧**
+#               （`record_usage` 填进记录里的那个数）必须**一起变**
+#
+# ⚠️ 第三条是本段存在的理由。修之前 `kernel` / `semantics._p` / `run_tests`
+#    **各有一份** `max(1.0 / position, 0.05)` ⇒ 改一处、另两处**静默报旧值**，
+#    而输出里只有一个数、**没有对照** ⇒ 读起来和改对了完全一样。
+#    这是 `false-green` 形状 3（共享盲点），而 grep 源码挡不住它 ——
+#    真正能挡住的是「**把参数改掉，看那个数动不动**」。
+
+#: 实测锚点（`ldv/MEASUREMENTS.md` 结果十三）：Open Bandit Dataset 的 `random` 策略
+#: （位次**随机分配** ⇒ 位次效应可因果识别）拟合出的 α。
+#: ⚠️ 那是**横向槽位**的几何，量不了本设计的竖直列表 ⇒ 只作**量级参照**，不当取值依据。
+OBD_ALPHA = (0.105, -0.003)
+
+
+def test_exposure_model() -> None:
+    from ldv.checks import semantics as sem
+    from ldv.core import kernel as km
+
+    ok("曝光：位次 1 的倾向 = 1.0（归一化点）",
+       exposure_propensity(1) == 1.0, f"{exposure_propensity(1)}")
+
+    seq = [exposure_propensity(k) for k in range(1, 65)]
+    ok("曝光：位次越靠后倾向**不增**（单调不增）",
+       all(b <= a + 1e-15 for a, b in zip(seq, seq[1:])),
+       f"1→{seq[0]:.4f} 64→{seq[-1]:.4f}")
+
+    ok("曝光：下界真的生效（不夹的话第 10^9 位会拿到 10^9 倍权重）",
+       exposure_propensity(10**9) == PROPENSITY_FLOOR,
+       f"{exposure_propensity(10**9)}")
+    ok("曝光：下界之上**还没**生效（否则它就是个常数模型，不是指数模型）",
+       exposure_propensity(3) > PROPENSITY_FLOOR,
+       f"{exposure_propensity(3)}")
+
+    # ★ α 是显式参数：把它改成 2，三处输出必须**一起**动
+    ok("曝光：默认 α = 1.0（设计文档 §8.1.1 的取值；改它要留痕 —— 见结果十三）",
+       EXPOSURE_ALPHA == 1.0, f"α = {EXPOSURE_ALPHA}")
+
+    old = km.EXPOSURE_ALPHA
+    loaded = load()
+    try:
+        km.EXPOSURE_ALPHA = 2.0
+        got_fn = exposure_propensity(3)
+        got_chk = sem._p(None, ("a", "b", "c"), -1)          # 位次 3
+        got_k = None
+        if loaded is not None:
+            kx, _ = build_keyset(loaded[0])
+            dirs = kx.all_directions()[:3]
+            kx.show(tuple(d.did for d in dirs))
+            # 记**第 3 位**那个 —— 记第 1 位的话倾向恒为 1.0，这条断言就空了
+            rx = kx.record_usage(dirs[-1], {"outcome": 1.0})
+            got_k = (rx.propensity, rx.extra["position"]) if rx else None
+            ok("曝光：这一条真在验第 3 位（否则下面的断言是空转）",
+               got_k is not None and got_k[1] == 3, f"{got_k}")
+            got_k = got_k[0] if got_k else None
+    finally:
+        km.EXPOSURE_ALPHA = old
+
+    ok("曝光：α 是**显式参数** ⇒ 改成 2 之后 `exposure_propensity(3)` = 1/9"
+       "（否则公式是写死的 `1/位次`，标定不了）",
+       abs(got_fn - 1.0 / 9.0) < 1e-12, f"{got_fn}")
+    ok("★ 曝光：改 α 之后**检查侧**跟着变（`semantics._p` 没有自己藏第二份公式）",
+       got_chk == f"{1.0 / 9.0:.3f}", f"报告里印的是 {got_chk}，应为 0.111")
+    ok("★ 曝光：改 α 之后**内核侧**跟着变（填进使用记录的那个数也是同一个来源）",
+       got_k is None or abs(got_k - 1.0 / 9.0) < 1e-12, f"记录里的倾向 {got_k}")
+
+    ok("曝光：α 复原（本段不留全局副作用）",
+       km.EXPOSURE_ALPHA == old == EXPOSURE_ALPHA)
 
 
 # ═══ 自优化边界 ══════════════════════════════════════════════════════════════
@@ -369,8 +447,8 @@ def test_flows() -> None:
        a.records and a.records[0].extra["position"] == 1
        and a.records[0].propensity == 1.0,
        f"第一条 {a.records[0].propensity if a.records else '无'}")
-    ok("A：倾向 = 1/位次（内核按曝光位次填，插件伪造不了）",
-       all(abs(r.propensity - max(1.0 / r.extra["position"], PROPENSITY_FLOOR)) < 1e-9
+    ok("A：倾向 = 曝光模型（内核按曝光位次填，插件伪造不了）",
+       all(abs(r.propensity - exposure_propensity(r.extra["position"])) < 1e-12
            for r in a.records))
 
     # 没给反馈 ≠ 给了负反馈：前者不产记录
@@ -1982,7 +2060,7 @@ def test_b3_reduction_premise() -> None:
 
     `b3_penalty_comparable` 原来是三层循环：层内两两配对、每对**逐项**比。
     那是 **`O(层内方向数² × 项数)`**。3907 项 / reach 有 **7813 个方向** ⇒
-    **小时级**。而 `B3` 是**判据**（`B1–B19`）⇒ `--no-probes` **关不掉它**。
+    **小时级**。而 `B3` 是**判据**（`B1–B20`）⇒ `--no-probes` **关不掉它**。
 
     ⇒ **它才是「全量 `--no-probes` 跑不完」的主因** —— 不是覆盖族（那个只有 0.69 s）。
     删掉之后 `b3` 在 3907 项上是 **38.85 s**；剩下的是 `O(Ln)` = **30,521,484 次**
@@ -3435,9 +3513,9 @@ def test_lock_scope() -> None:
 
 
 def main() -> int:
-    for fn in (test_tri, test_loader, test_kernel, test_selfopt, test_sequence,
-               test_flows, test_emergence, test_divergence, test_equivalence,
-               test_rebuild, test_out_of_scope, test_stay_at_parent,
+    for fn in (test_tri, test_loader, test_kernel, test_exposure_model, test_selfopt,
+               test_sequence, test_flows, test_emergence, test_divergence,
+               test_equivalence, test_rebuild, test_out_of_scope, test_stay_at_parent,
                test_cover_leak_baseline, test_cover_oracle_transparency,
                test_b3_reduction_premise, test_reach_cache_premise,
                test_reach_cache_transparency, test_tree_premise,

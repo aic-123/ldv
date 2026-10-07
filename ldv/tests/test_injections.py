@@ -766,6 +766,94 @@ def inj_b17(nodes, edges, injected: bool) -> Report:
     return rep
 
 
+# ═══ B20 ═════════════════════════════════════════════════════════════════════
+#
+# `B20` 的谓词是**精确整数**判据：`count_child[l]·|父| == count_parent[l]·|子|`
+# ⇒ 「空转」= 子方向是父方向的**等比子样本**。
+#
+# 这条判据有个副作用，它决定了夹具**只能怎么造**：
+#
+#     **父一旦是纯标签**，子必然也是纯标签 ⇒ 那一刀起往下**每一刀都空转**
+#     ⇒ 真插件切出纯标签子树之后，**基线自己就红** ⇒ 对照失效
+#
+# 实测过、被否掉的三种夹具（都栽在这一条，见 `outputs/_probe_b20_injection.py`）：
+#
+#     成对夹具（每对 1×L0 + 1×L1，靠 `pair` 键切）
+#         基线先挑 `type=L0` ⇒ 切出纯标签子树 ⇒ 基线自己红；
+#         想让基线不挑 `type`，就得把标签做成不均衡，而不均衡又凑不出等比块
+#     纯标签子树做成「键完全相同」的叶子
+#         真插件在那里 `candidates` 为空 ⇒ 确实不空转；
+#         但注入方**也没有键可用了** ⇒ 注入切不动
+#     标签取**高位**位
+#         前几刀的子方向与父**同分布**（各标签等比稀释）⇒ 基线自己就空转
+#
+# ⇒ 结论：**「同一个夹具 + 真插件」当基线，与「在同一个夹具上做一次标签盲的
+#   切分」这两件事互斥** —— 基线要不红，就必须永远切不出纯标签方向；
+#   而「永远切不出纯标签方向」就等于「标签与切分轴正交」，
+#   正交又正是注入方要利用的东西。
+#
+# ⇒ 所以夹具、插件、树**全不动**，只换 **oracle**。`B20` 判的是
+#   「展开有没有在**标签**上产出东西」，能让它红的本来就不是某一种 `split`，
+#   而是「标签与切分轴无关」这件事本身。
+
+
+def _labeled_bits(bits: int, label_bits: int):
+    """`2**bits` 项；每项带 `bits` 个位键 `b{k}`；`type` 按 `label_bits` 取低若干位。
+
+    `b{k}` 的每个取值 = 「下标 ≡ 某个值 mod 2^{k+1}」的那批项 ⇒
+    `KeysetPlugin` 选「最接近 1/2 的键」，所有位键都在 1/2 ⇒ 它**逐位二分**，
+    树是深度 `bits` 的平衡二叉树。
+
+    ⚠️ 键集里**始终**带 `type=L0…`（两份 oracle 都认得出这是标签轴，
+       见 `_fixtures.label_bearing`）—— 这正是要验的东西：判据的**适用范围**
+       不该因为标签怎么指派而变。
+    """
+    from ldv.corpus.loader import Node
+
+    mod = 1 << label_bits
+    nodes: dict[str, Node] = {}
+    for i in range(1 << bits):
+        nid = f"n{i:04d}"
+        keys = {f"type=L{i % mod}"} | {f"b{k}={((i >> k) & 1)}" for k in range(bits)}
+        nodes[nid] = Node(id=nid, fields={"type": f"L{i % mod}", "i": i},
+                          keys=frozenset(keys))
+    return nodes, {nid: frozenset() for nid in nodes}
+
+
+def inj_b20(nodes, edges, injected: bool) -> Report:
+    """**基线绿 + 注入红**（同一个夹具、同一个插件、同一棵树 —— 只有 oracle 不同）：
+
+        基线  `type = L{i mod 64}`（低 6 位）     最长语义空转连续段 =  **4**  < 10 ⇒ 绿
+        注入  `type = L{popcount(i) mod 2}`      最长语义空转连续段 = **11** ≥ 10 ⇒ 红
+
+    注入那版为什么**每一刀都空转**：位键 `b{k}` 的每个取值都是
+    「下标 ≡ 某个值 mod 2^{k+1}」，这种集合里剩下的自由位至少还有一个，
+    而「自由位的 popcount 奇偶」正好各占一半 ⇒ 任何方向都恰好 50/50
+    ⇒ 子与父**精确同分布** ⇒ 空转。
+
+    ⚠️ 注入那版的最长连续段 = **树深 − 1**：最底下那一刀是「2 项父 → 2 个单项子」，
+       单项子的分布与 50/50 的父**不同分布** ⇒ 那一刀不空转，链在它那里断掉。
+       所以树深必须 ≥ 12 才能把连续段推到 ≥ 10 —— 这是 `bits = 12` 的理由。
+    """
+    from ldv.checks._fixtures import label_bearing, labels as _labels
+    from ldv.checks.refinement import b20_semantic_refinement, refinement_profile
+
+    dn, _de = _labeled_bits(12, 6)
+    if injected:
+        for nd in dn.values():
+            nd.fields["type"] = f"L{bin(nd.fields['i']).count('1') % 2}"
+
+    plug = KeysetPlugin()
+    k = Kernel(plug, make_items(dn))
+    k.build(plug.merge([]))
+    for nid in sorted(dn):
+        k.insert(nid)
+    rep = _rep()
+    prof = refinement_profile(k, _labels(dn))
+    b20_semantic_refinement(prof, rep, judged=label_bearing("keyset", dn))
+    return rep
+
+
 # ═══ B11b ════════════════════════════════════════════════════════════════════
 #: B11 有**两条**判据（完备 + 位置敏感），所以注入也要两条。
 #: 只验「缺倾向会红」的话，把曝光模型退回均匀**不会有任何东西变红** ——
@@ -1005,7 +1093,7 @@ CASES: dict[str, Callable] = {
     "B1": inj_b1, "B2": inj_b2, "B3": inj_b3, "B4": inj_b4, "B5": inj_b5,
     "B6": inj_b6, "B7": inj_b7, "B8": inj_b8, "B9": inj_b9, "B10": inj_b10,
     "B11": inj_b11, "B12": inj_b12, "B13": inj_b13, "B14": inj_b14, "B15": inj_b15,
-    "B16": inj_b16, "B17": inj_b17, "B18": inj_b18, "B19": inj_b19,
+    "B16": inj_b16, "B17": inj_b17, "B18": inj_b18, "B19": inj_b19, "B20": inj_b20,
 }
 
 #: 同一条检查的**第二条**判据。键是标签，值是 `(判据编号, 注入函数)`。

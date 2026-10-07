@@ -400,6 +400,57 @@ def equiv_classes(which: str, nodes: dict[str, Node],
     raise ValueError(which)
 
 
+# --- 外生**语义**：标注 —— `B20` 的 oracle ------------------------------------
+#
+#     语义(d) = 「d 的成员带哪些标签」。它**必须来自语料**（人工标注），
+#     不能来自插件 —— 拿插件自己的谓词当语义就是 `false-green` 形状 3「共享盲点」，
+#     与 `equiv_classes` / `coverage_of` 是同一条纪律。
+#
+#     方向      `B17` 的 oracle（**结构**）      `B20` 的 oracle（**语义**）
+#     ─────────────────────────────────────────────────────────────────────
+#     keyset    键集相同                        ← 都来自 `Node.keys`，
+#     sequence  序列相同                          但**语义**问的是「意思一样吗」，
+#     reach     互相可达                          而只有**标注**能回答那个
+#
+# ⚠️ 标签取 `type` 字段，因为 `loader.ENUM_FIELDS` 只把 `type` / `evidence_status`
+#    的**取值**放进键集 ⇒ 「标签在不在某个方向的键空间里」成了一个**可查的事实**
+#    （`label_bearing`），而不是一句声明。
+
+LABEL_FIELD = "type"
+
+
+def labels(nodes: dict[str, Node]) -> dict[str, str]:
+    """外生**语义**：每个项的标签。**语料没有标注 ⇒ 返回 `{}`**（不是报错）。"""
+    out: dict[str, str] = {}
+    for nid, node in nodes.items():
+        v = node.fields.get(LABEL_FIELD)
+        if isinstance(v, str) and v:
+            out[nid] = v
+    return out
+
+
+def label_bearing(which: str, nodes: dict[str, Node]) -> bool:
+    """这条方向在这份语料上**是不是标签轴** —— 由**语料**决定，不由声明决定。
+
+    判据：标签的**取值键**（`type=<值>`）出现在项的键集里 ⇒ 这个方向的键空间
+    包含标签 ⇒ 它的 `split` 可以按标签切 ⇒ 「语义增益」在它上面**有内容**。
+
+    ⚠️ 反过来，`reach` / `sequence` 的 payload 不是键集 ⇒ 它们**不是**标签轴
+       ⇒ `B20` 在它们上面只报不判。这与 `B17`(b) 在 `reach` 上降级是**同一个形状**：
+       判据的**适用范围**由「它在这条方向上有没有内容」决定，不由偏好决定。
+
+    ⚠️ 这条**不是**「语料里有没有标注」—— 有标注但没有任何方向的轴含标签时，
+       它照样返回 `False`，因为那时 `B20` 判不了任何东西。
+    """
+    if which != "keyset":
+        return False
+    vals = set(labels(nodes).values())
+    if len(vals) < 2:
+        return False
+    keys = set().union(*[n.keys for n in nodes.values()]) if nodes else set()
+    return all(f"{LABEL_FIELD}={v}" in keys for v in vals)
+
+
 # --- 外生**覆盖**定义 —— 覆盖类判据的公共 oracle -----------------------------
 #
 #     覆盖(d) = 「按该方向的**语义**，d 说『是』的那些项」

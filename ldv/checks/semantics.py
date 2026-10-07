@@ -21,7 +21,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..core.interfaces import UsageSignal, WeightedRecord
-from ..core.kernel import Query, QueryResult
+from ..core.kernel import Query, QueryResult, exposure_propensity
 from ..core.tri import Tri
 from ._framework import Report
 
@@ -134,8 +134,14 @@ def b11_propensity_complete(kernel: Any, plugin: Any, rep: Report) -> None:
 
 
 def _p(kernel: Any, shown: tuple, idx: int) -> str:
-    """报告用：把某个位次的倾向印出来（只读，不新增记录）。"""
+    """报告用：把某个位次的倾向印出来（**只读**，不新增记录）。
+
+    ⚠️ 调的是 `kernel.exposure_propensity` —— **不是**在这里再写一遍公式。
+       原来这里抄了一份 `max(1.0 / position, 0.05)`，于是「模型改了、报告没改」
+       会**静默地**印出一个旧值：报告里只有一个数，**没有对照**，
+       读起来和改对了完全一样。
+    """
     if not shown:
         return "?"
     pos = 1 if idx == 0 else len(shown)
-    return f"{max(1.0 / pos, 0.05):.3f}"
+    return f"{exposure_propensity(pos):.3f}"
