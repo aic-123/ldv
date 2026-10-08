@@ -55,6 +55,7 @@ from __future__ import annotations
 
 import sys
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable
@@ -75,6 +76,13 @@ from ldv.checks._fixtures import (  # noqa: E402
     sequences,
 )
 from ldv.checks._framework import Report  # noqa: E402
+from ldv.checks.abstraction import (  # noqa: E402
+    ViewSet,
+    a1_soundness,
+    a2_stable,
+    a3_coarsest,
+    build_views,
+)
 from ldv.checks.contract import (  # noqa: E402
     b1_no_false_negative,
     b2_merge_covers,
@@ -105,6 +113,7 @@ from ldv.core.direction import EVENT_STAYED, ORIGIN_SPLIT, Direction  # noqa: E4
 from ldv.core.interfaces import call_penalty  # noqa: E402
 from ldv.core.kernel import Kernel, QueryResult  # noqa: E402
 from ldv.core.tri import Tri  # noqa: E402
+from ldv.core.views import ViewSpec, partition_of  # noqa: E402
 from ldv.plugins.keyset import KeysetPlugin  # noqa: E402
 
 
@@ -1087,6 +1096,167 @@ def metric_progress(nodes: Any, edges: Any, injected: bool) -> bool:
     return progress_profile(k, coverage_of("reach", dn, de))["最长没变细连续段"] == 4
 
 
+# ═══ §A1 / §A2 / §A3（流程 E · 抽象层）═════════════════════════════════════════
+#
+# 判据本体在 `checks/abstraction.py`，算法在 `core/views.py`。
+# 注入的形态都一样：**在真链路上装出视图集合，然后只动那个视图集合的一处**。
+#
+# ## ⚠️ 这里的 `P` / `E` 是**测试自己写的** —— 这不违反 §K9
+#
+# §K9 / `B14` 禁的是「**系统**替人猜 `P` / `E`」：生产路径只能从
+# `ldv/checks/view_spec.json` 读（见 `run_checks.view_report`，读不到就**跳过**）。
+# **测试就是人的代言**，所以测试里构造 `P` / `E` 不但允许，而且是**必须**的 ——
+# 否则这三条判据的注入就挂在「那个配置文件在不在」上：
+# 文件一没，基线就塌，注入验证报出来的是**配置缺失**，不是**判据能不能红**。
+#
+# ⇒ 分工写清楚，免得下一个人以为哪边漏了：
+#
+#     注入验证（本段）          「判据能不能红」        —— 自带 `P` / `E`
+#     `run_tests.test_view_spec_file`  「committed 的声明成不成立」—— 读那个文件
+#
+# ## `P` / `E` 取什么
+#
+#     `E = 父→子`（内核自己的树边）
+#     `P = {U}`（人**没有先验意见**：所有方向同属一组）
+#
+# ⚠️ **`E` 的方向**：`E⁻¹(B)` 是「**能走到** `B` 的方向」，所以 `(父, 子) ∈ E`
+#    读作「父能走到子」。写反了**不会报错**，只会得到一个「看着也在跑、
+#    答案是另一个划分」的实现（`core/views._preimage` 的 ⚠️ 专门记了这条）。
+#
+# `P = {U}` 是 `(P, E)` 里信息量**最低**的一档 —— 正因为如此它最能说明
+# 「`Q` 唯一 ⇒ 视图集合不用挑」：一点先验都不给，答案照样是唯一的。
+
+
+def _view_chain(nodes: Any, edges: Any, head: int | None = None):
+    """从**真内核**读出方向与树边，装成 `(spec, kernel, plugin, cover)`。
+
+    `head` 只取前 `head` 个方向 —— 给 `§A3` 那条**走暴力 oracle** 的注入用：
+    `coarser_stable_exists` 的候选数是 `∏ Bell(组内 Q 块数)`，全量 25 个方向时
+    `Bell(25) ≈ 4.6e18` ⇒ 撞上限**跳过**（那是对的，见 `core/views._bell`）。
+    想让它真的**搜完**并且**搜出结果**，`universe` 必须小到 `Bell` 撑得住。
+    """
+    kernel, plugin = build_keyset(nodes)
+    dirs = kernel.all_directions()
+    U = tuple(d.did for d in dirs)
+    if head is not None:
+        U = U[:head]
+    keep = set(U)
+    rel = frozenset((d.did, c.did) for d in dirs if d.did in keep
+                    for c in kernel.children_of(d) if c.did in keep)
+    spec = ViewSpec(universe=U, partition=(frozenset(U),), relation=rel)
+    return spec, kernel, plugin, coverage_of("keyset", nodes, edges)
+
+
+def _view_report(vs: ViewSet) -> Report:
+    rep = _rep()
+    a1_soundness(vs, rep)
+    a2_stable(vs.spec, vs.q, rep)
+    a3_coarsest(vs.spec, vs.q, rep)
+    return rep
+
+
+def inj_a1(nodes: Any, edges: Any, injected: bool) -> Report:
+    """`§A1` 注入：把某张视图的**具体化掐掉一项**。
+
+        基线（真最粗稳定细化 + 真 `合并`）  具体化 ⊇ 声明收着的 ⇒ **绿**
+        注入（掐掉一个成员）                那一项没了       ⇒ **红**
+
+    ⚠️ 掐的必须是 `covered` 里的项 —— 掐一个本来就不在 `covered` 里的项
+       **不会**造成违规（`§A1` 只查「少了」，不查「多了」）。
+       所以这里从 `covered` 里挑，挑不到就**报错**（不是静默跳过）：
+       那说明基线本身已经不对了，是另一回事。
+
+    ⚠️ 这条注入是**判据的独立内容**的直接证据：同样的内核、同样的 `P`/`E`，
+       `B16` 在这一处**照样绿**（它逐方向判，不看合并）—— 见
+       `run_tests.test_view_a1_not_implied_by_b16`。
+    """
+    spec, kernel, plugin, cover = _view_chain(nodes, edges)
+    vs = build_views(kernel, spec, cover, plugin)
+    if injected:
+        host = max(vs.views, key=lambda v: (len(v.covered), v.vid))
+        if not host.covered:
+            raise AssertionError("基线里没有任何视图声明收着原始项 ⇒ 掐一项掐不出违规")
+        victim = sorted(host.covered)[0]
+        vs = replace(vs, views=tuple(
+            replace(v, concretization=v.concretization - {victim})
+            if v.vid == host.vid else v for v in vs.views))
+    return _view_report(vs)
+
+
+def inj_a2(nodes: Any, edges: Any, injected: bool) -> Report:
+    """`§A2` 注入：把 `Q` **粗化一格**（合并两块）⇒ 有一块跨在 `E⁻¹(B₂)` 内外 ⇒ 红。
+
+    ⚠️ **合并哪两块不影响结论** —— 实测在全量 spec 上「稳定合并对」是**空集**
+       （8 块两两合并、28 对，没有一对稳定）。⇒ 这条注入不是**挑出来的**，
+       是**任意一对**都红。挑出来的注入只能证明「存在一个红」，
+       证明不了「判据真的在判」。
+
+    ⚠️ `§A3` 在这条注入上也红（不稳定 ⇒ 不是那个唯一解）。**那是对的**，
+       两条的**重叠**与各自**额外的覆盖面**写在 `a3_coarsest` 的 docstring 里。
+    """
+    spec, kernel, plugin, cover = _view_chain(nodes, edges)
+    vs = build_views(kernel, spec, cover, plugin)
+    if injected:
+        if len(vs.q) < 2:
+            raise AssertionError(f"基线 `Q` 只有 {len(vs.q)} 块 ⇒ 「合并两块」做不出来")
+        vs = replace(vs, q=partition_of([vs.q[0] | vs.q[1]] + list(vs.q[2:])))
+    return _view_report(vs)
+
+
+def inj_a3(nodes: Any, edges: Any, injected: bool) -> Report:
+    """`§A3` 注入**甲**：喂一个**未到不动点**的 `Q`（`Q := P`，迭代 **0 轮**）。
+
+        基线（真不动点）      没有更粗的稳定划分 ⇒ **绿**
+        注入（`Q := P`）      `{U}` 里混着叶方向 ⇒ 它**自己就不稳定** ⇒ **红**
+
+    设计稿 §9 那张表的 `§A3` 行写的就是这一条（「喂一个未到不动点的 `Q`」）。
+
+    ⚠️ 它走的是 `§A3` 的**第二条**红（`Q` 自己不稳定），而这条**`§A2` 也红**。
+       能验出 `§A3` **独立内容**的是下一条（`inj_a3_not_coarsest`）。
+    """
+    spec, kernel, plugin, cover = _view_chain(nodes, edges)
+    vs = build_views(kernel, spec, cover, plugin)
+    if injected:
+        vs = replace(vs, q=partition_of(spec.partition))
+    return _view_report(vs)
+
+
+def inj_a3_not_coarsest(nodes: Any, edges: Any, injected: bool) -> Report:
+    """`§A3` 注入**乙**：喂一个**稳定但更细**的 `Q`（离散划分）⇒ 走「存在更粗的稳定划分」。
+
+    ## ★ 为什么非有这一条不可
+
+    设计稿 §9 那张表里，`§A3` 的**红条件**列写的是「存在更粗的稳定划分 ⇒ 红」，
+    而**注入**列写的是「未到不动点」—— 那一条走的是**另一个**红分支
+    （`Q` 自己不稳定），`§A2` 也红。⇒ 照字面只配那一条注入的话，
+    **表里声明的那个红条件一次都没被验过**，而套件照样报「全绿」。
+
+    能且只能验到那个分支的形态是「**稳定**、但**不是最粗**」：
+
+        离散划分**总是稳定**（小定理：单元素块对任何 `E⁻¹(B)` 要么整个在里面、
+        要么整个在外面）⇒ `§A2` **绿**，而 `§A3` **红**。
+
+    ⇒ 这条注入是「`§A3` 有独立于 `§A2` 的内容」的**唯一**证据。
+
+    ## 为什么用受限 `universe`
+
+    暴力 oracle 要**搜完**才能给出「有」；`Bell(25) ≈ 4.6e18` 会撞上限
+    （那时报**跳过**，不是红 —— 那是对的，但不是这条注入要验的东西）。
+    ⇒ 取前 6 个方向：`|Q| = 4`、`Bell(4) = 15` ⇒ 毫秒级搜完。
+    ⚠️ 若基线的 `Q` 恰好**就是**离散划分，这条注入**红不了**（两个划分重合）
+       ⇒ 那种情况下**报错**，不静默放过。
+    """
+    spec, kernel, plugin, cover = _view_chain(nodes, edges, head=6)
+    vs = build_views(kernel, spec, cover, plugin)
+    if len(vs.q) >= len(spec.universe):
+        raise AssertionError(
+            f"受限 spec 上基线 `Q` 已经是离散划分（{len(vs.q)} 块 / "
+            f"{len(spec.universe)} 个方向）⇒ 离散注入与基线重合，红不了")
+    if injected:
+        vs = replace(vs, q=partition_of([frozenset({x}) for x in spec.universe]))
+    return _view_report(vs)
+
+
 # ═══ 驱动 ════════════════════════════════════════════════════════════════════
 
 CASES: dict[str, Callable] = {
@@ -1094,6 +1264,7 @@ CASES: dict[str, Callable] = {
     "B6": inj_b6, "B7": inj_b7, "B8": inj_b8, "B9": inj_b9, "B10": inj_b10,
     "B11": inj_b11, "B12": inj_b12, "B13": inj_b13, "B14": inj_b14, "B15": inj_b15,
     "B16": inj_b16, "B17": inj_b17, "B18": inj_b18, "B19": inj_b19, "B20": inj_b20,
+    "A1": inj_a1, "A2": inj_a2, "A3": inj_a3,
 }
 
 #: 同一条检查的**第二条**判据。键是标签，值是 `(判据编号, 注入函数)`。
@@ -1104,6 +1275,7 @@ EXTRA_CASES: dict[str, tuple[str, Callable]] = {
     "B4·滞留要记账": ("B4", inj_b4_stay_unaccounted),
     "B16·维护路径": ("B16", inj_b16_maintenance),
     "B13·树性": ("B13", inj_b13_two_parents),
+    "A3·稳定但更细": ("A3", inj_a3_not_coarsest),
 }
 
 
@@ -1119,8 +1291,18 @@ def _registry_gap() -> tuple[list[str], list[str]]:
 
     比的两个集合都**外生给定**，不看任何一边的自我声明：
 
-        左边  `run_checks.PLUGIN_CODES | KERNEL_CODES`  —— 声明要跑的编号
+        左边  `run_checks.PLUGIN_CODES | KERNEL_CODES | abstraction.VIEW_CODES`
+              —— 声明要跑的编号
         右边  `CASES` 的键 ∪ `EXTRA_CASES` 的值          —— 真被验过的编号
+
+    ⚠️ **`VIEW_CODES` 必须一起比进来**，不能只比插件与内核那两批：
+       视图那三条是**另一组**（`Report(plugin="(视图)")`），漏掉它的话
+       「新增一条视图判据、忘了配注入」这件事**照样报全绿** ——
+       而这句话对新增的编号一个字节的信息都没有。这正是本节开头那个形状。
+
+    ⚠️ 反过来也要比：`VIEW_CODES` **只列已经实现了的**。
+       `§A4` / `§A5` / `§A6` 没实现就**不在**里面 —— 于是「套件全绿」
+       这句话**不覆盖它们**，而且这里是**双向**核对，多写一个编号也会红。
 
     两个方向都要报，因为它们**症状不同**：
 
@@ -1133,9 +1315,10 @@ def _registry_gap() -> tuple[list[str], list[str]]:
     上面第一种正是本仓库一直在防的形状（「空转与通过长得一模一样」），
     只不过它这次出现在**注册表**上。别处没有任何东西守它，所以守在这里。
     """
+    from ldv.checks.abstraction import VIEW_CODES
     from ldv.run_checks import KERNEL_CODES, PLUGIN_CODES
 
-    declared = set(PLUGIN_CODES) | set(KERNEL_CODES)
+    declared = set(PLUGIN_CODES) | set(KERNEL_CODES) | set(VIEW_CODES)
     covered = set(CASES) | {code for code, _ in EXTRA_CASES.values()}
     return sorted(declared - covered), sorted(covered - declared)
 

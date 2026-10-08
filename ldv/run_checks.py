@@ -84,7 +84,19 @@ from .checks._fixtures import (
     make_sequence_root,
     reach_queries,
 )
+from .core.tri import Tri
 from .checks._framework import Report
+from .checks.abstraction import (
+    VIEW_CODES,
+    a1_soundness,
+    a2_stable,
+    a3_coarsest,
+    build_views,
+    load_spec_file,
+    render_views,
+    spec_for,
+    view_profile,
+)
 from .checks.coverage import (
     b16_members_covered,
     b18_cover_leak_baseline,
@@ -334,6 +346,70 @@ def cap_corpus(loaded, cap: int):
     return (new_nodes, new_edges, dangling), cut
 
 
+def view_report(loaded, targets: list[str]) -> Report:
+    """流程 E 的 `§A1`–`§A3` —— **单独一组**，与插件无关。
+
+    为什么单独一组、且**只跑一次**：
+
+        视图层的输入是「**方向 id**」的集合（`core/views.ViewSpec.universe`），
+        而方向 id 是**每个内核各自从 0 开始**的（`D0` 在 keyset 里与在 reach 里
+        是**两个不同的方向** —— `_fixtures.Cover` 的 docstring 专门记了这条）。
+        ⇒ 外生声明里必须写清它属于哪条方向 ⇒ 判据也就只对那一条方向跑。
+
+    ## 三种「跳过」各有各的话
+
+        文件不在            还没人声明 `P` / `E`
+        指纹对不上          声明是**别的语料**上写的
+        `方向` 不是这一条    声明是**别的方向**的
+
+    ⚠️ 三条都报「**跳过**」而不是「过」—— 设计稿 §10 停止条件第 1 条：
+       `P` / `E` 必须外生，**猜一个就是替人做 `§K9` 的决定**。
+       跳过 ≠ 通过：它明说「这一层在本趟**什么都没查**」。
+    """
+    nodes, edges, _ = loaded
+    corpus = corpus_fingerprint(nodes, edges)
+    rep = Report(plugin="(视图)", expects=VIEW_CODES)
+    doc = load_spec_file()
+
+    if not doc:
+        _skip_views(rep,
+                    "外生项**未声明**（`docs/prior-art/…` 之外的 `ldv/checks/view_spec.json` "
+                    "不在）—— `P` / `E` 必须**外生**（设计稿 §3 / §K9 / `B14`），"
+                    "猜一个就是替人做决定（§10 停止条件 1）。"
+                    "**跳过 ≠ 通过**：这一层本趟什么都没查。")
+        return rep
+
+    which = str(doc.get("方向") or "")
+    if which not in targets:
+        _skip_views(rep,
+                    f"外生声明写的是 `{which}`，而本趟跑的是 {targets} "
+                    f"⇒ 本方向**判不了**（跳过 ≠ 通过）")
+        return rep
+
+    spec, why = spec_for(doc, which, corpus)
+    if spec is None:
+        _skip_views(rep, why + " —— 判不了，**不是通过**")
+        return rep
+
+    kernel, plugin, _, _ = batch_kernel(which, nodes, edges)
+    cover = coverage_of(which, nodes, edges)
+    vs = build_views(kernel, spec, cover, plugin)
+    a1_soundness(vs, rep)
+    a2_stable(spec, vs.q, rep)
+    a3_coarsest(spec, vs.q, rep)
+    prof = view_profile(vs)
+    rep.note(f"{why}；方向 `{which}`")
+    rep.note(render_views(vs, prof, which))
+    return rep
+
+
+def _skip_views(rep: Report, why: str) -> None:
+    """三条一起跳过 —— 用一个函数，免得三条的**理由**各写一遍、写着写着就不一样了。"""
+    rep.add("A1", "视图健全性：具体化 ⊇ ∪成员", Tri.UNEXPANDED, why)
+    rep.add("A2", "视图稳定：B₁ ⊆ E⁻¹(B₂) 或 B₁ ∩ E⁻¹(B₂) = φ", Tri.UNEXPANDED, why)
+    rep.add("A3", "视图最粗：不存在更粗的稳定划分", Tri.UNEXPANDED, why)
+
+
 def main(argv: list[str]) -> int:
     # ⚠️ `--cap 400` 里的 `400` **不是**方向名 —— 所以先摘掉带值的选项再取位置参数。
     cap = 0
@@ -406,6 +482,14 @@ def main(argv: list[str]) -> int:
     b14_exogenous_boundary(kernel_rep)
     reps.append(kernel_rep)
     print(kernel_rep.render())
+    print()
+
+    # ★ 流程 E 的 `§A1`–`§A3` —— **视图侧**，同样与插件无关，只跑一次。
+    #   它的外生输入（`P` / `E`）必须由人声明；没声明就三条都**跳过**并印原因
+    #   （设计稿 §10 停止条件 1）。见 `view_report` 的 docstring。
+    view_rep = view_report(loaded, targets)
+    reps.append(view_rep)
+    print(view_rep.render())
     print()
 
     total_red = sum(len(r.red) for r in reps)

@@ -3512,6 +3512,287 @@ def test_lock_scope() -> None:
        f"方向 {len(k.all_directions())} vs {len(k0.all_directions())}")
 
 
+def test_views() -> None:
+    """流程 E · 抽象层 —— `core/views.py` 的算法 + `checks/abstraction.py` 的三条判据。
+
+    分七段，**每段都要有已知答案**（本仓库的老纪律：合成图上的已知答案是对照组里
+    最便宜的那一档，「跑一遍看看」不构成对照）：
+
+        ① 核心算法   `Q` 与**手推值**逐块比；唯一性；两个 oracle 的已知答案
+        ② 三态对照   设计稿 §9 要求的「过 / 红 / 跳过各一例」
+        ③ 判据的**独立**性   `§A1` 不被 `B16` 蕴含（否则它只是换个写法）
+        ④ 全链路     真内核 + 合成 spec ⇒ `build_views` + 三条判据
+        ⑤ 外生门禁   `spec_for` 的三种跳过 + 「声明了却坏了」是**报错**
+        ⑥ 闸门自己   `cap` 要在**时间与内存上**都拦得住（实测踩到过挂住）
+        ⑦ committed 声明  `view_spec.json` 读得进来、非退化、三条判据全过
+
+    ⚠️ ⑥ 与 ⑦ 是**两件不同的事**，都要有：⑥ 验「搜不完时会不会如实报跳过」，
+       ⑦ 验「生产里那份声明成不成立」。少任何一段，
+       对应的那种缺陷都没有东西守着。
+    """
+    from ldv.checks._framework import Report
+    from ldv.checks.abstraction import (
+        VIEW_CODES,
+        VIEW_SPEC_PATH,
+        ViewSet,
+        a1_known_answer,
+        a1_soundness,
+        a2_stable,
+        a3_coarsest,
+        build_views,
+        known_answer_controls,
+        load_spec_file,
+        spec_for,
+        view_profile,
+    )
+
+    def _result(rep, code: str) -> Tri:
+        for a in rep.assertions:
+            if a.code == code:
+                return a.result
+        return Tri.UNEXPANDED
+
+    from ldv.core.views import (
+        ViewSpec,
+        _set_partitions,
+        coarser_stable_exists,
+        coarsest_stable_refinement,
+        partition_of,
+        refines,
+        stable,
+    )
+
+    # --- ① 核心算法 ---------------------------------------------------------
+    U = ("a", "b", "c", "d")
+    cases = [
+        ("`E = ∅` ⇒ `Q = P`", [U], [], [["a", "b", "c", "d"]]),
+        ("`E = {a→b}` ⇒ 只有 `{a}` 能分出来",
+         [U], [("a", "b")], [["a"], ["b", "c", "d"]]),
+        # ⚠️ `E` 的两条边必须**各往对方的块里指**，两块才都切得开。
+        #    `{(a,c), (b,d)}` 两条都朝外 ⇒ `E⁻¹({a,b}) = ∅`、`E⁻¹({c,d}) = {a,b}`
+        #    整个包住 `{a,b}` ⇒ **一刀都切不动**，`Q` 就是 `P`。
+        #    （这个期望值原来写错了，是这条测试自己抓出来的。）
+        ("`P` 两块、`E` 双向各一条 ⇒ 两块都被切开",
+         [["a", "b"], ["c", "d"]], [("a", "c"), ("c", "a")],
+         [["a"], ["b"], ["c"], ["d"]]),
+        ("`P` 两块、`E` 只连一条 ⇒ 只切一刀",
+         [["a", "b"], ["c", "d"]], [("a", "c")], [["a"], ["b"], ["c", "d"]]),
+        ("`E` 只朝块内指 ⇒ 一刀都切不动，`Q = P`",
+         [["a", "b"], ["c", "d"]], [("a", "c"), ("b", "d")],
+         [["a", "b"], ["c", "d"]]),
+    ]
+    for label, p, e, want in cases:
+        spec = ViewSpec(universe=U, partition=tuple(frozenset(b) for b in p),
+                        relation=frozenset(e))
+        q = coarsest_stable_refinement(spec)
+        got = [sorted(b) for b in q]
+        ok(f"★ [E] 最粗稳定细化：{label}", got == want, f"实测 {got}，期望 {want}")
+        ok(f"★ [E] 它**稳定**且是 `P` 的细化：{label}",
+           stable(spec, q)[0] and refines(spec, q))
+        ok(f"★ [E] 它**没有更粗的稳定划分**：{label}",
+           coarser_stable_exists(spec, q)[0] is False)
+
+    # 唯一性 —— 「视图不用挑」这句话的**全部**依据（设计稿 §3）
+    import random as _rnd
+    _rng = _rnd.Random(11)
+    bad_u = []
+    for _ in range(120):
+        n = _rng.randint(1, 9)
+        u = tuple(f"x{i}" for i in range(n))
+        perm = list(u)
+        _rng.shuffle(perm)
+        p, i = [], 0
+        while i < n:
+            k = _rng.randint(1, min(3, n - i))
+            p.append(frozenset(perm[i:i + k]))
+            i += k
+        e = frozenset((x, y) for x in u for y in u if _rng.random() < 0.25)
+        s1 = ViewSpec(universe=u, partition=tuple(p), relation=e)
+        s2 = ViewSpec(universe=tuple(_rng.sample(list(u), n)),
+                      partition=tuple(_rng.sample(p, len(p))), relation=e)
+        q1, q2 = coarsest_stable_refinement(s1), coarsest_stable_refinement(s2)
+        if q1 != q2 or not stable(s1, q1)[0] or not refines(s1, q1):
+            bad_u.append((q1, q2))
+    ok("★★ [E] **唯一性**：打乱 `P` 的块序 / `U` 的序 ⇒ 逐字相同的 `Q`"
+       "（120 组随机；「视图不用挑」的全部依据）", not bad_u, f"{len(bad_u)} 组不一致")
+
+    # 离散划分**总是**稳定 —— `§A3` 注入用的那一档，是个小定理
+    spec = ViewSpec(universe=U, partition=(frozenset(U),), relation=frozenset())
+    disc = tuple(frozenset({x}) for x in U)
+    ok("★ [E] **离散划分总是稳定**（单元素块对任何 `E⁻¹(B)` 都整个在内或整个在外）",
+       stable(spec, disc)[0] is True)
+    ok("★ [E] 但它**通常不是最粗** ⇒ `§A3` 能红（注入就吃这一条）",
+       coarser_stable_exists(spec, disc)[0] is True)
+
+    ok("★ [E] `_set_partitions` 的规模是 **Bell 数**（不是 `2^n`）—— "
+       "写成子集枚举会把同一个粗化数很多遍，而**重复枚举看不出来**",
+       [len(list(_set_partitions(n))) for n in range(1, 8)]
+       == [1, 2, 5, 15, 52, 203, 877])
+
+    # `ViewSpec` 的三条校验 —— **每一条都要能抛**，否则「声明错了」会被静默吞掉
+    raises("★ [E] `P` 不是 `U` 的划分 ⇒ `ViewSpec` 抛", lambda: ViewSpec(
+        universe=U, partition=(frozenset({"a", "b"}),), relation=frozenset()))
+    raises("★ [E] `P` 的块重叠 ⇒ `ViewSpec` 抛", lambda: ViewSpec(
+        universe=U, partition=(frozenset({"a", "b"}), frozenset({"b", "c"}),
+                               frozenset({"d"})), relation=frozenset()))
+    raises("★ [E] `E` 的端点不在 `U` 里 ⇒ `ViewSpec` 抛", lambda: ViewSpec(
+        universe=U, partition=(frozenset(U),), relation=frozenset({("a", "z")})))
+    raises("★ [E] `U` 里有重复元素 ⇒ `ViewSpec` 抛", lambda: ViewSpec(
+        universe=("a", "a"), partition=(frozenset({"a"}),), relation=frozenset()))
+
+    # --- ② 三态对照（设计稿 §9 要求的「过 / 红 / 跳过 各一例」） ----------------
+    fails = known_answer_controls()
+    ok("★★ [E] **已知答案对照组**：合成图上三态各一例，逐条对上",
+       not fails, "；".join(fails))
+    ok("★★ [E] `§A1` 三态：基线 过、掐掉一项 红",
+       a1_known_answer(False) is Tri.YES and a1_known_answer(True) is Tri.NO)
+    _rep = Report(plugin="(合成)")
+    a1_soundness(ViewSet(spec=spec, q=(), views=()), _rep)
+    ok("★ [E] `§A1` 视图集合为空 ⇒ **跳过**（不是过）",
+       _result(_rep, "A1") is Tri.UNEXPANDED)
+
+    # --- ③ `§A1` **不被** `B16` 蕴含 ----------------------------------------
+    #
+    # 这是这一层最容易做成「换个写法」的地方：若「具体化」=「把成员的覆盖并起来」，
+    # `§A1` 就**恒同真**（`B16` 全绿 ⇒ 它全绿），一条不提供独立信息的判据。
+    # 它的实际内容是「**合并**（§I2）之后还盖不盖得住」——
+    # 合并是**另一个函数**，它可能把覆盖收窄到装不下某个成员。
+    nodes, edges, _ = load()
+    kernel, plug = build_keyset(nodes)
+    cover = coverage_of("keyset", nodes, edges)
+    dirs = [d for d in kernel.all_directions() if kernel.members_of(d)][:4]
+    ids = [d.did for d in dirs]
+    spec4 = ViewSpec(universe=tuple(ids), partition=(frozenset(ids),),
+                     relation=frozenset({(ids[0], ids[1]), (ids[2], ids[3])}))
+
+    class _MergeUnionsReq(KeysetPlugin):
+        """注入：`合并` 取 `req` 的**并**（正确做法是取**交**）⇒ 覆盖被**收窄**。"""
+
+        def merge(self, ds):  # noqa: ANN001, ANN201
+            if not ds:
+                return frozenset(), frozenset()
+            req = frozenset().union(*[frozenset(d.payload[0]) for d in ds])
+            forb = frozenset().union(*[frozenset(d.payload[1]) for d in ds])
+            return (req, forb)
+
+    rep_good, rep_bad = Report(plugin="(合成)"), Report(plugin="(合成)")
+    a1_soundness(build_views(kernel, spec4, cover, plug), rep_good)
+    a1_soundness(build_views(kernel, spec4, cover, _MergeUnionsReq()), rep_bad)
+    b16_rep = Report(plugin="(合成)")
+    from ldv.checks.coverage import b16_members_covered
+    b16_members_covered(kernel, cover, b16_rep, path="§A1 独立性对照")
+    ok("★★ [E] `§A1` 的**独立性**：规范构造下 过；`合并` 取错（并而非交）⇒ **红**",
+       _result(rep_good, "A1") is Tri.YES and _result(rep_bad, "A1") is Tri.NO)
+    ok("★★ [E] 而**同一个注入下 `B16` 仍然是绿的** ⇒ `§A1` **不是** `B16` 的换写法"
+       "（它的内容是「合并之后还盖得住」，不是「成员 ⊆ 自己的覆盖」）",
+       _result(b16_rep, "B16") is Tri.YES)
+
+    # --- ④ 全链路：真内核 + 合成 spec ----------------------------------------
+    spec4b = ViewSpec(universe=tuple(ids),
+                      partition=(frozenset(ids[:2]), frozenset(ids[2:])),
+                      relation=frozenset({(ids[0], ids[2])}))
+    vs = build_views(kernel, spec4b, cover, plug)
+    rep = Report(plugin="(视图)", expects=VIEW_CODES)
+    a1_soundness(vs, rep)
+    a2_stable(spec4b, vs.q, rep)
+    a3_coarsest(spec4b, vs.q, rep)
+    ok("★ [E] 全链路（真内核 + 合成 spec）：`build_views` 出来的 `Q` 三条判据全绿",
+       all(_result(rep, c) is Tri.YES for c in VIEW_CODES),
+       "；".join(a.line() for a in rep.assertions))
+    prof = view_profile(vs)
+    print(f"    · 全链路读数：{prof['方向数']} 个方向 ⇒ {prof['视图数']} 张视图，"
+          f"最大一块 {prof['最大块']}｜具体化 {prof['具体化']} vs 成员 {prof['成员']}")
+
+    # --- ⑤ 外生 spec 的门禁：三种跳过 + 「声明了却坏了」是**报错** --------------
+    corpus = {"项数": len(nodes), "边数": sum(len(v) for v in edges.values())}
+    s, why = spec_for({}, "keyset", corpus)
+    ok("★ [E] 外生项**未声明** ⇒ 跳过（不是猜一个）", s is None and "未声明" in why)
+    s, why = spec_for({"语料": {"项数": 1, "边数": 1}, "方向": "keyset"}, "keyset", corpus)
+    ok("★ [E] 指纹对不上 ⇒ 跳过，且说清是**换了语料**", s is None and "另一份语料" in why)
+    s, why = spec_for({"语料": corpus, "方向": "reach"}, "keyset", corpus)
+    ok("★ [E] 声明写的是**别的方向** ⇒ 跳过", s is None and "另一条方向" in why)
+    raises("★★ [E] **声明了却坏了**（`P` 不是划分）⇒ **报错**，不是跳过 ——"
+           "「写错了」与「还没写」必须分得开，否则写错的声明看起来像没写",
+           lambda: spec_for({"语料": corpus, "方向": "keyset", "universe": ["a", "b"],
+                             "partition": [["a"]], "relation": []}, "keyset", corpus))
+    s, why = spec_for({"语料": corpus, "方向": "keyset",
+                       "universe": list(ids), "partition": [list(ids)],
+                       "relation": [[ids[0], ids[1]]]}, "keyset", corpus)
+    ok("★ [E] 声明**齐全** ⇒ 解得出 spec（跳过的那三种之外还有一条能过的路）",
+       s is not None and len(s.universe) == len(ids))
+
+    # --- ⑥ 闸门自己：`cap` 必须在**时间与内存上**都拦得住 --------------------
+    #
+    # ⚠️ 这一段不是「顺手加的保险」：**先物化、再拿物化出来的 `len` 去比上限**
+    #    的写法在 `k = 25` 时**不是报跳过，是挂住**（`Bell(25) ≈ 4.6e18`；
+    #    `outputs/_probe_cap.py`：20 秒超时、`timeout` 退出码 124）。
+    #
+    # 「**搜不完**」与「**还在搜**」在只看输出的时候长得一模一样 ——
+    # 本仓库一直在防的形状，只不过这一次它长在**闸门自己**身上。
+    # 所以判据不能是「跑完再比」，只能是「**先算规模再跑**」。
+    import time as _time
+
+    big_u = tuple(f"d{i}" for i in range(25))
+    big_spec = ViewSpec(universe=big_u, partition=(frozenset(big_u),),
+                        relation=frozenset((f"d{i}", f"d{i + 1}") for i in range(24)))
+    big_q = partition_of([frozenset({x}) for x in big_u])
+    t0 = _time.monotonic()
+    has, why, seen = coarser_stable_exists(big_spec, big_q)
+    dt = _time.monotonic() - t0
+    ok(f"★★ [E] 闸门：`Bell(25)` 的大组 ⇒ **如实报跳过**（`None`）而不是挂住"
+       f"（候选数 {seen}，用时 {dt * 1000:.1f} ms）",
+       has is None and "没搜完" in why and dt < 2.0,
+       f"has={has}、用时 {dt:.3f}s、说明 {why!r}")
+    boundary = []
+    for m in (5, 6, 7, 8):
+        u = tuple(f"d{i}" for i in range(m))
+        sp = ViewSpec(universe=u, partition=(frozenset(u),),
+                      relation=frozenset((f"d{i}", f"d{i + 1}") for i in range(m - 1)))
+        boundary.append(coarser_stable_exists(
+            sp, partition_of([frozenset({x}) for x in u]))[0] is not None)
+    ok("★ [E] 闸门边界：`Bell(k) ≤ cap` 时**搜得完并给出结论**"
+       "（不是一律跳过 —— 一律跳过与搜不完长得一样）", all(boundary))
+
+    # --- ⑦ committed 的外生声明：`ldv/checks/view_spec.json` ------------------
+    #
+    # ⚠️ 与 `test_injections` 那三条视图注入**分工不同**，两边都不许省：
+    #
+    #     注入（自带 `P`/`E`）   验「**判据**能不能红」—— 与配置文件在不在无关
+    #     本段（读那个文件）     验「**committed 的声明**成不成立」
+    #
+    # 只验前者的话，声明文件坏了没人知道：`run_checks` 会把它报成**跳过**，
+    # 而「跳过」与「过」在**退出码上都是 0**。
+    doc = load_spec_file()
+    ok(f"★★ [E] committed 的外生声明在（`{VIEW_SPEC_PATH.name}`）—— "
+       "不在的话 `run_checks` 的 `(视图)` 那组**三条全跳过**，而退出码照样 0",
+       bool(doc), f"没找到 {VIEW_SPEC_PATH}")
+    if doc:
+        s, why = spec_for(doc, str(doc.get("方向") or ""), corpus)
+        ok("★★ [E] 它解得出来（指纹 / 方向都对得上 —— 否则报的是**跳过**）",
+           s is not None, why)
+        if s is not None:
+            which = str(doc["方向"])
+            k2, p2 = build_keyset(nodes)
+            vs2 = build_views(k2, s, coverage_of(which, nodes, edges), p2)
+            rep2 = Report(plugin="(视图)", expects=VIEW_CODES)
+            a1_soundness(vs2, rep2)
+            a2_stable(s, vs2.q, rep2)
+            a3_coarsest(s, vs2.q, rep2)
+            ok("★★ [E] committed 声明上三条判据**全过** —— "
+               "有一条常驻的红等于没人再看红",
+               all(_result(rep2, c) is Tri.YES for c in VIEW_CODES),
+               "；".join(a.line() for a in rep2.assertions))
+            p2p = view_profile(vs2)
+            ok("★ [E] committed 声明**非退化**（视图数 < 方向数）—— "
+               "两者相等是**读数**不是失败，但那样这一层什么都没压，"
+               "`§A3` 也就没有内容可判",
+               p2p["视图数"] < p2p["方向数"],
+               f"{p2p['方向数']} 个方向 ⇒ {p2p['视图数']} 张视图")
+            print(f"    · committed 声明读数：{p2p['方向数']} 个方向 ⇒ "
+                  f"{p2p['视图数']} 张视图，最大一块 {p2p['最大块']}｜"
+                  f"具体化 {p2p['具体化']} vs 成员 {p2p['成员']}")
+
+
 def main() -> int:
     for fn in (test_tri, test_loader, test_kernel, test_exposure_model, test_selfopt,
                test_sequence, test_flows, test_emergence, test_divergence,
@@ -3520,7 +3801,7 @@ def main() -> int:
                test_b3_reduction_premise, test_reach_cache_premise,
                test_reach_cache_transparency, test_tree_premise,
                test_deletion_path, test_persistence, test_lock_scope,
-               test_query_hit_items):
+               test_query_hit_items, test_views):
         fn()
     total = len(PASS) + len(FAIL)
     for f in FAIL:
