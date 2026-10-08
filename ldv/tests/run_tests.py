@@ -4081,6 +4081,7 @@ def test_multilevel() -> None:
         MULTILEVEL_CODES,
         known_answer_controls,
         m4_verifiable,
+        n_folds,
         render_levels,
         run_multilevel,
     )
@@ -4151,6 +4152,24 @@ def test_multilevel() -> None:
     ok("★★ [M] 折叠**不止一层** —— 只有一层的话「折了」与「没折」长得一模一样"
        "（`§M5` 的反向判据就是这个）",
        len(levels) > 1, f"{len(levels)} 层")
+    # ★ 但「不止一层」**不等于**「真的折了」：末层是**终止层**，恒存在。
+    #   实测（2026-10-08，五份语料 × 三个方向）**真折层数恒为 0** ——
+    #   第 1 层的商不缩（`|Q| == |U|`）⇒ 折叠在此终止。见 `MEASUREMENTS.md` 结果二十。
+    #   ⇒ `n_folds` 是**读数**（基线 = 0，拿它当判据会基线就红）；
+    #      这里把它**钉住**，是为了「读数变了」这件事能被看见，而不是让它进退出码。
+    ok("★★ [M] `n_folds` 的**定义**：第 0 层（抽象）与末层（终止层）都不算 —— "
+       "手推三例",
+       n_folds([levels[0]]) == 0
+       and n_folds([levels[0], levels[0]]) == 0
+       and n_folds([levels[0], levels[0], levels[0]]) == 1,
+       f"1 层→{n_folds([levels[0]])}、2 层→{n_folds([levels[0], levels[0]])}、"
+       f"3 层→{n_folds([levels[0], levels[0], levels[0]])}")
+    ok("★★ [M] 真读数：committed 语料上 **真折 0 层** —— 这不是红（膨胀已被第 0 层"
+       "收住），但**「不止一层」这句话读不出它** ⇒ 必须单独数（`render_levels` 的标题）",
+       n_folds(levels) == 0, f"真折 {n_folds(levels)} 层 / 共 {len(levels)} 层")
+    ok("★ [M] 标题里**印出**真折层数（只印「N 层」会让「真折 0 层」与「真折 1 层」"
+       "共用一行 —— 那正是本项目最忌的形状）",
+       "真折 0 层" in render_levels(levels), render_levels(levels).splitlines()[0])
     ok("★ [M] 每一层的 `stopped` 只有**最后一层**非空 —— 中间层不该有停因"
        "（有的话说明它本该停却继续折了）",
        all(not lv.stopped for lv in levels[:-1]) and bool(levels[-1].stopped),
@@ -4202,6 +4221,76 @@ def _raises_valueerror(fn) -> bool:
     return False
 
 
+def test_cli_paths() -> None:
+    """`(cli)` 那一组（`checks/cli_paths.py`）—— 四条入口 + 两个非默认参数。
+
+    ## 分四段，每段都要有已知答案
+
+        ① 注册表    `PATHS` 的编号集合与 `CLI_PATH_CODES` **双向**相等（顺序也钉住）
+        ② 已知答案  三条「必须红」（CL3/CL4/CL5）**就是**那三条 —— 不是别的
+        ③ 真跑一遍  在 committed 语料上七条全过
+        ④ 已知答案对照  把 `run_one` 的护栏结论翻掉 ⇒ 两组各红各的
+
+    ⚠️ ② 看着像废话，其实不是：把 `PATHS` 里某条的期望值从 `False` 改成 `True`，
+       这一组会**照样全过**（因为断言就变成了「必须绿」）——
+       而那种改法正是「空转与通过长得一模一样」在**断言**上的形状。
+       所以「哪三条的已知答案是红」这件事本身要被钉住。
+    """
+    from ldv.checks.cli_paths import CLI_PATH_CODES, PATHS, run_cli_paths
+    from ldv.checks._framework import Report
+
+    # ── ① 注册表（双向 + 顺序） ───────────────────────────────────────────
+    codes = tuple(c for c, _t, _kw, _e in PATHS)
+    ok("★ [CL] `PATHS` 的编号与 `CLI_PATH_CODES` **逐项相同**（双向、含顺序）—— "
+       "「加了编号忘了加路径」与「删了路径忘了删编号」都要能红",
+       codes == CLI_PATH_CODES,
+       f"PATHS {codes} vs 声明 {CLI_PATH_CODES}")
+
+    # ── ② 已知答案：**哪三条是红的** ─────────────────────────────────────
+    red_codes = tuple(c for c, _t, _kw, e in PATHS if not e)
+    ok("★★ [CL] 已知答案是**红**的恰好是 `CL3`/`CL4`/`CL5`（空转护栏）—— "
+       "这条把「哪三条必须开火」钉住：把期望值改成 `True` 的话这一组会照样全过，"
+       "而那就成了「拆掉护栏也绿」",
+       red_codes == ("CL3", "CL4", "CL5"), f"实际 {red_codes}")
+
+    loaded = load()
+    if loaded is None:
+        return
+    nodes, edges, _ = loaded
+
+    # ── ③ 真跑一遍 ───────────────────────────────────────────────────────
+    def group(run_one=None) -> Report:
+        rep = Report(plugin="(cli)", expects=CLI_PATH_CODES)
+        run_cli_paths((nodes, edges, None), ["keyset", "reach", "sequence"],
+                      rep, run_one=run_one)
+        return rep
+
+    base = group()
+    ok("★★ [CL] 四条入口 + 两个非默认参数：**七条全过**（基线）",
+       not base.red,
+       "；".join(f"{a.code}={a.result}" for a in base.red))
+
+    # ── ④ 已知答案对照：两个分支各红各的 ─────────────────────────────────
+    from ldv import cli
+
+    def flip(always_guarded: bool):
+        def fake(name, holdout, only, remove=0, loaded=None):
+            _ok, text = cli.run_one(name, holdout, only, remove, loaded=loaded)
+            return (not always_guarded), text
+        return fake
+
+    absent = group(run_one=flip(False))
+    ok("★★ [CL] 护栏**永不**开火 ⇒ `CL3`/`CL4`/`CL5` 必须红（该红的没红）",
+       {a.code for a in absent.red} == {"CL3", "CL4", "CL5"},
+       f"实际红的是 {sorted(a.code for a in absent.red)}")
+
+    always = group(run_one=flip(True))
+    ok("★★ [CL] 护栏**处处**开火 ⇒ `CL1`/`CL2`/`CL6`/`CL7` 必须红（该绿的绿不了）—— "
+       "两个分支**互不替代**：只用一条的话，另一组「本来就恒红」没人守",
+       {a.code for a in always.red} == {"CL1", "CL2", "CL6", "CL7"},
+       f"实际红的是 {sorted(a.code for a in always.red)}")
+
+
 def main() -> int:
     for fn in (test_tri, test_loader, test_kernel, test_exposure_model, test_selfopt,
                test_sequence, test_flows, test_emergence, test_divergence,
@@ -4210,7 +4299,7 @@ def main() -> int:
                test_b3_reduction_premise, test_reach_cache_premise,
                test_reach_cache_transparency, test_tree_premise,
                test_deletion_path, test_persistence, test_lock_scope,
-               test_query_hit_items, test_views, test_multilevel):
+               test_query_hit_items, test_views, test_multilevel, test_cli_paths):
         fn()
     total = len(PASS) + len(FAIL)
     for f in FAIL:

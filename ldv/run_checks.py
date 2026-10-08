@@ -94,6 +94,11 @@ from .checks.multilevel import (
     run_multilevel,
     skip_all,
 )
+from .checks.cli_paths import (
+    CLI_PATH_CODES,
+    run_cli_paths,
+    skip_all as skip_cli_paths,
+)
 from .checks.abstraction import (
     VIEW_CODES,
     a1_soundness,
@@ -585,14 +590,52 @@ def multilevel_report(loaded, targets: list[str]) -> Report:
     levels = run_multilevel(spec, kernel, cover, plugin, rep)
     rep.note(why + f"；方向 `{which}`")
     rep.note(render_levels(levels))
-    # ⚠️ 这一句必须印出来：多层在这两份语料上**只折得动一层** ——
-    #   第 1 层的商**不缩**（`|Q| == |U|`）。那正是前作核验 §四 (1) 说的
-    #   「收缩比在 ldv 里**不受任何结构保证**」在真数据上的样子，
-    #   而不是「实现坏了」。读数与判据分开：`§M1` 绿（末层豁免），这句话只是读数。
+    # ⚠️ 这两句必须印出来：
+    #   ① **真折层数** —— `len(levels) == 2` 同时对应「折了一层」与「一层没折」，
+    #      只印总层数会让两者**长得一模一样**（本项目的中心反模式）。见 `n_folds`。
+    #   ② 第 1 层的商**不缩**（`|Q| == |U|`）⇒ 折叠在此终止。那正是前作核验 §四 (1)
+    #      说的「收缩比在 ldv 里**不受任何结构保证**」在真数据上的样子，
+    #      而不是「实现坏了」。读数与判据分开：`§M1` 绿（末层豁免），这两句只是读数。
     if len(levels) == 2 and levels[-1].n_blocks == len(levels[-1].spec.universe):
-        rep.note("★ 读数：第 1 层的商**不缩**（`|Q| == |U|`）⇒ 折叠在此终止。"
-                 "「每层缩一个常数因子」在 ldv 里是**实测的经验事实**，不是定理"
-                 "（前作核验 §四 (1)）—— 这条不是红，是这一层压不动。")
+        rep.note("★ 读数：第 1 层的商**不缩**（`|Q| == |U|`）⇒ 折叠在此终止 —— "
+                 "**真折 0 层**。这不是红：膨胀已被第 0 层收住（方向数涨 5.7× 而"
+                 "视图数只涨 1.6×，实测见 `MEASUREMENTS.md` 结果二十）。"
+                 "要让它**再**折下去，没有**边界安全**的杠杆 —— 同一份结果里那张杠杆表。")
+    return rep
+
+
+def cli_report(loaded, targets: list[str]) -> Report:
+    """`cli` 的**四条入口**与两个非默认参数 —— 流程 C 的第三条覆盖缺口。
+
+    ## 为什么单列一组
+
+    `run_checks` 的三条**装配**都是它自己造的（一次建完 / 先建 6 维护 n−6 /
+    `cli` 切分）；而 `cli` 的**四条入口**（`only=` 参数）与 `--holdout N` /
+    `--remove N` 的**非默认值**从来没有被跑过。
+    ⇒ 「`run_checks` 全绿」**不蕴含**「`cli` 绿」，而这件事的症状不是红，是
+    **检查报绿** —— 实测过一次：`cli._assemble` 的 reach 根口径与对照实现分岔，
+    `run_checks` 全绿而 `cli all --remove 12` 退出码 1（`outputs/_findings_real_data.md` 缺陷 1）。
+
+    ⚠️ 与 `cli_split_kernel` 同一条纪律：**直接调 `cli.run_one`，不复制**。
+
+    ## ⚠️ 三条断言的是「**必须红**」
+
+    `cli` 的**空转护栏**是它退出码的一部分。所以
+
+        `cli d` 单独跑 / `cli b --holdout 0` / `cli r` 不给 `--remove`
+
+    的**正确答案就是红**（空转不许与通过长得一样）。断言它们**开火了**。
+    写成「必须绿」的话这一组会**永远绿** —— 护栏拆掉也绿。
+    """
+    rep = Report(plugin="(cli)", expects=CLI_PATH_CODES)
+    if loaded is None:
+        skip_cli_paths(rep, "没有语料 ⇒ 四条流程都跑不起来（跳过 ≠ 通过）")
+        return rep
+    run_cli_paths(loaded, targets, rep)
+    rep.note("本组**直接调** `cli.run_one`（不复制）—— 与 `cli_split_kernel` 同一条纪律；"
+             f"方向 {list(targets)}，`--holdout` ∈ {{12, 0, 7}}，`--remove` ∈ {{0, 5}}。")
+    rep.note("⚠️ `CL3` / `CL4` / `CL5` 的**已知答案是红**（空转护栏必须开火）—— "
+             "断言「它红了」才证明护栏在；断言「它绿了」会永远绿。")
     return rep
 
 
@@ -686,6 +729,13 @@ def main(argv: list[str]) -> int:
     ml_rep = multilevel_report(loaded, targets)
     reps.append(ml_rep)
     print(ml_rep.render())
+    print()
+
+    # ★ `cli` 的**四条入口**与两个非默认参数 —— 流程 C 的第三条覆盖缺口。
+    #   三条「必须红」（空转护栏）是**已知答案对照**，见 `cli_report`。
+    cli_rep = cli_report(loaded, targets)
+    reps.append(cli_rep)
+    print(cli_rep.render())
     print()
 
     total_red = sum(len(r.red) for r in reps)

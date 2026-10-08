@@ -424,9 +424,40 @@ def run_multilevel(spec: ViewSpec, kernel: object, cover: Callable[[object], fro
     return levels
 
 
+def n_folds(levels: Sequence[Level]) -> int:
+    """**真折层数** —— 第 0 层（抽象）与末层（终止层）都**不算**。
+
+        levels = [L0, L1, ..., L_{m-1}]
+                 ↑    └──────┬──────┘   ↑
+              抽象     真折的层      终止层
+
+    ⚠️ **为什么必须把它单独数出来**：`len(levels) == 2` 这件事**同时**对应两种
+       完全不同的情形 —— 「折了一层」与「一层都没折、第 1 层立刻撞阈值」。
+       两者在只印 `len(levels)` 的时候**长得一模一样**（都是「2 层」），
+       而后者正是本项目最忌的「空转与通过长得一模一样」。
+
+    实测（2026-10-08，36 项 / `openalex-small` / `openalex-n50`…，三个方向）：
+       **真折层数恒为 0** —— 末层永远是第 1 层。见 `MEASUREMENTS.md` 结果二十。
+       ⇒ 它是**读数**，不是判据：拿它当判据会**基线就红**，
+          而「基线就红的判据过不了注入验证」（本仓库的一条纪律）。
+    """
+    return max(0, len(levels) - 2)
+
+
 def render_levels(levels: Sequence[Level]) -> str:
-    """把折叠过程印出来 —— **每一层的三个数都要在**（收缩比 / 代价 / 停因）。"""
-    lines = [f"多层折叠：{len(levels)} 层"]
+    """把折叠过程印出来 —— **每一层的三个数都要在**（收缩比 / 代价 / 停因）。
+
+    ⚠️ 标题**不许**只写「N 层」：那会让「真折 0 层」与「真折 1 层」共用一行
+       （见 `n_folds`）。真折层数必须与总层数**分开印**。
+    """
+    n = n_folds(levels)
+    if len(levels) <= 1:
+        head = (f"多层折叠：{len(levels)} 层 —— **真折 {n} 层**"
+                f"（第 0 层自己就是终止层：它没缩）")
+    else:
+        head = (f"多层折叠：{len(levels)} 层 = 第 0 层（抽象）+ **真折 {n} 层**"
+                f" + 1 个终止层")
+    lines = [head]
     for i, lv in enumerate(levels):
         lines.append(
             f"    L{i}  |U| = {len(lv.spec.universe):>3}  |Q| = {len(lv.q):>3}"

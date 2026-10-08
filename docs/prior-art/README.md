@@ -198,9 +198,10 @@ PYTHONIOENCODING=utf-8 PYTHONUTF8=1 "$V" repo/docs/prior-art/verify_quotes.py \
     repo/docs/*.md repo/README.md repo/ldv/MEASUREMENTS.md
 ```
 
-**2026-10-08 实测：引文 251 条｜全覆盖 251｜有缺口 0。**
-（同一次改动之前是 208 条 —— 差的 43 条全在
-`repo/docs/分层方向视图-多层抽象-前作核验.md` 里，逐条对得上。）
+**2026-10-08 实测：引文 252 条｜全覆盖 252｜有缺口 0。**
+（同一次改动之前是 208 条 —— 差的 44 条：43 条全在
+`repo/docs/分层方向视图-多层抽象-前作核验.md` 里，另 1 条是 `repo/ldv/MEASUREMENTS.md`
+结果十九 把 METIS p.365 那条原文又引了一次。逐条对得上。）
 
 ⚠️ **这句话的范围恰好等于上面那条调用式。** 两处**不在**范围里，写在这里：
 

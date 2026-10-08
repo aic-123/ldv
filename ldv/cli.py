@@ -116,9 +116,17 @@ def _assemble(name: str, nodes, edges, holdout: int, remove: int = 0):
 
 
 def run_one(name: str, holdout: int, only: str | None,
-            remove: int = 0) -> tuple[bool, str]:
-    """跑一个方向。返回 `(护栏是否全过, 追踪文本)`。"""
-    loaded = load()
+            remove: int = 0, loaded=None) -> tuple[bool, str]:
+    """跑一个方向。返回 `(护栏是否全过, 追踪文本)`。
+
+    `loaded` 为 `None` 时自己 `load()`（**生产路径**：`python -m ldv.cli`）。
+    `run_checks` 把已经读进来的那份传进来 —— 这样 `--cap` 也作用到它，
+    而且不必为每条路径把语料重读一遍。
+    ⚠️ 传进来的那份必须与 `load()` 同源（同一个 `LDV_CORPUS`），否则
+    「判的是这一份、跑的是另一份」会**静默**成立 —— 那正是本仓库最忌的形状。
+    """
+    if loaded is None:
+        loaded = load()
     if loaded is None:
         return False, "⚠ 找不到语料 —— 四条流程都跑不起来（这不是通过）"
     nodes, edges, _ = loaded

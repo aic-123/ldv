@@ -1780,6 +1780,63 @@ def inj_m6(nodes, edges, injected: bool) -> Report:
 
 # ═══ 驱动 ════════════════════════════════════════════════════════════════════
 
+def _cli_report(nodes, edges, *, run_one=None) -> Report:
+    """`(cli)` 那一组的公共装配 —— 与 `run_checks.cli_report` **同一条**。"""
+    from ldv.checks.cli_paths import CLI_PATH_CODES, run_cli_paths
+
+    rep = Report(plugin="(cli)", expects=CLI_PATH_CODES)
+    run_cli_paths((nodes, edges, None), ["keyset", "reach", "sequence"],
+                  rep, run_one=run_one)
+    return rep
+
+
+def _cli_flipped(always_guarded: bool):
+    """对照实现：**保留** `cli.run_one` 的真实跑法，只把它的**护栏结论**翻掉。
+
+        `always_guarded=False` ⇒ 护栏**永不**开火（正常该红的不红）
+        `always_guarded=True`  ⇒ 每条路径都开火（正常该绿的也红）
+
+    ⚠️ 它证明的是「这一组断言**真的在读护栏的结论**」。
+       它**不**证明护栏自己写对了 —— 护栏的**存在**由 `cli` 自己的
+       `ldv/C7-流程跑通.md` 与五份语料上的 `cli all --remove 12`（退出码 0）守着。
+       两条各占其位：这里守的是「`run_checks` 绿 ⇒ `cli` 的四条入口绿」这句话。
+    """
+    from ldv import cli
+
+    def fake(name, holdout, only, remove=0, loaded=None):
+        _ok, text = cli.run_one(name, holdout, only, remove, loaded=loaded)
+        return (not always_guarded), text
+
+    return fake
+
+
+def inj_cli_guard_absent(nodes, edges, injected: bool) -> Report:
+    """`CL3` / `CL4` / `CL5` —— 注入「**护栏不见了**」。
+
+    三条的**已知答案是红**（`cli d` 单独跑 / `cli b --holdout 0` / `cli r` 不给 `--remove`
+    都是空转）。把护栏结论翻成「永远全过」⇒ 这三条**变绿** ⇒ 断言失败 ⇒ 红。
+
+    ⚠️ 反过来看才说明它有意义：若把这三条写成「必须绿」，那么**拆掉护栏也照样绿** ——
+       这就是「空转与通过长得一模一样」在**断言**上的样子。
+    """
+    return _cli_report(nodes, edges,
+                       run_one=None if not injected else _cli_flipped(False))
+
+
+def inj_cli_guard_always(nodes, edges, injected: bool) -> Report:
+    """`CL1` / `CL2` / `CL6` / `CL7` —— 注入「**护栏处处开火**」。
+
+    四条的正常答案是**绿**（`cli a` / `cli b` 单独跑、`--holdout 7`、`--remove 5`）。
+    让护栏无条件开火 ⇒ 这四条**变红** ⇒ 断言失败 ⇒ 红。
+
+    ⚠️ 与 `inj_cli_guard_absent` 是**两个不同的分支**，互不替代：
+       前者证明「该红的那三条真的红」，后者证明「该绿的那四条真的绿」。
+       只用一条的话，「四条本来就恒红」这件事**没人守**。
+    """
+    return _cli_report(nodes, edges,
+                       run_one=None if not injected else _cli_flipped(True))
+
+
 CASES: dict[str, Callable] = {
     "B1": inj_b1, "B2": inj_b2, "B3": inj_b3, "B4": inj_b4, "B5": inj_b5,
     "B6": inj_b6, "B7": inj_b7, "B8": inj_b8, "B9": inj_b9, "B10": inj_b10,
@@ -1789,6 +1846,11 @@ CASES: dict[str, Callable] = {
     "A4": inj_a4, "A5": inj_a5, "A6": inj_a6, "A7": inj_a7,
     "M0": inj_m0, "M1": inj_m1, "M2": inj_m2, "M3": inj_m3,
     "M4": inj_m4, "M5": inj_m5, "M6": inj_m6,
+    # ★ `(cli)` 那一组：**两条注入覆盖七条**（两个分支互不替代，见各自的 docstring）。
+    "CL1": inj_cli_guard_always, "CL2": inj_cli_guard_always,
+    "CL6": inj_cli_guard_always, "CL7": inj_cli_guard_always,
+    "CL3": inj_cli_guard_absent, "CL4": inj_cli_guard_absent,
+    "CL5": inj_cli_guard_absent,
 }
 
 #: 同一条检查的**第二条**判据。键是标签，值是 `(判据编号, 注入函数)`。
@@ -1847,11 +1909,12 @@ def _registry_gap() -> tuple[list[str], list[str]]:
     只不过它这次出现在**注册表**上。别处没有任何东西守它，所以守在这里。
     """
     from ldv.checks.abstraction import VIEW_CODES
+    from ldv.checks.cli_paths import CLI_PATH_CODES
     from ldv.checks.multilevel import MULTILEVEL_CODES
     from ldv.run_checks import KERNEL_CODES, PLUGIN_CODES
 
     declared = (set(PLUGIN_CODES) | set(KERNEL_CODES) | set(VIEW_CODES)
-                | set(MULTILEVEL_CODES))
+                | set(MULTILEVEL_CODES) | set(CLI_PATH_CODES))
     covered = set(CASES) | {code for code, _ in EXTRA_CASES.values()}
     return sorted(declared - covered), sorted(covered - declared)
 
