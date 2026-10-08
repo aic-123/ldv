@@ -1,26 +1,42 @@
-"""多层抽象 `§M0`–`§M6` —— 「把流程 E 反复套在自己身上」的七条判据。
+"""`§M0`–`§M6` —— **视图层（L0）的声明判据** + **「若继续折」的契约判据**。
 
     `docs/分层方向视图-多层抽象-前作核验.md` §三 是这份实现的**来源**；
-    `ldv/core/views.py` 的多层那一段是**被判对象**（`quotient_spec` / `fold_until`）。
+    `ldv/core/views.py` 的折叠那一段是**被判对象**（`quotient_spec` / `fold_until`）。
 
 ---
 
-## 七条各守什么
+## ⚠️ 先读这一段：折叠**不是目标**，产物是第 0 层
 
-| 编号 | 守的东西 | 红形态 |
-|---|---|---|
-| `§M0` | 商关系**无自环** | 去掉 `A ≠ B` 过滤 ⇒ 出现 `(V, V)` |
-| `§M1` | 折叠**真的在缩**（除末层外每层 `shrink ≤ 阈值`；且不止一层） | 第一层就 `Q == P` |
-| `§M2` | 层数不超过 `MAX_LEVELS` | 调用方把 `max_levels` 抬到声明值之上 |
-| `§M3` | 总代价 `Σ|U_k| ≤ 2·|U_0|` | 手造一个「每层不缩」的层叠 |
-| `§M4` | 每层 `n_cand ≤ MAX_COARSENING_CANDIDATES`（**折叠之前**判） | 一层 `Bell(K) > 200000` |
-| `§M5` | 终止**只由 `§M1` / `§M2` 触发**，且**不止一层** | 末层 `stopped` 为空/非法；或只折了一层 |
-| `§M6` | 顶层账 **⊇** 各层丢掉的并（账必须**被携带**） | 折叠时不携带账 |
+本设计的产物是**视图层**：`csr(spec)` 给的那个划分。它的用途是让检索器在使用这套
+结构时**先得到一个模糊掌握**（先看粗、再看细），而不是一上来就在 25 个方向里精确挑。
+**一层就够了。**
 
-⚠️ **`§M3` 是守卫，不是会开火的判据**（与删除路径的 `D2`/`D3` 同一处境）：
-   `fold_until` 的每一层都缩一半以上 ⇒ `Σ|U_k| < 2|U_0|` 是**几何级数的推论**，
-   对 `fold_until` 的输出**恒真**。它守的是**契约**：另一个实现若允许
-   「不缩的层继续折」，它就会开火。所以它的注入是**手造层叠**。
+实测（36 项语料 / 三个方向，`MEASUREMENTS.md` 结果二十）：**真折 0 层** ——
+第 1 层的商不缩（`|Q₁| == |U₁|`）⇒ 折叠在此终止。而这不是缺陷：
+膨胀已被第 0 层收住（`reach` 方向数涨 5.7× 而视图数只涨 1.6×）。
+
+⇒ 这七条按**守谁**分两拨，名字里**不再出现「多层」**：
+
+| 编号 | 守谁 | 守的东西 | 红形态 |
+|---|---|---|---|
+| `§M0` | **L0** | 视图关系**无自环** | 去掉 `A ≠ B` 过滤 ⇒ 出现 `(V, V)` |
+| `§M1` | **L0** | 视图层**真的在缩**（收缩比 ≤ 阈值） | 喂离散划分（块数 == 方向数） |
+| `§M4` | **L0** | 验证代价 `n_cand ≤ cap`（**折叠之前**判） | 一层 `Bell(K) > 200000` |
+| `§M2` | 折叠 | 层数不超过 `MAX_LEVELS` | 调用方把 `max_levels` 抬到声明值之上 |
+| `§M3` | 折叠 | 总代价有界（`Σ|U_k| ≤ 2·|U_0|`） | 手造一个「每层不缩」的层叠 |
+| `§M5` | 折叠 | 终止**只由 `§M1` / `§M2` 触发** | 末层 `stopped` 为空（跑到不动点） |
+| `§M6` | 折叠 | 顶层账 **⊇** 各层丢掉的并（账必须**被携带**） | 折叠时不携带账 |
+
+⚠️ **「一层就够」不等于「折叠的契约可以不要」。** `fold_until` 仍在跑，它的刹车、
+   它的账、它的出口都还是**契约** ⇒ 后四条照旧守。**但它们守的是机制，不是产物。**
+   （⚠️ 旧标题里的「且不止一层」是**反需求**的：它把「折叠没折下去」写成红，
+   而本设计的产物恰恰就是第 0 层。已删 —— 见 `m1_shrink` / `m5_termination`。）
+
+⚠️ **`§M3` / `§M5` 是守卫，不是会开火的判据**（与删除路径的 `D2`/`D3` 同一处境）：
+   `fold_until` 的每一层都缩一半以上 ⇒ `Σ|U_k| < 2|U_0|` 是**几何级数的推论**；
+   而它的循环**只有两个出口**，都带非空 `stopped` ⇒ `§M5` 的正向半**不可达**。
+   两条对 `fold_until` 的输出**恒真**。它们守的是**契约**：另一个实现若允许
+   「不缩的层继续折」/「跑到不动点就停」，它们就会开火。所以注入是**手造层叠**。
    这一条必须写在这里 —— 否则「恒真」与「没在判」长得一模一样。
 
 ⚠️ **`§M4` 与 `§A3` 必须分得开**：
@@ -47,8 +63,12 @@ from ..core.views import (
 from ._framework import Report
 from ..core.tri import Tri
 
-#: 多层这一组要跑的编号。**只列已经实现了的** —— 没实现的不许写进来
+#: 这一组要跑的编号。**只列已经实现了的** —— 没实现的不许写进来
 #: （写进来就等于声称「套件全绿」覆盖了它，而它根本没跑）。
+#:
+#: ⚠️ 名字里的 `M` 是 `multilevel` 的残留（这一组原来是按「多层」写的）。
+#:    代码**不改名** —— 改名要动注册表、注入、文档四处，而编号本身
+#:    对「这一组守什么」一个字节的信息都没有。**改的是主语**（标题与文档）。
 MULTILEVEL_CODES = ("M0", "M1", "M2", "M3", "M4", "M5", "M6")
 
 
@@ -70,7 +90,7 @@ def m0_no_self_loop(levels: Sequence[Level], rep: Report) -> None:
     """
     bad = [(i, a) for i, lv in enumerate(levels)
            for (a, b) in lv.spec.relation if a == b]
-    rep.add("M0", "多层：商关系无自环（自环让「稳定」退化成恒真）",
+    rep.add("M0", "视图层：`E` 无自环（自环让「稳定」退化成恒真）",
             Tri.NO if bad else Tri.YES,
             (f"{len(bad)} 处自环：{[(i, x) for i, x in bad[:3]]}"
              f"（第 0 层来自人写的 `E`，之后各层来自 `quotient_spec`）") if bad
@@ -82,39 +102,53 @@ def m0_no_self_loop(levels: Sequence[Level], rep: Report) -> None:
 
 def m1_shrink(levels: Sequence[Level], rep: Report,
               min_ratio: float = MIN_SHRINK_RATIO) -> None:
-    """`§M1` —— 折叠**真的在缩**。
+    """`§M1` —— **视图层真的在缩**：`shrink(L0) = |Q₀| / |U₀| ≤ min_ratio`。
 
-        除**末层**之外，每层 `shrink = |Q_k| / |U_k| ≤ min_ratio`
-        **且** 层数 ≥ 2
+        `inner` = 除**末层**外的每一层（末层是终止层，按定义会超阈值）
+        `len(levels) == 1` 时 `inner` 就是那一层本身 —— **它不豁免**
 
     ## 为什么末层豁免
 
     `fold_until` 的终止条件**就是**「这一层缩不动了」⇒ 末层按定义会超阈值。
     把它算进去的话 `§M1` 在**任何**输入上都红 —— 一条常驻的红等于没人再看红。
 
-    ## 为什么「层数 ≥ 2」也算这一条
+    ## ⚠️ 旧的「且层数 ≥ 2」已删（2026-10-08）—— 它把两件事混成了一件
 
-    `Q == P`（第一层就不缩）⇒ 折叠**恰好返回 1 层**。那时「折了」与「没折」
-    在输出里长得**一模一样**（都是「1 层，收缩比 1.0」）。单层里这是个**读数**
-    （抽象层 §4 `E3`：块数 == 方向数 ⇒ 不是红）；**多层里它必须变成红** ——
-    因为它意味着「反复套自己」这件事**一次都没发生**。这个反差就是对照组。
+        ① 「视图层没缩够」  ← **真判据**：`|Q₀| == |U₀|` ⇒ 这一层没兑现「粗」
+        ② 「折叠没折下去」  ← **反需求**：本设计的产物就是第 0 层，**一层就够**
+
+    而 `len(levels) == 1` 这个**读数**恰好**只**由 ① 造成 —— `fold_until` 的循环在
+    `shrink > min_ratio` 时**立刻返回**，所以「只有一层」⇔「`L0` 没缩够」。
+    ⇒ 判据直接写成 ① 本身**更强也更准**：它指着那一层的两个数（`|U₀|` / `|Q₀|`），
+      而不是绕道去数层数。红形态**不变**（同一个条件），只是说法对了。
+
+    ⚠️ 旧 docstring 还写着「`Q == P`（第一层就不缩）」—— 那句**把两个极端写反了**：
+
+        `Q == P` = `{U}` = **1 块**   ⇒ `shrink = 1/|U|` ⇒ **缩得最狠**
+        `|Q| == |U|` = 离散            ⇒ `shrink = 1.0`   ⇒ **一点没缩**
+
+    （同一条更正在 `test_injections.inj_m1` 里也有一份；实现按 `|Q|/|U|` 的定义走。）
+
+    ## ⚠️ `bad` 那一支是**守卫**（对 `fold_until` 的输出恒真）
+
+    `fold_until` 只要 `shrink > min_ratio` 就**立刻停** ⇒ 超阈值的层**只可能是末层**
+    ⇒ `levels[:-1]` 全 ≤ 阈值 ⇒ `bad` 恒空。红形态只能**手造**：另一个实现若允许
+    「不缩的层继续折」，它才开火。理由与 `§M3` 相同 —— 守的是**契约**。
     """
-    inner = levels[:-1]
+    inner = levels[:-1] if len(levels) > 1 else list(levels)
     bad = [(i, round(lv.shrink, 3)) for i, lv in enumerate(inner)
            if lv.shrink > min_ratio]
-    too_short = len(levels) < 2
-    why: list[str] = []
-    if too_short:
-        why.append(f"只折了 {len(levels)} 层（`Q == P`？）—— 「折了」与「没折」"
-                   f"在输出里长得一样")
-    if bad:
-        why.append(f"非末层没缩够：{bad[:3]}（阈值 {min_ratio}）")
-    rep.add("M1", "多层：除末层外每层都收缩（`|Q|/|U| ≤ 阈值`），且不止一层",
-            Tri.NO if why else Tri.YES,
-            "；".join(why) if why
-            else (f"{len(levels)} 层，前 {len(inner)} 层收缩比 "
-                  f"{[round(lv.shrink, 3) for lv in inner]} 全 ≤ {min_ratio}；"
-                  f"末层 {round(levels[-1].shrink, 3)} 是**终止条件**（豁免）"))
+    rep.add("M1", "视图层：`shrink = |Q₀|/|U₀| ≤ 阈值`"
+                  "（视图层**真的在缩** —— 这一层就是产物）",
+            Tri.NO if bad else Tri.YES,
+            (f"没缩够：{[(f'L{i}', r) for i, r in bad[:3]]}（阈值 {min_ratio}）—— "
+             f"`|Q| == |U|` ⇒ 这一层**没有兑现「粗」**，检索器拿不到模糊掌握") if bad
+            else (f"L0：`|U₀| = {len(levels[0].spec.universe)}` ⇒ "
+                  f"`|Q₀| = {len(levels[0].q)}`，收缩比 {levels[0].shrink:.3f} "
+                  f"≤ {min_ratio}"
+                  + (f"；另有 {len(inner) - 1} 个中间层也全 ≤ {min_ratio}"
+                     if len(inner) > 1 else "")
+                  + ("（只有一层：它自己就是终止层）" if len(levels) == 1 else "")))
 
 
 # --- §M2 ----------------------------------------------------------------------
@@ -129,7 +163,7 @@ def m2_levels(levels: Sequence[Level], rep: Report,
        「有人把刹车拆了」与「没超」在只看层数时**长得一模一样**。
     """
     n = len(levels)
-    rep.add("M2", f"多层：层数 ≤ `MAX_LEVELS`（{max_levels}）",
+    rep.add("M2", f"折叠：层数 ≤ `MAX_LEVELS`（{max_levels}）",
             Tri.NO if n > max_levels else Tri.YES,
             (f"折了 {n} 层，超过声明上限 {max_levels} —— "
              f"最后一层的 `stopped` 是 {levels[-1].stopped!r}") if n > max_levels
@@ -160,7 +194,7 @@ def m3_cost(levels: Sequence[Level], rep: Report) -> None:
     """
     n0 = len(levels[0].spec.universe)
     cost = sum(len(lv.spec.universe) for lv in levels)
-    rep.add("M3", "多层：总代价 `Σ|U_k| ≤ 2·|U_0|`（几何递减的推论 —— 守卫）",
+    rep.add("M3", "折叠：总代价 `Σ|U_k| ≤ 2·|U_0|`（几何递减的推论 —— 守卫）",
             Tri.NO if cost > 2 * n0 else Tri.YES,
             (f"Σ|U_k| = {cost} > 2·|U_0| = {2 * n0}（{len(levels)} 层）"
              f" —— 有层**不缩还继续折**") if cost > 2 * n0
@@ -178,7 +212,7 @@ def m4_verifiable(levels: Sequence[Level], rep: Report,
     ⇒ 判据在 `fold_until` 之前/之中就该有结论，而不是等 `§A3` 报跳过。
     """
     bad = [(i, lv.n_cand) for i, lv in enumerate(levels) if lv.n_cand > cap]
-    rep.add("M4", f"多层：每层验证代价 `n_cand ≤ {cap}`（`§A3` 的**前置门**）",
+    rep.add("M4", f"每层：验证代价 `n_cand ≤ {cap}`（`§A3` 的**前置门**）",
             Tri.NO if bad else Tri.YES,
             (f"{len(bad)} 层超上限：{bad[:3]} —— `§A3` 那时只会报**跳过**，"
              f"而跳过不阻止交付") if bad
@@ -189,13 +223,26 @@ def m4_verifiable(levels: Sequence[Level], rep: Report,
 # --- §M5 ----------------------------------------------------------------------
 
 def m5_termination(levels: Sequence[Level], rep: Report) -> None:
-    """`§M5` —— 终止**只许**由 `§M1`（收缩比）或 `§M2`（层数）触发。
+    """`§M5` —— 折叠终止**只许**由 `§M1`（收缩比）或 `§M2`（层数）触发。
 
-        正向：末层的 `stopped` **非空**，且取值在 `{"M1 收缩比", "M2 层数"}` 里
-        反向：层数 **> 1**（阈值不许松到第一层就误停）
+        末层的 `stopped` **非空**，且取值在 `{"M1 收缩比", "M2 层数"}` 里
 
-    ⚠️ **两条缺一不可**。只有正向的话，「阈值定得太松、第一层就停」这一侧
-       没人守 —— 而那正是「折叠看起来在跑、其实一层都没折」的形状。
+    ## ⚠️ 这是**守卫**（读之前先读这句）
+
+    `fold_until` 的循环**只有两个出口**，都带非空 `stopped` ⇒ 这一条对它的输出
+    **恒真**，红形态只能**手造**。它守的是**契约**：另一个实现若「跑到不动点就停」
+    （没有刹车），它开火。理由与 `§M3` / `§M6` 相同。
+
+    ## ⚠️ 旧的「反向半：层数 > 1」已删（2026-10-08）—— 两条理由，各自都够
+
+        ① 它是**反需求**：本设计的产物是第 0 层，**一层就够**。
+           「第一层就停」**不是误停**，是期望的结局。
+        ② 它与 `§M1` **判同一件事**：`len(levels) < 2` ⇔ `L0` 没缩够
+           （`fold_until` 的循环在 `shrink > min_ratio` 时立刻返回）——
+           而那正是 `§M1` 现在**直接**判的。留着它会让「红」分不清是谁的
+           （本仓库的一条纪律：两条判同一件事，红就指不出病因）。
+
+    ⇒ 删掉它**没有**丢掉覆盖：那个条件仍被 `§M1` 判着，而且判得更准。
     """
     legal = {"M1 收缩比", "M2 层数"}
     last = levels[-1].stopped
@@ -203,13 +250,10 @@ def m5_termination(levels: Sequence[Level], rep: Report) -> None:
     if last not in legal:
         why.append(f"末层停因 {last!r} 不在 {sorted(legal)} 里"
                    f"（空 = 没有刹车，那是「跑到不动点」，本设计不许）")
-    if len(levels) < 2:
-        why.append(f"只折了 {len(levels)} 层 —— 阈值太松，第一层就误停了")
-    rep.add("M5", "多层：终止只由 `§M1`（收缩比）/ `§M2`（层数）触发，且不止一层",
+    rep.add("M5", "折叠：终止只由 `§M1`（收缩比）/ `§M2`（层数）触发 —— 守卫",
             Tri.NO if why else Tri.YES,
             "；".join(why) if why
-            else (f"末层停因 {last!r} 合法；共 {len(levels)} 层（> 1）"
-                  f" —— 「折了」与「没折」分得开"))
+            else (f"末层停因 {last!r} 合法（共 {len(levels)} 层）"))
 
 
 # --- §M6 ----------------------------------------------------------------------
@@ -239,7 +283,7 @@ def m6_ledger(levels: Sequence[Level], rep: Report) -> None:
         lost_union |= set(lv.lost)
     top = set(levels[-1].ledger)
     miss = sorted(lost_union - top)
-    rep.add("M6", "多层：顶层账 ⊇ 各层丢掉的并（账必须**被携带**，不许现推）",
+    rep.add("M6", "折叠：顶层账 ⊇ 各层丢掉的并（账必须**被携带**，不许现推）",
             Tri.NO if miss else Tri.YES,
             (f"顶层账少了 {len(miss)} 项：{miss[:3]} —— 有层**丢了账没往上带**"
              f"（等价于把误差优化掉）") if miss
@@ -298,7 +342,7 @@ def known_answer_controls() -> list[str]:
     if judge(m0_no_self_loop, [bad]) is not Tri.NO:
         fails.append("§M0 自环没被抓住（去掉 A≠B 过滤的对照实现应当是红的）")
 
-    # ── `§M1`：正常折叠绿；第一层**不缩**（`|Q| == |U|`，离散）红 ──────────
+    # ── `§M1`：视图层缩够了绿；视图层**不缩**（`|Q₀| == |U₀|`，离散）红 ────
     ok_levels = [Level(spec=CONTROL_SPEC, q=(frozenset({"a", "b"}), frozenset({"c", "d"})),
                        shrink=0.5, n_cand=1),
                  Level(spec=CONTROL_SPEC, q=(frozenset({"a", "b", "c", "d"}),),
@@ -309,9 +353,16 @@ def known_answer_controls() -> list[str]:
     flat = [Level(spec=CONTROL_SPEC, q=tuple(frozenset({x}) for x in ("a", "b", "c", "d")),
                   shrink=1.0, n_cand=1, stopped="M1 收缩比")]
     if judge(m1_shrink, ok_levels) is not Tri.YES:
-        fails.append("§M1 正常折叠被判红")
+        fails.append("§M1 视图层缩够了被判红")
     if judge(m1_shrink, flat) is not Tri.NO:
-        fails.append("§M1 `Q == P`（只折一层）没被抓住")
+        fails.append("§M1 视图层没缩够（`|Q₀| == |U₀|`，离散）没被抓住")
+    # ★ 「一层就够」是本设计的**产物**，所以「只有一层」本身不许是红 ——
+    #   红的是「那一层没缩够」。这两件事在只数层数时长得一模一样。
+    one_ok = [Level(spec=CONTROL_SPEC, q=(frozenset({"a", "b"}), frozenset({"c", "d"})),
+                    shrink=0.5, n_cand=1, stopped="M2 层数")]
+    if judge(m1_shrink, one_ok) is not Tri.YES:
+        fails.append("§M1 只有一层但**缩够了**（`max_levels = 1` 那一侧）被判红 —— "
+                     "「一层就够」是产物，不许当成红")
 
     # ── `§M2`：默认层数绿；把 `max_levels` 抬过声明值红 ───────────────────
     many = [replace(ok_levels[0], stopped="") for _ in range(MAX_LEVELS + 1)]
@@ -339,14 +390,16 @@ def known_answer_controls() -> list[str]:
     if judge(m4_verifiable, big) is not Tri.NO:
         fails.append("§M4 `Bell(11)=678570 > 200000` 没被抓住")
 
-    # ── `§M5`：合法停因 + 多层绿；停因为空 / 只一层 各红一次 ──────────────
+    # ── `§M5`：合法停因绿；停因为空（跑到不动点）红 ────────────────────────
+    #    ⚠️ 旧的第三例（`flat`：只折一层 ⇒ 红）已删 —— 那条判的是 `§M1` 的事，
+    #       而且「一层就够」是本设计的产物。见 `m5_termination` 的 docstring。
     if judge(m5_termination, ok_levels) is not Tri.YES:
         fails.append("§M5 合法停因被判红")
     if judge(m5_termination, [replace(ok_levels[0], stopped=""),
                               replace(ok_levels[1], stopped="")]) is not Tri.NO:
         fails.append("§M5 末层停因为空（跑到不动点）没被抓住")
-    if judge(m5_termination, flat) is not Tri.NO:
-        fails.append("§M5 只折一层没被抓住（阈值太松那一侧）")
+    if judge(m5_termination, one_ok) is not Tri.YES:
+        fails.append("§M5 只有一层但停因合法被判红 —— 「一层就够」是产物，不许当成红")
 
     # ── `§M6`：账携带齐绿；丢了账红 ───────────────────────────────────────
     carried = [replace(ok_levels[0], lost=frozenset({"x"}), ledger=frozenset({"x"})),
@@ -368,14 +421,19 @@ def run_multilevel(spec: ViewSpec, kernel: object, cover: Callable[[object], fro
                    next_partition: Callable[[int, tuple[str, ...]], Sequence] | None = None,
                    max_levels: int = MAX_LEVELS,
                    min_shrink_ratio: float = MIN_SHRINK_RATIO) -> list[Level]:
-    """在**真内核**上跑一遍多层，并判 `§M0`–`§M6`。
+    """在**真内核**上跑一遍**视图层**（并按需继续折），判 `§M0`–`§M6`。
+
+    ⚠️ **产物是第 0 层**（`levels[0]`）。`fold_until` 会再折下去直到刹车，
+       但实测**真折 0 层**（`n_folds`）—— 后几层只是**机制**，不是交付物。
 
     `next_partition` 默认给 `P = {U}`（信息量最低那一档）——
     ⚠️ **那仍然是一次「人声明」**，只是由调用方在这里替人写下来。
        它必须能被调用方替换，否则尺度就被偷偷内生化（违反 `§K9`）。
 
     `q0` 默认 `csr(spec)`（生产口径）。⚠️ **留这个缝是为了注入**：
-       `§M1` / `§M5` 的红形态之一是「第一层就不缩」，而那要 `q0 == spec.partition`；
+       `§M1` 的红形态是「**视图层**不缩」，而那要 `q0` = **离散划分**
+       （`|Q₀| == |U₀|` ⇒ `shrink = 1.0`；⚠️ **不是** `q0 == spec.partition`，
+       那是 1 块 ⇒ 缩得**最狠**）；
        `§M4` 的红形态要一个 11 块以上的 `q0`。生产路径**不传**它。
 
     ⚠️ `§M2` 判的是**声明的** `MAX_LEVELS`，不是这里的 `max_levels` 形参 ——
@@ -425,39 +483,55 @@ def run_multilevel(spec: ViewSpec, kernel: object, cover: Callable[[object], fro
 
 
 def n_folds(levels: Sequence[Level]) -> int:
-    """**真折层数** —— 第 0 层（抽象）与末层（终止层）都**不算**。
+    """**真折层数** —— 视图层（`L0`）与**末层**（终止层）都**不算**。
 
         levels = [L0, L1, ..., L_{m-1}]
                  ↑    └──────┬──────┘   ↑
-              抽象     真折的层      终止层
+              视图层      真折的层     终止层
 
     ⚠️ **为什么必须把它单独数出来**：`len(levels) == 2` 这件事**同时**对应两种
        完全不同的情形 —— 「折了一层」与「一层都没折、第 1 层立刻撞阈值」。
        两者在只印 `len(levels)` 的时候**长得一模一样**（都是「2 层」），
        而后者正是本项目最忌的「空转与通过长得一模一样」。
 
+    ⚠️ **`len(levels) == 1` 时返回 0，而且那时没有终止层** —— 那一层就是
+       视图层自己（它自己撞了刹车）。旧的标题把它写成
+       「第 0 层 + 真折 0 层 + **1 个终止层**」，等于把同一个东西数了两遍。
+       见 `render_levels`。
+
     实测（2026-10-08，36 项 / `openalex-small` / `openalex-n50`…，三个方向）：
        **真折层数恒为 0** —— 末层永远是第 1 层。见 `MEASUREMENTS.md` 结果二十。
        ⇒ 它是**读数**，不是判据：拿它当判据会**基线就红**，
           而「基线就红的判据过不了注入验证」（本仓库的一条纪律）。
+       ⇒ 它只进 `render_levels` 的标题，**不进退出码**。
     """
     return max(0, len(levels) - 2)
 
 
 def render_levels(levels: Sequence[Level]) -> str:
-    """把折叠过程印出来 —— **每一层的三个数都要在**（收缩比 / 代价 / 停因）。
+    """把**产物**与**折叠读数**分开印 —— 产物是第 0 层（视图层），折叠是机制。
 
-    ⚠️ 标题**不许**只写「N 层」：那会让「真折 0 层」与「真折 1 层」共用一行
+    ⚠️ **第一行必须先说这一层是什么**（「模糊掌握」层）。只印层数的话，
+       「这东西做出来干什么用的」在输出里**读不出来** —— 而那正是这一层
+       后引入的原因（抽象层 §0.0）。
+
+    ⚠️ **第二行不许只写「N 层」**：那会让「真折 0 层」与「真折 1 层」共用一行
        （见 `n_folds`）。真折层数必须与总层数**分开印**。
     """
     n = n_folds(levels)
-    if len(levels) <= 1:
-        head = (f"多层折叠：{len(levels)} 层 —— **真折 {n} 层**"
-                f"（第 0 层自己就是终止层：它没缩）")
+    l0 = levels[0]
+    head = (f"视图层（L0）：|U| = {len(l0.spec.universe)} ⇒ |Q| = {len(l0.q)}"
+            f"（收缩比 {l0.shrink:.3f}）—— **这就是「模糊掌握」层**")
+    if len(levels) == 1:
+        # ⚠️ 停因**照抄 `l0.stopped`**，不许在这里推断「是不是没缩够」——
+        #    只有一层也可能是**层数上限先到**（`max_levels = 1`），
+        #    而那时写「撞了 `§M1`」是**假红**：两者在只印层数时长得一模一样。
+        fold = (f"折叠：只跑了 1 层（停因 {l0.stopped or '—'}）"
+                f" ⇒ **真折 {n} 层** —— 视图层自己就是终止层")
     else:
-        head = (f"多层折叠：{len(levels)} 层 = 第 0 层（抽象）+ **真折 {n} 层**"
-                f" + 1 个终止层")
-    lines = [head]
+        fold = (f"折叠：共 {len(levels)} 层 = 视图层（L0）+ 中间 {n} 层"
+                f" + 终止层（L{len(levels) - 1}）⇒ **真折 {n} 层**")
+    lines = [head, fold]
     for i, lv in enumerate(levels):
         lines.append(
             f"    L{i}  |U| = {len(lv.spec.universe):>3}  |Q| = {len(lv.q):>3}"
@@ -468,14 +542,21 @@ def render_levels(levels: Sequence[Level]) -> str:
 
 
 def skip_all(rep: Report, why: str) -> None:
-    """七条一起跳过 —— 与 `run_checks._skip_views` 同一个理由：理由只写一遍。"""
+    """七条一起跳过 —— 与 `run_checks._skip_views` 同一个理由：理由只写一遍。
+
+    ⚠️ **这七个标题必须与上面 `rep.add` 里的逐字相同。** 目前**没有东西守它**
+       ——「跳过时印的标题」与「真跑时印的标题」各自漂移的话，两边都只是字符串，
+       看不出来。改一处就要改两处。（与 `_skip_views` 同一个处境。）
+    """
     for code, title in (
-        ("M0", "多层：商关系无自环"),
-        ("M1", "多层：除末层外每层都收缩，且不止一层"),
-        ("M2", f"多层：层数 ≤ `MAX_LEVELS`（{MAX_LEVELS}）"),
-        ("M3", "多层：总代价 `Σ|U_k| ≤ 2·|U_0|`"),
-        ("M4", "多层：每层验证代价 `n_cand ≤ cap`"),
-        ("M5", "多层：终止只由 `§M1` / `§M2` 触发，且不止一层"),
-        ("M6", "多层：顶层账 ⊇ 各层丢掉的并"),
+        ("M0", "视图层：`E` 无自环（自环让「稳定」退化成恒真）"),
+        ("M1", "视图层：`shrink = |Q₀|/|U₀| ≤ 阈值`"
+               "（视图层**真的在缩** —— 这一层就是产物）"),
+        ("M2", f"折叠：层数 ≤ `MAX_LEVELS`（{MAX_LEVELS}）"),
+        ("M3", "折叠：总代价 `Σ|U_k| ≤ 2·|U_0|`（几何递减的推论 —— 守卫）"),
+        ("M4", f"每层：验证代价 `n_cand ≤ {MAX_COARSENING_CANDIDATES}`"
+               f"（`§A3` 的**前置门**）"),
+        ("M5", "折叠：终止只由 `§M1`（收缩比）/ `§M2`（层数）触发 —— 守卫"),
+        ("M6", "折叠：顶层账 ⊇ 各层丢掉的并（账必须**被携带**，不许现推）"),
     ):
         rep.add(code, title, Tri.UNEXPANDED, why)

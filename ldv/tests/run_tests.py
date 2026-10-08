@@ -4059,12 +4059,17 @@ def test_views() -> None:
 
 
 def test_multilevel() -> None:
-    """多层抽象 `§M0`–`§M6`（`checks/multilevel.py` + `core/views.py` 的多层那段）。
+    """视图层 L0 的声明 + 折叠契约 `§M0`–`§M6`
+    （`checks/multilevel.py` + `core/views.py` 的折叠那段）。
+
+    ⚠️ **产物是第 0 层**（视图层）。「折叠**不止一层**」**不是**这一组要断言的东西 ——
+       本设计的产物就是 L0，**一层就够**（实测真折 0 层）。
+       见 `m1_shrink` 的 docstring。
 
     ## 分五段，每段都要有已知答案
 
         ① 合成对照   七条各自的「该绿时绿、该红时红」（`known_answer_controls`）
-        ② 真折叠     在 committed 规格上跑一遍 ⇒ 七条全过、**不止一层**
+        ② 真跑一遍   在 committed 规格上跑 ⇒ 七条全过、**视图层真的在缩**
         ③ 商的结构   `quotient_spec` 的 `universe` / `relation` / `partition` 三件事
         ④ `§M4` vs `§A3`  **同时观察**两条（否则「分得开」这句话是空的）
         ⑤ 同一个数   `§M4` 与 `§A3` 用的 `n_cand` 必须是**同一个函数**算的
@@ -4087,6 +4092,7 @@ def test_multilevel() -> None:
     )
     from ldv.core.views import (
         MAX_COARSENING_CANDIDATES,
+        MIN_SHRINK_RATIO,
         ViewSpec,
         block_namer,
         coarser_stable_exists,
@@ -4140,7 +4146,7 @@ def test_multilevel() -> None:
     # ── ② 真折叠 ──────────────────────────────────────────────────────────
     kernel, plugin, _qs, _mk = batch_kernel(which, nodes, edges)
     cover = coverage_of(which, nodes, edges)
-    rep = Report(plugin="(多层)", expects=MULTILEVEL_CODES)
+    rep = Report(plugin="(L0)", expects=MULTILEVEL_CODES)
     levels = run_multilevel(spec, kernel, cover, plugin, rep)
     ok("★★ [M] committed 规格上 `§M0`–`§M6` **一条红的都没有**（基线绿 —— "
        "「基线就红的判据过不了注入验证」）",
@@ -4149,32 +4155,46 @@ def test_multilevel() -> None:
        all(a.result is Tri.YES for a in rep.assertions)
        and len(rep.assertions) == len(MULTILEVEL_CODES),
        f"{[(a.code, str(a.result)) for a in rep.assertions]}")
-    ok("★★ [M] 折叠**不止一层** —— 只有一层的话「折了」与「没折」长得一模一样"
-       "（`§M5` 的反向判据就是这个）",
-       len(levels) > 1, f"{len(levels)} 层")
-    # ★ 但「不止一层」**不等于**「真的折了」：末层是**终止层**，恒存在。
+    ok("★★ [M] **视图层真的在缩**（`§M1`）—— 这是这一组唯一的**产物**判据。"
+       "⚠️ 旧断言是「折叠**不止一层**」，那一条是**反需求**的：产物就是第 0 层，"
+       "「一层就够」（见 `m1_shrink` 的 docstring）",
+       levels[0].shrink <= MIN_SHRINK_RATIO
+       and len(levels[0].q) < len(levels[0].spec.universe),
+       f"L0：|U| = {len(levels[0].spec.universe)} ⇒ |Q| = {len(levels[0].q)}"
+       f"，收缩比 {levels[0].shrink:.3f} ≤ {MIN_SHRINK_RATIO}")
+    ok("★★ [M] `render_levels` 第一行说的是**产物是什么**（「模糊掌握」层）—— "
+       "只印层数的话，「这东西做出来干什么用的」在输出里**读不出来**",
+       "模糊掌握" in render_levels(levels).splitlines()[0],
+       render_levels(levels).splitlines()[0])
+    one_m2 = [_replace(levels[0], stopped="M2 层数")]
+    ok("★★ [M] 只有一层时 `render_levels` **照抄 `stopped`**，不许推断成「撞了 `§M1`」"
+       "—— 停因也可能是「层数上限先到」，而两者在只印层数时**长得一模一样**",
+       "M2 层数" in render_levels(one_m2).splitlines()[1]
+       and "M1" not in render_levels(one_m2).splitlines()[1],
+       render_levels(one_m2).splitlines()[1])
+    # ★ 「共 N 层」**不等于**「真的折了」：末层是**终止层**，恒存在。
     #   实测（2026-10-08，五份语料 × 三个方向）**真折层数恒为 0** ——
     #   第 1 层的商不缩（`|Q| == |U|`）⇒ 折叠在此终止。见 `MEASUREMENTS.md` 结果二十。
     #   ⇒ `n_folds` 是**读数**（基线 = 0，拿它当判据会基线就红）；
     #      这里把它**钉住**，是为了「读数变了」这件事能被看见，而不是让它进退出码。
-    ok("★★ [M] `n_folds` 的**定义**：第 0 层（抽象）与末层（终止层）都不算 —— "
+    ok("★★ [M] `n_folds` 的**定义**：第 0 层（视图层）与末层（终止层）都不算 —— "
        "手推三例",
        n_folds([levels[0]]) == 0
        and n_folds([levels[0], levels[0]]) == 0
        and n_folds([levels[0], levels[0], levels[0]]) == 1,
        f"1 层→{n_folds([levels[0]])}、2 层→{n_folds([levels[0], levels[0]])}、"
        f"3 层→{n_folds([levels[0], levels[0], levels[0]])}")
-    ok("★★ [M] 真读数：committed 语料上 **真折 0 层** —— 这不是红（膨胀已被第 0 层"
-       "收住），但**「不止一层」这句话读不出它** ⇒ 必须单独数（`render_levels` 的标题）",
+    ok("★★ [M] 真读数：committed 语料上 **真折 0 层** —— 这不是红（**一层就够**，"
+       "膨胀已被第 0 层收住），但**「共 N 层」这句话读不出它** ⇒ 必须单独数",
        n_folds(levels) == 0, f"真折 {n_folds(levels)} 层 / 共 {len(levels)} 层")
     ok("★ [M] 标题里**印出**真折层数（只印「N 层」会让「真折 0 层」与「真折 1 层」"
        "共用一行 —— 那正是本项目最忌的形状）",
-       "真折 0 层" in render_levels(levels), render_levels(levels).splitlines()[0])
+       "真折 0 层" in render_levels(levels), render_levels(levels).splitlines()[1])
     ok("★ [M] 每一层的 `stopped` 只有**最后一层**非空 —— 中间层不该有停因"
        "（有的话说明它本该停却继续折了）",
        all(not lv.stopped for lv in levels[:-1]) and bool(levels[-1].stopped),
        f"{[lv.stopped for lv in levels]}")
-    print("    · 多层折叠读数：" + "｜".join(
+    print("    · 视图层与折叠读数：" + "｜".join(
         f"L{i}: |U|={len(lv.spec.universe)} |Q|={len(lv.q)} "
         f"收缩比 {lv.shrink:.3f} n_cand {lv.n_cand} 停因 {lv.stopped or '-'}"
         for i, lv in enumerate(levels)))
@@ -4193,7 +4213,7 @@ def test_multilevel() -> None:
        f"两处各算一份的话，症状是「`§A3` 说判得了、`§M4` 说爆了」，"
        f"而**两个判据各自看着都对**",
        n_cand > MAX_COARSENING_CANDIDATES, f"n_cand = {n_cand}")
-    rep_m4 = Report(plugin="(多层)", expects=("M4",))
+    rep_m4 = Report(plugin="(L0)", expects=("M4",))
     m4_verifiable([_replace(levels[0], q=q_big, n_cand=n_cand)], rep_m4)
     found, why_a3, _seen = coarser_stable_exists(spec, q_big)
     ok("★★ [M] `§M4` 红 **且** `§A3` 跳过 —— **同时观察到**，才证明两条分得开"
@@ -4206,7 +4226,7 @@ def test_multilevel() -> None:
     ok("★ [M] 不超上限时 `§A3` **不**报跳过（否则「跳过」会变成一条常驻的红）",
        coarser_stable_exists(spec, q0)[0] is not None,
        f"{coarser_stable_exists(spec, q0)[1][:60]}")
-    ok("★ [M] 多层没有放松 `ViewSpec` 的三条必填检查（空 `P` 仍抛）",
+    ok("★ [M] 这一组没有放松 `ViewSpec` 的三条必填检查（空 `P` 仍抛）",
        _raises_valueerror(
            lambda: ViewSpec(universe=("a",), partition=(), relation=frozenset())))
 
