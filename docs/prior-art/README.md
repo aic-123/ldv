@@ -1,7 +1,8 @@
 # 引文源档索引 —— **怎么取、怎么核**
 
-本目录是 `docs/分层方向视图-成熟方案与跨领域文献.md`、`docs/分层方向视图-设计文档.md` §11
-与 `ldv/C8-成熟方案对照.md` 里**每一条英文引文的取法与页码偏移**。
+本目录是 `docs/分层方向视图-成熟方案与跨领域文献.md`、`docs/分层方向视图-设计文档.md` §11、
+`docs/分层方向视图-多层抽象-前作核验.md` 与 `ldv/C8-成熟方案对照.md` 里
+**每一条英文引文的取法与页码偏移**。
 它是「引文**已核**」这句话的**唯一可复核入口**。
 
 ## ⚠️ 先读这一段：**版权正文不随仓库发布**
@@ -28,7 +29,8 @@
 
 **本目录随仓库发布**（`README.md` + `extract.py` + `verify_quotes.py`，都是我们自己的东西）。
 它是 `repo/docs/分层方向视图-成熟方案与跨领域文献.md`、
-`outputs/ldv-成熟答案印证.md` 与 `repo/ldv/C8-成熟方案对照.md` 里**每一条引文的索引**。
+`outputs/ldv-成熟答案印证.md`、`repo/docs/分层方向视图-多层抽象-前作核验.md`
+与 `repo/ldv/C8-成熟方案对照.md` 里**每一条引文的索引**。
 **版权正文**（PDF 与抽文）**不在这里、也不在仓库里** —— 见上面那段。
 
 ⚠️ **正本在 `repo/docs/`，不在 `outputs/`。** `outputs/` 里那几份 `分层方向视图-*.md`
@@ -65,6 +67,11 @@
 | `pagetarjan.pdf` | **Paige & Tarjan, *Three Partition Refinement Algorithms*, Princeton TR-038, Jan 1986**（25 页） | `docs/分层方向视图-抽象层.md` §3：**relational coarsest partition problem** —— 「find the **coarsest refinement Q of P** …」⇒ **最粗稳定划分唯一** ⇒ 视图集合**不用挑** ⇒ 不需要目标函数（`§A2`/`§A3` 的依据）。⚠️ **纯扫描件、无文字层**（25 页只抽出 416 字符）⇒ **不进语料、`verify_quotes` 核不到**，取法是**读图**（见下） |
 | `datacube.pdf` / `.txt` | **Gray / Chaudhuri / Bosworth / Layman / Reichart / Venkatrao / Pellow / Pirahesh, *Data Cube: A Relational Aggregation Operator Generalizing Group-By, Cross-Tab, and Sub-Totals*, MSR-TR-97-32, May 1997**（16 页） | `docs/分层方向视图-抽象层.md` §5：**distributive / algebraic / holistic 三分法** ⇒ 「视图能不能只从下层视图算出来」的判据（`§A4`）。★ 原文对 holistic 的处置：「We know of no more efficient way … than the 2N-algorithm」—— **holistic 要见原始项是结论，不是缺陷** |
 | `graphsumm.pdf` / `.txt` | **Liu / Safavi / Dighe / Koutra, *Graph Summarization Methods and Applications: A Survey*, ACM Computing Surveys 51(3), 2018**（34 页） | `docs/分层方向视图-抽象层.md` §1 / §6 / §7：★ **摘要文献的默认框架是「最小化一个目标函数」** ⇒ 与本设计 §4.3（无全局目标函数 / `B12`）**直接冲突**，所以只搬**形状**不搬方法；★ Navlakha 的 **摘要 `S` + 修正项 `C`**（`cost(R) = |ES| + |C|`）＝ 本项目的「视图 + 账」；★ Fan et al. 2012 的 **压缩 / 查询改写 / 结果解释** 三段 + **增量传播**；★ Song et al. 2016 的 **`d`-summary**（参数化有界近似） |
+| `hendrickson95.pdf` / `.txt` | **Hendrickson & Leland, *A Multilevel Algorithm for Partitioning Graphs*，Sandia National Laboratories（14 页报告版）** | `docs/分层方向视图-多层抽象-前作核验.md` §1：★★ **「多层」范式的原始出处** —— 算法骨架逐字就是「反复套」：「Until graph is small enough」；★★ **总代价的界**（摘要）：「The entire algorithm can be implemented to execute in time proportional to the size of the original graph.」；★★★ **范式自己写明了它的代价**（p.3）：「The price paid for this reduction in complexity is that only a small number of the possible fine graph partitions are represented and are therefore examinable on the coarse graph.」—— 丢的是「细图上**可检视**的划分空间」，**不是**「可达」（同段紧接着有补救句）；★ 递归深度（p.3）：「All other things being equal, it is preferable to divide into as many sets at once as possible so as to limit the depth of the recursion.」。⚠️ **封面没有报告号** —— 抽文里的 `SAND93-0074` / `SAND94-2692` 是它**引的别人** ⇒ **一律不写 `SAND` 号**；⚠️ **抽文字形缺失**（见下「扫描件（OCR）说明」）⇒ **只引散文** |
+| `metis.pdf` / `.txt` | **Karypis & Kumar, *A Fast and High Quality Multilevel Scheme for Partitioning Irregular Graphs*, SIAM J. Sci. Comput. 20(1):359–392, 1998**（34 页） | 同上 §1：★ **三阶段的形式定义**（论文 p.363）：「A multilevel graph bisection algorithm consists of the following three phases.」+ `Coarsening phase` / `Partitioning phase` / `Uncoarsening phase` 三段各自的逐字定义 + 图 1 题注三句；★★ **层数有界的机制**（p.365）：「Since maximal matchings are used to coarsen the graph, the number of vertices in Gi+1 cannot be less than half the number of vertices in Gi」⇒「it will require at least O(log(n/n′)) coarsening phases」；★★★ **阈值的标准位置**（p.365）：「If the ratio becomes lower than a threshold, then it is better to stop the coarsening phase.」**且原文自己交代这个阈值是兜病态的**（「this type of pathological condition usually arises after many coarsening levels, in which case Gi is already fairly small」/「aborting the coarsening does not affect the overall performance of the algorithm」） |
+| `dmlgp.pdf` / `.txt` | **Gottesbüren / Heuer / Sanders / Schulz / Seemaier, *Deep Multilevel Graph Partitioning*, arXiv:2105.02022v1**（19 页） | 同上 §1：★ **`k` 大时 MGP 的失效点**（论文 p.3）：「The coarsening phase of MGP usually stops when kC nodes are left.」+「For large k, this breaks the assumption that the coarsest graph is small.」+「Thus, really expensive initial partitioners are infeasible at this level.」；★ **停止阈值的另一种形态**（p.2）：「Once the number of nodes of a coarse graph falls below a certain threshold or the coarsening algorithm converges, initial partitioning computes a partition of the coarsest graph.」；★★ **块数与全局 `k` 解耦**（p.4，不变式 `(P)`）：「A coarse graph Gi is partitioned into ki := ceil2(|Vi|/C) blocks (bounded by 2 and k).」 |
+| `reslimit.pdf` / `.txt` | **Fortunato & Barthélemy, *Resolution limit in community detection*, arXiv:physics/0607100v2**（8 页） | 同上 §1.4：★★ **单一全局质量函数内蕴一个尺度**（摘要）：「We find that modularity optimization may fail to identify modules smaller than a scale which depends on the total number L of links of the network and on the degree of interconnectedness of the modules, even in cases where modules are unambiguously defined.」；★ **结论节（p.7）**：「by enforcing modularity optimization, the possible partitions of the system are explored at a coarse level, so that modules smaller than some scale may not be resolved」；★★ **出路是「局部再精化」**（同页）：「constraining modularity optimization on each single module」+「a procedure which is not safe but may give useful indications」；★ 结论句：「have an intrinsic resolution limit calls for a new theoretical framework which focuses on a local definition of community, regardless of its size」 |
+| `lsmsurvey.pdf` / `.txt` | **Luo & Carey, *LSM-based Storage Techniques: A Survey*, arXiv:1812.07527**（25 页） | 同上 §1.1 / §1.3：★ **层数由「尺寸比」决定**（论文 p.6）：「Let the size ratio of a given LSM-tree be T, and suppose the LSM-tree contains L levels.」+「In practice, for a stable LSM-tree where the volume of inserts equals the volume of deletes, L remains static.」+「Thus, the number of levels for N entries can be approximated as」（`L = ⌈logT(N/(B·P·T/(T+1)))⌉`，抽文里分式压成一行）；★ **层数封顶的「兜底配置」形态**（p.3）：「If level L is already the configured maximum level, then the resulting component remains at level L.」；★ **阈值不是单向的**（p.6）：写代价 `O(T·L/B)`（leveling）对 `O(L/B)`（tiering）⇒ `T` 更大 ⇒ 层数更少但**每层级联更多** |
 | `extract.py` | 抽 PDF 正文（带页码标记） | 见下 |
 
 ## 来源（下载记录）
@@ -130,6 +137,23 @@ CiteSeerX、SIAM DOI（均非 PDF）⇒ **状态「未核」，不得作为依�
 | `datacube.pdf` | `https://arxiv.org/pdf/cs/0701155` | 直接 200；16 页；数字原生，抽文干净 |
 | `graphsumm.pdf` | `https://arxiv.org/pdf/1612.04883` | 直接 200；34 页；数字原生，抽文干净。⚠️ **`arXiv:1704.03165` 不是这一篇**（那是 `struc2vec`）—— 别再照那个号取 |
 
+第七批五篇（2026-10-08 取，为「**多层抽象**」找前作 —— `docs/分层方向视图-多层抽象-前作核验.md`）
+—— 已落盘，**核验时读本地副本**。URL 全部**按 PDF 字节数核对过**（与本地副本一致）：
+
+| 文件 | URL | 备注 |
+|---|---|---|
+| `hendrickson95.pdf` | `https://sites.cs.ucsb.edu/~gilbert/cs240a/notes/multilevel.pdf` | 直接 200；158428 字节；14 页。⚠️ **抽文字形缺失**（见下「扫描件（OCR）说明」） |
+| `metis.pdf` | `https://www.cs.utexas.edu/~pingali/CS395T/2009fa/papers/metis.pdf` | 直接 200；484442 字节；34 页。⚠️ **同名的另一份副本字节数不同**（`cs.albany.edu` 那份是 227188）⇒ **按字节数认这一份** |
+| `dmlgp.pdf` | `https://arxiv.org/pdf/2105.02022` | 直接 200；1229131 字节；19 页 |
+| `reslimit.pdf` | `https://arxiv.org/pdf/physics/0607100` | 直接 200；524836 字节；8 页 |
+| `lsmsurvey.pdf` | `https://arxiv.org/pdf/1812.07527` | 直接 200；879338 字节；25 页 |
+
+⚠️ **`hendrickson95` 的身份，只写核到的东西**：它的第 1 页末尾逐字写着
+`Will appear in Proc. Supercomputing '95.`，**末页印页码 `14`，每页页脚都是本页页码**
+⇒ **PDF 页 = 报告页**。但**封面没有报告号** ⇒ **本文不写任何 `SAND` 号**。
+⚠️ **METIS 引的是另一份**：`Tech. report SAND 93-1301, Sandia National Laboratories, 1993`
+（METIS 参考文献 `[26]`）—— **同名、不同年、不同文档**，**不能拿来给这一份编号**。
+
 ⚠️ **`popl77` 是扫描后 OCR 的 PDF**：散文读得通，**数学符号在抽文里是乱的**
 （`{Cv ⊑ γ(~)}` 抽成 `{Cv~ ~(~)}`、`α` 抽成 `‘u,`、`γ` 抽成 `y`、`⊑` 抽成 `~`）。
 ⇒ 引它的时候**只引散文**，符号按 §6.0 / 6.2 / 6.3 / 6.4 / 6.5 的**节号**定位。
@@ -163,6 +187,32 @@ python extract.py betree.pdf betree.txt
 ```
 
 ## 复现
+
+### ★ 调用式（**跑校验必须连调用式一起抄** —— 只抄数字，范围就漂了）
+
+从**工作区根**跑，**四条全给**：
+
+```bash
+V="C:/Users/19253/.workbuddy-ai/binaries/python/versions/3.13.12/python.exe"
+PYTHONIOENCODING=utf-8 PYTHONUTF8=1 "$V" repo/docs/prior-art/verify_quotes.py \
+    repo/docs/*.md repo/README.md repo/ldv/MEASUREMENTS.md
+```
+
+**2026-10-08 实测：引文 251 条｜全覆盖 251｜有缺口 0。**
+（同一次改动之前是 208 条 —— 差的 43 条全在
+`repo/docs/分层方向视图-多层抽象-前作核验.md` 里，逐条对得上。）
+
+⚠️ **这句话的范围恰好等于上面那条调用式。** 两处**不在**范围里，写在这里：
+
+| 不在范围里的 | 为什么 | 实测 |
+|---|---|---|
+| `repo/docs/prior-art/README.md`（本文件） | 它含**一条来自无文字层扫描件**的引文（`pagetarjan` 的 `find the coarsest refinement Q of P`）⇒ 机械核验**必然**报缺口。把它塞进调用式就是造一条**常驻的红** —— 而「一条常驻的红等于没人再看红」 | 单独跑：**58 条｜57 全覆盖｜1 缺口**（那 1 条就是 `pagetarjan`） |
+| `outputs/*.md` | 那是**工作副本**，不是仓库的一部分；旧副本的引文与正本不同步（见上面「⚠️ **正本在 `repo/docs/`，不在 `outputs/`**」） | 不适用 |
+
+⚠️ **`repo/docs/prior-art/README.md` 不在范围里这件事，是「已知」不是「已核」** ——
+它那 58 条里**可核的 57 条实测全过**，不可核的那 1 条**由本文件自己的 `pagetarjan` 行声明**。
+
+### 抽取
 
 ```bash
 # venv（pypdf 6.19.0）
@@ -203,6 +253,12 @@ io.open("spgist.txt", "w", encoding="utf-8").write(s)
     Paige–Tarjan 1986  PDF 页 − 2 = 论文页（PDF p.3 = 页脚 `- 1 -`；PDF p.4 = `- 2 -`）
     Gray 1997       PDF 页 − 3 = 报告页（PDF p.7 页眉 `Data Cube 4`；PDF p.14 页眉 `Data Cube 11`）
     Liu 2018 (CSUR) PDF 页 = 期刊页（PDF p.2 = `A:2`；PDF p.3 = `A:3`；版式是 `A:n` 不是 `n`）
+    Hendrickson 1995 **报告版**：PDF 页 = 报告页（每页页脚都是本页页码，末页 `14`）——
+                     ⚠️ **不写会议版页码**（本机副本不是会议版）
+    Karypis 1998     PDF 页 + 358 = 论文页（PDF p.1 = p.359 … PDF p.7 = p.365）
+    Gottesbüren 2023 PDF 页 − 1 = 论文页（PDF p.1 是题名页；PDF p.4 页眉 `3`）
+    Fortunato 2006   PDF 页 = 论文页（PDF p.7 页首 `7`）
+    Luo 2025 (LSM)   PDF 页 = 论文页（PDF p.6 页眉 `6 Chen Luo, Michael J. Carey`）
 
 引用时一律写**论文页**，括号里给 PDF 页。
 
@@ -216,12 +272,21 @@ io.open("spgist.txt", "w", encoding="utf-8").write(s)
 `driscoll89` 的抽文里还**把图 1 的题注插进了正文句子中间**（`Second, choos-` 之后），
 引那段时要用 `…` 断开。
 
-⚠️ **第六批带进来两种新的「源不干净」，与上面四种不同，各有各的处置**：
+⚠️ **第六批带进来两种新的「源不干净」，第七批又带进来第三种，各有各的处置**：
 
 | 源 | 症状 | 处置 |
 |---|---|---|
 | `popl77` | **有文字层，但是 OCR 的** —— 散文可读，**数学符号全乱**（`α`→`‘u,`、`⊑`→`~`） | 进 `SRC_DIRS`（散文可比对）；**引文只引散文**，符号按节号定位。**不进 `OCR_FILES`** —— 它不是字形混淆，是**符号缺失**，加修正表反而会去改干净正文 |
 | `pagetarjan` | **没有文字层**（25 页 / 416 字符） | **不在 `SRC_DIRS` 的可比范围内** ⇒ `verify_quotes` 核不到。取法是**读图**（`repo/docs/prior-art/render_pages.py`，见下）⇒ **引用它的正文必须显式声明「不经过 `verify_quotes`」** |
+| `hendrickson95` | **字形整类没被映射**：`/` 是**占位符**（2459 处），连字变成控制码（`/\x0c` = `fi`、`/\x0b` = `ff`、`/\x0e` = `ffi`） | 进 `SRC_DIRS`；**加一个按源生效的还原表**（`HENDRICKSON_FILES` / `HENDRICKSON_FIX`）。★ **表放进仓库、不改源文** —— 改源文的话第三方按本文件重抽一遍就对不上，「唯一可复核入口」当场作废。⚠️ **只引散文**：真斜杠只在数字 / 路径 / 报告号里，引到那些句子会报**缺口**（响的），不会静默通过 |
+
+⚠️ **为什么 `hendrickson95` 的还原表不算「猜」**：判据是
+「剩下的 `/` 全是产物」这句话**有实测支撑** —— 本源 `/` 出现 **2459** 次，
+而 **`字母/字母` 形态 **0** 次**（散文里根本不存在被斜杠连起来的两个词）。
+代价明确且方向安全：真要引含数字或路径的句子，那处真斜杠会被并掉 ⇒ **报缺口**，
+**不会静默通过**。宁缺勿假绿。
+（同 `SOFT_FILES` 的 `gist1995` 先例：那里的 `re.sub(r"\s+/([A-Za-z0-9])", r"\1", t)`
+也是「把抽文里的 `/` 当产物」的同一类处置。）
 
 ⚠️ **为什么 `pagetarjan` 不进 `SRC_DIRS`**：放一份 416 字符的 `.txt` 进去，
 它只会让每条引文都算「没命中」⇒ **全红**，而那个红**指错了地方**
@@ -252,9 +317,30 @@ io.open("spgist.txt", "w", encoding="utf-8").write(s)
    （不抽正文是**故意的**：抽正文要写 per-site 选择器，那等于把核验变成
     「按我挑的那段去核」，比不核更糟。**弱但一致**胜过**强但可调**。）
 
-⚠️ **顺带一条已知性质**：判据是「覆盖比 ≥ 0.9 且无 ≥ 25 字符连续缺口」⇒
-   **长引文里改一个词照样过**（实测：`Existing` → `Legacy` 仍报全覆盖）。
-   本脚本抓的是**编造**，不是**一词漂移**。
+⚠️ **顺带一条已知性质 —— 它的盲区有多大，2026-10-08 实测过**：
+判据是「覆盖比 ≥ 0.9 且无 ≥ 25 字符连续缺口」。在 **46 份源文 / 1663876 个 12-gram** 的规模下，
+这个判据能抓什么、抓不住什么，是**两类分开**的：
+
+| 编造的类型 | 实测 | 判据表现 |
+|---|---|---|
+| **异域**编造（整句与语料领域无关） | 4 条全测，覆盖比 **0.00 / 0.00 / 0.00 / 0.67** | ✅ **全红** —— 这一类**抓得住** |
+| **同域**编造（措辞像本领域，但整句是编的） | 3 条全测，覆盖比 **0.90 / 0.95 / 0.97** | ❌ **3 条里过 2 条** —— 这一类**抓不住** |
+| **一词漂移**（真句里换一个词） | 换两个实义词：**0.94** | ❌ **过** —— 本来就抓不住，见下 |
+
+⇒ **「覆盖比 = 1.0」只说明「这句话的措辞在本领域语料里到处都是」，不说明「这句话有出处」。**
+本脚本抓的是**异域编造**，不是**同域编造**，也不是**一词漂移**。
+
+⚠️ **加源必然会扩大这个盲区**（新源的 12-gram 与既有语料同域时会互相「背书」）。
+所以**每加一批源，这条边界都要重测一次**，别把「上一批的盲区大小」当成现在的大小。
+实测对照（同一批编造句，换不同语料）—— 复现脚本：`outputs/_probe_blind_spot.py`：
+
+| 语料 | k-gram | 同域编造·整句 | 异域编造·整句 |
+|---|---|---|---|
+| 46 份（含第七批 5 篇） | 1663876 | 0.97（过） | 0.69（红） |
+| 去掉第七批那 5 篇 | 1438453 | 0.74（红） | 0.54（红） |
+
+⇒ **第七批把那条同域编造句从「红」推成了「过」。** 这是**已知代价**，
+不是「引文都核过了」—— 引文本身仍然要**逐条**回源文看（这正是本文件下面那张内容表存在的理由）。
 
 v3 只读第一份 ⇒ **把一半源文当成不存在**，真引文被报成「缺口」。
 实测：GiST 1995 的 `E.p is the Union of all entries on N.` 逐字在

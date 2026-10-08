@@ -101,6 +101,39 @@ OCR_FIX = [
 ]
 OCR_REGEX = [(r"\bm\b", "in"), (r"\bIS\b", "is")]
 
+#: 第七批（2026-10-08）：`hendrickson95` 的抽文把**字形缺失**写成 `/` + 控制码。
+#: 症状与上面四种都不同 —— 不是字形混淆，是**整类字形没被映射**：
+#:   `scien ti/\x0cc` = scientific · `di/\x0berence` = difference · `e/\x0ecien t` = efficient
+#:   （`/` 是占位符，`\x0c`/`\x0b`/`\x0e` 是**连字**的字形码。）
+#: 处置**不是**就地改源文（那样第三方按 `README.md` 重抽一遍就对不上，
+#: 「唯一可复核入口」当场作废），而是**把表放进仓库** —— 同 `SOFT_FILES` / `OCR_FILES` 的先例。
+#:
+#: ★ 判据：「剩下的 `/` 全是产物」这句话**有实测支撑**，不是印象：
+#:   本源 `/` 出现 **2459** 次，而 **`字母/字母` 形态 **0** 次** ——
+#:   散文里根本不存在被斜杠连起来的两个词。
+#:   真斜杠确实有（`n × n` 的 `4/9`、`/pub/grids/3elt.grid`、报告号 `9/5/IM/0/3`），
+#:   但**只出现在数字 / 路径 / 报告号里**。
+#: ⇒ 代价**明确**且**方向安全**：真要引含数字或路径的句子，那处真斜杠会被并掉 ⇒
+#:   引文报**缺口**（响的），**不会静默通过**。宁缺勿假绿。
+#: ⇒ 使用纪律：**本源只引散文，不引含数字 / 路径的句子**（与 `popl77` 同一条）。
+HENDRICKSON_FILES = {"hendrickson95.txt"}
+#: 每一条都由**词**还原验证过，不是猜的（左 = 抽文里的字形码，右 = 读法）：
+#:   `/\x0c` → `fi`   —— `/\x0crst` = first · `/\x0cne` = fine · `de/\x0cnes` = defines
+#:   `/\x0b` → `ff`   —— `di/\x0bers` = differs · `e/\x0bectiv e` = effective · `cuto/\x0bs` = cutoffs
+#:   `/\x0e` → `ffi`  —— `e/\x0ecien t` = efficient · `di/\x0ecult` = difficult · `O/\x0ece` = Office
+#:   `/\x02` → `×`    —— `n /\x02 n sparse` = n × n sparse
+#:   `/\x0f` → ``     —— 行首项目符号：`/\x0f The lo cal re/\x0cnemen t …`
+#:   `/\x03` → ``     —— 1 处，紧跟在一个 URL 之后
+HENDRICKSON_FIX = [("/\x0c", "fi"), ("/\x0b", "ff"), ("/\x0e", "ffi"),
+                   ("/\x02", "\u00d7"), ("/\x0f", ""), ("/\x03", "")]
+
+
+def hendrickson(t: str) -> str:
+    """`hendrickson95` 的抽文还原 —— **只对这一个源用**。"""
+    for a, b in HENDRICKSON_FIX:
+        t = t.replace(a, b)
+    return t.replace("/", "")
+
 
 def ocr(t: str) -> str:
     for a, b in OCR_FIX:
@@ -168,17 +201,24 @@ def soft(t: str) -> str:
     return t
 
 
-def norm(t: str, soft_first: bool = False, ocr_first: bool = False) -> str:
+def norm(t: str, soft_first: bool = False, ocr_first: bool = False,
+         hend_first: bool = False) -> str:
     """归一化 + 去空白 + 去跨行连字符 + 小写。
 
     ⚠️ **`*` 与 `\\` 在两边一起去掉**：文档里写 `{x\\*}`（markdown 转义），
     源文里写 `{x*}`。只去掉文档那边的 `*` 会留下一个反斜杠 ⇒ 假缺口。
     两边对称地去掉，比较才成立。
+
+    ⚠️ 三个 `*_first` 开关**只作用于源文**（`load_sources` 按文件名打开），
+       **不作用于引文那一侧**（`main` 里是 `norm(body)`，三个开关全默认 `False`）。
+       ⇒ 引文一律**按读法写**。
     """
     if soft_first:
         t = soft(t)
     if ocr_first:
         t = ocr(t)
+    if hend_first:
+        t = hendrickson(t)
     t = base_norm(strip_md(t))
     t = re.sub(r"-\s+", "", t)
     t = t.replace("\\", "").replace("*", "")
@@ -220,7 +260,8 @@ def load_sources():
                 seen[name] = p
                 srcs[name] = norm(_read(p),
                                   soft_first=(name in SOFT_FILES),
-                                  ocr_first=(name in OCR_FILES))
+                                  ocr_first=(name in OCR_FILES),
+                                  hend_first=(name in HENDRICKSON_FILES))
     if not srcs:
         print("✗ 一份源文都没找到 —— **这不是「引文全过」，是核验根本没跑**。")
         print(f"  找过这两处：")
