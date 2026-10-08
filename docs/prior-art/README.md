@@ -7,10 +7,11 @@
 ## ⚠️ 先读这一段：**版权正文不随仓库发布**
 
     PDF 与抽出的正文          **不进仓库**（版权归原作者）
-    本目录里的三份文件          **是我们自己的东西**，不含任何版权正文：
+    本目录里的四份文件          **是我们自己的东西**，不含任何版权正文：
                               `README.md`（本文件：URL + 页码偏移 + 抽取脚本用法）
                               `extract.py`（抽 PDF 正文，带页码标记）
                               `verify_quotes.py`（把交付物里的英文引文回源文逐字比对）
+                              `render_pages.py`（把**没有文字层**的扫描件渲成 PNG —— 那种源只能**读图**）
 
 ⇒ 要逐字复核某条引文，**按下面的 URL 自己取一份**，用 `extract.py` 抽出正文，
    再按 `## 页号约定` 换算页码 —— 引文在正本里的位置与页码偏移都写在下面。
@@ -48,7 +49,7 @@
 | `mcconnell11.pdf` / `.txt` | **McConnell / Mehlhorn / Näher / Schweitzer, *Certifying Algorithms*, Computer Science Review 2011** | 见证 + 检查器；checker 必须比算法简单；「否」没有小见证；**§6 四条里第 2 条是运行时间**（「Ideally, the running time of a checker is linear in the size of its input」） |
 | `mehlhorn05.pdf` / `.txt` | **Mehlhorn, *Certifying Algorithms: An Attempt of a Theory*, 2005**（10 页讲稿） | checker 的定义与「linear running time」；**certifying 程序 Q 的资源只许比 P 大一个常数因子**（p.4 第 3 条）；★ p.9「Cooperation of Verification and Checking」—— 一个性质**难检查但易证明**、另一个**易检查但难证明**，两者分工 |
 | `mehlhorn10.pdf` / `.txt` | **Mehlhorn / Schweitzer, *Progress on Certifying Algorithms*, 2010** | ★ **§3 三连通性**：线性算法**有**，但**没有一个是 certifying 的**；最快的 certifying 是 **O(n²)**，且原文说 "It remains a challenge to find a linear time certifying algorithm" —— **「checker 超线性」有前例，且被当成开放问题而不是缺陷** |
-| `testoracles15.pdf` / `.txt` | **Barr / Harman / McMinn / Shahbaz / Yoo, *The Oracle Problem in Software Testing: A Survey*, IEEE TSE 2015** | §2.3 soundness / completeness 的**正式定义**（= `§K8` 不对称契约的两个方向）；§2.2「Test oracles are typically computationally expensive」；★ §5「Invariant detection can be computationally expensive, so **incremental** ... analyses have been brought to bear」—— oracle 贵的成熟出路是**增量** |
+| `testoracles15.pdf` / `.txt` | **Barr / Harman / McMinn / Shahbaz / Yoo, *The Oracle Problem in Software Testing: A Survey*, IEEE TSE 2015** | §2.3 soundness / completeness 的**正式定义**（= `§K8` 不对称契约的两个方向）；§2.2「Test oracles are typically computationally expensive」；★ §5「Invariant detection can be computationally expensive, so **incremental** ... analyses ... have been brought to bear」—— oracle 贵的成熟出路是**增量** |
 | `purdue.html` | SP-GiST @ Purdue 项目页 | 该框架的定位陈述 |
 | `betree.pdf` / `.txt` | **Bender / Farach-Colton / Jannen / Johnson / Kuszmaul / Porter / Yuan / Zhan, *An Introduction to B ε-trees and Write-Optimization*, USENIX ;login: 2015**（数字原生） | 内部节点**带 buffer**、插入/删除都编码成**消息**；「待处理项必须在查询路径上」的不变量；**§「Inserts and deletes」**：`tombstone` 三条可搬形状 —— **逻辑删除 ≠ 物理删除**（「a deleted item, or even entire leaf node, **can continue to exist** until a tombstone message reaches the leaf」）· **删除编码成消息**（「deletions are **algorithmically very similar to insertions**」）· **查询不必更新被查的一方**（「the query **need not update the leaf**」）；⚠️ **不能搬的一条**：它有**冲刷**（墓碑最终落叶、条目才真消失），我们**没有** ⇒ 我们的墓碑是**永久**的（= `§10.2 C`） |
 | `xtree96.pdf` / `.txt` | **Berchtold / Keim / Kriegel, *The X-tree: An Index Structure for High-Dimensional Data*, VLDB 1996, pp.28–39**（扫描件） | `supernode`：没有好分裂时**让节点超容**，而非造一个坏分裂；触发条件 "only if there is no other possibility" |
@@ -60,6 +61,10 @@
 | `nncost01.pdf` / `.txt` | **Berchtold / Böhm / Keim / Krebs / Kriegel, *On Optimizing Nearest Neighbor Queries in High-Dimensional Data Spaces*, ICDT 2001** | ⚠️ **不是 X-tree**（文件名 `nncost` = nearest-neighbor cost model）。只在**二手引用**里提 supernode，**引 X-tree 请用 `xtree96.*`** |
 | `grail10.pdf` / `.txt` | **Yıldırım / Chaoji / Zaki, *GRAIL: Scalable Reachability Index for Large Graphs*, VLDB 2010**（9 页） | ★ **可达性查询的「索引 vs 搜索」两个极端**（Fig. 1）：左 = 全传递闭包（O(1) 查询 / O(n²) 空间）；右 = 每查询一遍 DFS/BFS（无索引 / O(n+m) 每查询，原文判「unacceptable for large graphs」）。★ 摘要写明规模判据：「**more sophisticated methods work better on small graphs**」。★ Table 1 给出谱系（Opt. Tree Cover / GRIPP / Dual Labeling / PathTree / 2HOP / HOPI / GRAIL）的建索引 / 查询 / 空间复杂度 —— **没有一行是「每查询一遍 BFS」**。用来支撑 `项 7` 的裁定（`outputs/ldv-裁定推荐-项2与项7.md`） |
 | `grail11.pdf` / `.txt` | **Yıldırım / Chaoji / Zaki, *GRAIL: A Scalable Index for Reachability Queries in Very Large Graphs*, VLDB J 2011**（25 页，期刊版） | 同上的期刊扩展版；引用时**优先 2010 会议版**（页号已核） |
+| `popl77.pdf` / `.txt` | **Cousot & Cousot, *Abstract interpretation: a unified lattice model for static analysis of programs by construction or approximation of fixpoints*, POPL 1977, pp.238–252**（15 页） | `docs/分层方向视图-抽象层.md` §2：**抽象 / 具体化两个函数 + 不对称**（6.0「must at least contain the concrete one, (but not only the concrete one)」· 6.2 order-preserving · 6.3 具体化不丢 · 6.4 抽象可丢 · 6.5）—— 本设计 `§K8`（假阴禁止 / 假阳计量）的文献对应。⚠️ **扫描后 OCR**：符号在抽文里是乱的，**只引散文、按节号定位** |
+| `pagetarjan.pdf` | **Paige & Tarjan, *Three Partition Refinement Algorithms*, Princeton TR-038, Jan 1986**（25 页） | `docs/分层方向视图-抽象层.md` §3：**relational coarsest partition problem** —— 「find the **coarsest refinement Q of P** …」⇒ **最粗稳定划分唯一** ⇒ 视图集合**不用挑** ⇒ 不需要目标函数（`§A2`/`§A3` 的依据）。⚠️ **纯扫描件、无文字层**（25 页只抽出 416 字符）⇒ **不进语料、`verify_quotes` 核不到**，取法是**读图**（见下） |
+| `datacube.pdf` / `.txt` | **Gray / Chaudhuri / Bosworth / Layman / Reichart / Venkatrao / Pellow / Pirahesh, *Data Cube: A Relational Aggregation Operator Generalizing Group-By, Cross-Tab, and Sub-Totals*, MSR-TR-97-32, May 1997**（16 页） | `docs/分层方向视图-抽象层.md` §5：**distributive / algebraic / holistic 三分法** ⇒ 「视图能不能只从下层视图算出来」的判据（`§A4`）。★ 原文对 holistic 的处置：「We know of no more efficient way … than the 2N-algorithm」—— **holistic 要见原始项是结论，不是缺陷** |
+| `graphsumm.pdf` / `.txt` | **Liu / Safavi / Dighe / Koutra, *Graph Summarization Methods and Applications: A Survey*, ACM Computing Surveys 51(3), 2018**（34 页） | `docs/分层方向视图-抽象层.md` §1 / §6 / §7：★ **摘要文献的默认框架是「最小化一个目标函数」** ⇒ 与本设计 §4.3（无全局目标函数 / `B12`）**直接冲突**，所以只搬**形状**不搬方法；★ Navlakha 的 **摘要 `S` + 修正项 `C`**（`cost(R) = |ES| + |C|`）＝ 本项目的「视图 + 账」；★ Fan et al. 2012 的 **压缩 / 查询改写 / 结果解释** 三段 + **增量传播**；★ Song et al. 2016 的 **`d`-summary**（参数化有界近似） |
 | `extract.py` | 抽 PDF 正文（带页码标记） | 见下 |
 
 ## 来源（下载记录）
@@ -116,6 +121,39 @@ CiteSeerX、SIAM DOI（均非 PDF）⇒ **状态「未核」，不得作为依�
 引用时写「`src/backend/access/nbtree/README`（2026-10-07 的 `master`）」+ 引文，
 **不要写行号**（换一版就漂）。
 
+第六批四篇（2026-10-08 取，为 `docs/分层方向视图-抽象层.md`（流程 E）找前例）—— 已落盘：
+
+| 文件 | URL | 备注 |
+|---|---|---|
+| `popl77.pdf` | `https://homes.cs.washington.edu/~mernst/teaching/6.883/readings/p238-cousot.pdf` | 直接 200；15 页；⚠️ **扫描后 OCR**（见下） |
+| `pagetarjan.pdf` | `https://www.cs.princeton.edu/techreports/1986/038.pdf` | 直接 200；25 页；⚠️ **纯扫描件、无文字层**（见下） |
+| `datacube.pdf` | `https://arxiv.org/pdf/cs/0701155` | 直接 200；16 页；数字原生，抽文干净 |
+| `graphsumm.pdf` | `https://arxiv.org/pdf/1612.04883` | 直接 200；34 页；数字原生，抽文干净。⚠️ **`arXiv:1704.03165` 不是这一篇**（那是 `struc2vec`）—— 别再照那个号取 |
+
+⚠️ **`popl77` 是扫描后 OCR 的 PDF**：散文读得通，**数学符号在抽文里是乱的**
+（`{Cv ⊑ γ(~)}` 抽成 `{Cv~ ~(~)}`、`α` 抽成 `‘u,`、`γ` 抽成 `y`、`⊑` 抽成 `~`）。
+⇒ 引它的时候**只引散文**，符号按 §6.0 / 6.2 / 6.3 / 6.4 / 6.5 的**节号**定位。
+实测：本文引的四段散文全部逐字通过 `verify_quotes`；**带符号的那两句一律不引**。
+
+⚠️ **`pagetarjan` 没有文字层**（`extract.py` 跑出 25 页 / **416 字符**）。
+⇒ 它**不在 `SRC_DIRS` 的可比范围内** ⇒ `verify_quotes` **核不到它的引文**。
+取法是**读图**：
+
+```bash
+# 从**工作区根**跑（与 `verify_quotes.py` 的用法同一套相对路径）
+python repo/docs/prior-art/render_pages.py .prior-art/pagetarjan.pdf outputs/_ptpages 3 4 130
+# 然后看 outputs/_ptpages/p03.png（= 论文 p.1）与 p04.png（= 论文 p.2）
+```
+
+⚠️ **渲出来的 PNG 是别人的作品**，与 PDF 同一条规矩：**不随仓库发布** ⇒
+`out_dir` 指向仓库**外面**（本仓库的既有做法是工作区根的 `outputs/`）。
+
+⇒ 引用它的地方**必须在正文里显式写出「这一条不经过 `verify_quotes`」**，
+否则读者会把「核不到」读成「核过了」。⚠️ 曾试 `core.ac.uk` 的另一份（`403`）
+与直接给 PDF 加文字层 —— **都不成**，所以这条限制是**已知的**，不是没试。
+
+⚠️ **`datacube` 与 `graphsumm` 是数字原生**，抽文干净、无需 OCR 修正表。
+
 下载与抽取：
 
 ```bash
@@ -161,6 +199,10 @@ io.open("spgist.txt", "w", encoding="utf-8").write(s)
     Mehlhorn 2005   **讲稿**，每页页脚是 `p.n/10` ⇒ PDF 页 = 页脚 n
     Mehlhorn 2010   **短文**（4 页），PDF 页 = 页脚（用 `===PAGE n===` 指）
     Barr 2015       PDF 页 = 期刊页（PDF p.1 页脚 1 … p.31 页脚 31；双栏，抽文会串行）
+    Cousot 1977     PDF 页 + 237 = 论文页（PDF p.1 = p.238；POPL'77 的 238–252 正好 15 页 = PDF 页数）
+    Paige–Tarjan 1986  PDF 页 − 2 = 论文页（PDF p.3 = 页脚 `- 1 -`；PDF p.4 = `- 2 -`）
+    Gray 1997       PDF 页 − 3 = 报告页（PDF p.7 页眉 `Data Cube 4`；PDF p.14 页眉 `Data Cube 11`）
+    Liu 2018 (CSUR) PDF 页 = 期刊页（PDF p.2 = `A:2`；PDF p.3 = `A:3`；版式是 `A:n` 不是 `n`）
 
 引用时一律写**论文页**，括号里给 PDF 页。
 
@@ -173,6 +215,18 @@ io.open("spgist.txt", "w", encoding="utf-8").write(s)
 `OCR_FIX` / `OCR_SOURCES`（**只对这四个源生效**，不去改干净正文）。
 `driscoll89` 的抽文里还**把图 1 的题注插进了正文句子中间**（`Second, choos-` 之后），
 引那段时要用 `…` 断开。
+
+⚠️ **第六批带进来两种新的「源不干净」，与上面四种不同，各有各的处置**：
+
+| 源 | 症状 | 处置 |
+|---|---|---|
+| `popl77` | **有文字层，但是 OCR 的** —— 散文可读，**数学符号全乱**（`α`→`‘u,`、`⊑`→`~`） | 进 `SRC_DIRS`（散文可比对）；**引文只引散文**，符号按节号定位。**不进 `OCR_FILES`** —— 它不是字形混淆，是**符号缺失**，加修正表反而会去改干净正文 |
+| `pagetarjan` | **没有文字层**（25 页 / 416 字符） | **不在 `SRC_DIRS` 的可比范围内** ⇒ `verify_quotes` 核不到。取法是**读图**（`repo/docs/prior-art/render_pages.py`，见下）⇒ **引用它的正文必须显式声明「不经过 `verify_quotes`」** |
+
+⚠️ **为什么 `pagetarjan` 不进 `SRC_DIRS`**：放一份 416 字符的 `.txt` 进去，
+它只会让每条引文都算「没命中」⇒ **全红**，而那个红**指错了地方**
+（看起来像「引文写错了」，其实是「源文是空的」）。这正是本项目
+「**源文不在」与「引文有问题」必须长得不一样**那条纪律的同一个面。
 
 ## 第二份语料：`<工作区根>/sources/`
 

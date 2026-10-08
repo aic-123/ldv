@@ -75,6 +75,9 @@ OCR_FIX = [
     ("ehnnnate", "eliminate"), ("Ehnnnate", "Eliminate"),
     ("ehmmatron", "elimination"), ("ehmmated", "eliminated"), ("elunmated", "eliminated"),
     ("entrles", "entries"), ("entnes", "entries"), ("Entnes", "Entries"),
+    # guttman84 CT6：`entries` 的 `i` 被认成 `e`（与上面两条同族）
+    ("entrees", "entries"),
+    ("deterloratlon", "deterioration"),   # guttman84 CT6：两处 `i` 被认成 `l`
     ("utlllzatton", "utilization"), ("restructurmg", "restructuring"),
     ("correspondmg", "corresponding"), ("Summarizmg.", "Summarizing,"),
     ("decreasmg", "decreasing"), ("covermg", "covering"), ("makmg", "making"),
@@ -85,7 +88,9 @@ OCR_FIX = [
     ("accom phshes", "accomplishes"), ("durmg", "during"), ("dunng", "during"),
     ("Insertion", "insertion"),
     ("mvoke", "invoke"), ("mstead", "instead"), ("possrble", "possible"),
-    ("adlacent", "adjacent"), ("whch", "which"), ("slblmg", "sibling"),
+    # guttman84 CT4：「与兄弟合并」那句 —— `j` 被认成 `l`（长串在前）
+    ("adlacency", "adjacency"), ("adlacent", "adjacent"),
+    ("whch", "which"), ("slblmg", "sibling"),
     ("mth", "with"), ("smce", "since"), ("wdl", "will"), ("hgher", "higher"),
     ("therr", "their"), ("mam", "main"), ("l&e", "like"),
     ("sphts", "splits"), ("spht", "split"), ("Spht", "Split"),
