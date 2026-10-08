@@ -1,0 +1,248 @@
+"""生成流程 E 的 `view_spec.json` —— **只算机械部分，不替人做决定**。
+
+    跑法（cwd = repo）：
+        python -m ldv.tools.gen_view_spec keyset                # 只打印 + 逐字对照
+        python -m ldv.tools.gen_view_spec keyset --write        # 落盘
+
+---
+
+## 它算什么、不算什么
+
+`view_spec.json` 里有五样东西。**三样能机械算出来，两样不能**：
+
+| 栏 | 谁给 | 为什么 |
+|---|---|---|
+| `语料` | **算** | 就是 `corpus_fingerprint(nodes, edges)`，两个数 |
+| `方向` | **人给**（命令行） | 「这批 id 属于哪条方向」—— 内核各自从 `D0` 开始编号，不写清就歧义 |
+| `universe` `U` | **算** | 那个内核的 `all_directions()` |
+| `relation` `E` | **算**（候选） | 这棵树自己的树边。它是**结构事实**，冻结在这里、进版本库 |
+| `partition` `P` | **候选** | 生成器只给**信息量最低**的那一档 `P = {U}` |
+| `读数` | **人给** | 类别是**外生声称**（Gray 三分法有定理，不是能算出来的属性） |
+
+⚠️ **`P` / `E` 仍须外生**（设计稿 §3 / `§K9`）。生成器**只产出候选**：
+   它算出来的东西必须被人**看过、认过**才落盘。所以默认**不写文件**，
+   只在 stdout 打出来 + 与现有文件逐栏对照；`--write` 才落盘。
+
+⚠️ **`读数` 一律照抄**。它是人写的，生成器**不许**编一条、也**不许**静默丢掉。
+   现有文件里 `方向` 与本次不同 ⇒ **拒绝照抄**并说明（那种情况下抄过来就是把
+   另一条方向的声称搬到这一条上）。
+
+---
+
+## 为什么默认 dry-run（而不是「写完再看 diff」）
+
+「**空转与通过长得一模一样**」在本工具里的形态是：
+    **生成器什么都没改** 与 **生成器改对了** 在输出里是同一句话。
+
+⇒ 所以默认不写，并且把三件事**分别**印出来：
+    ① 算出来的 spec 是什么
+    ② 与现有文件**逐栏**的差（没差就明说「逐字相同」）
+    ③ **没算**的那两栏是什么（`P` 的候选值 + 为什么是它；`读数` 从哪来）
+
+---
+
+## 退出码只看「有没有违规」
+
+    生成出来的 spec 过不了 `ViewSpec.__post_init__`      ⇒ 1（生成器坏了）
+    `--write` 且会**丢掉** `读数` 而没给 `--allow-drop-readings`  ⇒ 1
+    其余（有没有差、差几行）**走输出**，不进退出码
+
+`--write` 落盘前**先过一遍 `ViewSpec(...)`** —— 坏 spec 不许写进版本库。
+"""
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+from ..checks._fixtures import load
+from ..checks.abstraction import VIEW_SPEC_PATH, ViewSpec
+from ..checks.coverage import corpus_fingerprint
+from ..core.kernel import _did_order
+
+#: 生成器**算**的那三栏 + 照抄的一栏。写在这里，免得 `--write` 时漏栏。
+MECHANICAL = ("语料", "方向", "universe", "partition", "relation")
+CARRIED = ("读数",)
+
+
+def build_spec(which: str, nodes, edges) -> tuple[dict, list[str]]:
+    """算出机械那几栏。返回 `(spec, 说明行)`。"""
+    from ..run_checks import batch_kernel
+
+    kernel, _plugin, _queries, _mk_root = batch_kernel(which, nodes, edges)
+    dirs = sorted(kernel.all_directions(), key=lambda d: _did_order(d.did))
+    universe = [d.did for d in dirs]
+    relation = sorted(
+        ([d.parent, d.did] for d in dirs if d.parent),
+        key=lambda e: (_did_order(e[0]), _did_order(e[1])),
+    )
+    spec = {
+        "语料": corpus_fingerprint(nodes, edges),
+        "方向": which,
+        "universe": universe,
+        # ⚠️ **候选**：信息量最低的一档。理由见 `view_spec.json` 的 `_note`：
+        #    一点先验都不给，答案照样唯一 —— 这才说明「视图集合不用挑」。
+        "partition": [list(universe)],
+        "relation": relation,
+    }
+    notes = [
+        f"`universe`  {len(universe)} 个方向（内核自己编的号，`{universe[0]}`..`{universe[-1]}`）",
+        f"`relation`  {len(relation)} 条树边（`父 → 子`；⚠️ 方向写反**不会报错**，"
+        f"只会得到另一个划分 —— 见 `core/views.py::_preimage`）",
+        f"`partition` **候选** = 1 块（`P = {{U}}`，信息量最低那一档）",
+    ]
+    return spec, notes
+
+
+def carry_readings(doc: dict, which: str) -> tuple[list | None, str]:
+    """照抄现有文件里的 `读数`。返回 `(读数 或 None, 说明)`。
+
+    ⚠️ 三种情形分开说 —— 它们要人做的事**不一样**：
+        文件不在           ⇒ 「还没人写过读数」
+        方向不同           ⇒ **拒绝照抄**（那是另一条方向的声称）
+        有读数且方向相同   ⇒ 照抄，条数报出来
+    """
+    if not doc:
+        return None, f"`{VIEW_SPEC_PATH.name}` 不在 ⇒ 没有可照抄的 `读数`（要人写）"
+    if doc.get("方向") != which:
+        return None, (f"现有文件的 `方向` 是 {doc.get('方向')!r}，本次是 {which!r} "
+                      f"⇒ **拒绝照抄 `读数`**（那是另一条方向的声称，搬过来就是替人改声明）")
+    r = doc.get("读数")
+    if not r:
+        return None, "现有文件里 `读数` 为空 ⇒ 没有可照抄的"
+    return r, f"照抄现有 `读数` {len(r)} 条（**逐字**，生成器不改它）"
+
+
+def diff_lines(old: dict, new: dict) -> list[str]:
+    """逐栏对照。**逐字相同**要明说 —— 「没改」与「改对了」不许长得一样。"""
+    out: list[str] = []
+    for k in MECHANICAL:
+        a, b = old.get(k), new.get(k)
+        if a == b:
+            out.append(f"  {k:<11} 逐字相同")
+        elif a is None:
+            out.append(f"  {k:<11} 新增（原来没有）")
+        else:
+            na = len(a) if isinstance(a, list) else a
+            nb = len(b) if isinstance(b, list) else b
+            out.append(f"  {k:<11} **变了**：{na} → {nb}")
+    return out
+
+
+def merge_spec(old: dict, spec: dict, readings: list | None) -> tuple[dict, list[str]]:
+    """把算出来的几栏并进现有文件，**保留人写的一切**。返回 `(合并结果, 被丢的键)`。
+
+    ⚠️ **这一条是这份工具最容易写错的地方**（2026-10-08 实测踩到）：
+       第一版直接 `json.dumps(spec)` 落盘 ⇒ 把 `_note`（91 行，人写的）**整块抹掉**，
+       而且 `--write` 的输出看起来**完全正常** —— 又一处「**空转与通过长得一模一样**」。
+
+    规矩：生成器**只动它拥有的那几栏**（`MECHANICAL` + 照抄来的 `读数`）。
+    别的键（`_note`、将来任何人加的东西）**原样搬过去**。
+
+    ⚠️ **方向不符时 `读数` 必须被删掉，不许留着**：那是**另一条方向**的声称，
+       留着它比丢掉它更糟 —— 它会被当成这一条方向的声明来判。
+       ⇒ 那一条会进「被丢的键」，由调用方决定要不要 `--allow-drop-readings`。
+    """
+    merged = dict(old)                      # 保序：Python dict 保插入序 ⇒ `_note` 还在最前
+    for k in MECHANICAL:
+        merged[k] = spec[k]
+    if readings is not None:
+        merged["读数"] = readings
+    else:
+        merged.pop("读数", None)            # ← 方向不符 ⇒ 别人的读数不许留
+    dropped = [k for k in old if k not in merged]
+    return merged, dropped
+
+
+def main(argv: list[str]) -> int:
+    args = argv[1:]
+    write = "--write" in args
+    reformat = "--reformat" in args
+    allow_drop = "--allow-drop-readings" in args
+    whichs = [a for a in args if not a.startswith("-")]
+    if len(whichs) != 1:
+        print("用法：python -m ldv.tools.gen_view_spec <keyset|reach|sequence> "
+              "[--write] [--reformat] [--allow-drop-readings]")
+        return 2
+    which = whichs[0]
+
+    loaded = load()
+    if loaded is None:
+        print("⚠ 找不到语料 ⇒ 什么都没算（**这不是通过**）。"
+              "用 `LDV_CORPUS=<名字或路径>` 指一份。")
+        return 1
+    nodes, edges, _ = loaded
+
+    spec, notes = build_spec(which, nodes, edges)
+    old = json.loads(VIEW_SPEC_PATH.read_text(encoding="utf-8")) \
+        if VIEW_SPEC_PATH.is_file() else {}
+    readings, rnote = carry_readings(old, which)
+    merged, dropped = merge_spec(old, spec, readings)
+
+    print(f"═══ 生成 `{VIEW_SPEC_PATH.name}` · 方向 {which} ═══")
+    print(f"  语料 {spec['语料']}")
+    for n in notes:
+        print(f"  {n}")
+    print(f"  `读数`      {rnote}")
+    kept = [k for k in old if k in merged and k not in MECHANICAL and k != "读数"]
+    if kept:
+        print(f"  人写的键**原样保留**：{kept}（生成器不碰它们）")
+
+    print("\n── 与现有文件逐栏对照 ──")
+    for line in diff_lines(old, spec):
+        print(line)
+    if not old:
+        print("  （现有文件不在 —— 每一栏都是新增）")
+
+    # ⚠️ 落盘前**先过判据**：坏 spec 不许写进版本库。
+    try:
+        ViewSpec(universe=tuple(merged["universe"]),
+                 partition=tuple(frozenset(b) for b in merged["partition"]),
+                 relation=frozenset(tuple(e) for e in merged["relation"]))
+    except Exception as exc:  # noqa: BLE001 - `__post_init__` 抛的就是要报的
+        print(f"\n‼ 生成出来的 spec 过不了 `ViewSpec`：{type(exc).__name__}: {exc}")
+        print("   ⇒ **不落盘**（生成器坏了，不是文件该改）")
+        return 1
+
+    if not write:
+        print("\n（dry-run —— **没写文件**。要落盘加 `--write`。"
+              "落盘前请人先认 `partition` 与 `读数` 那两栏。）")
+        return 0
+
+    if dropped and not allow_drop:
+        print(f"\n‼ `--write` 会**丢掉** {dropped} —— 那是人写的东西"
+              f"（`读数` 方向不符时必须丢，但那是**删声明**，得人点头）。"
+              f"要真丢请显式给 `--allow-drop-readings`。")
+        return 1
+
+    body = json.dumps(merged, ensure_ascii=False, indent=2) + "\n"
+    raw = VIEW_SPEC_PATH.read_text(encoding="utf-8") if VIEW_SPEC_PATH.is_file() else None
+
+    # ★ **内容没变就不动文件**（2026-10-08 加）。
+    #
+    # 第一版无条件重写 ⇒ 一次「什么都没变」的 `--write` 会产出 **198 行**的 diff
+    # （手写排版的数组被摊平），而**内容一个字都没动**。
+    # ⇒ 那正是本项目一直在防的形状：**「改对了」与「只是排版变了」长得一模一样**，
+    #   审的人会去逐行看那 198 行，而真正该看的那一行淹在里面。
+    #
+    # ⇒ 规矩：`--write` 是**幂等**的，而且**内容相同 ⇒ 字节级不动**。
+    #   要统一排版是另一件事，得显式说（`--reformat`）。
+    if raw is not None and merged == old:
+        same_text = raw == body
+        if same_text or not reformat:
+            print("\n✔ **内容逐栏相同** ⇒ **没动文件**"
+                  + ("（字节级也相同）" if same_text
+                     else "（磁盘上那份是手写排版；要统一成规范形给 `--reformat`）"))
+            return 0
+        # `--reformat`：内容不变但要把排版统一成规范形 —— 显式要求才做。
+
+    VIEW_SPEC_PATH.write_text(body, encoding="utf-8")
+    print(f"\n✔ 已写入 {VIEW_SPEC_PATH}")
+    print("  ⚠️ 生成器只给了**候选** `P` 与**机械算的** `E`；落盘之后它们就算"
+          "**人的声明**了 —— 改它们要走 `--write` + 人复核，"
+          "不是让它跟着语料自动漂。")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))

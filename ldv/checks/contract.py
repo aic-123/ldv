@@ -297,7 +297,7 @@ def b3_penalty_comparable(kernel: Any, plugin: Any, rep: Report) -> None:
 
 # --- B4 ---------------------------------------------------------------------
 
-def b4_split_is_partition(kernel: Any, rep: Report) -> None:
+def b4_split_is_partition(kernel: Any, rep: Report, path: str = "批建") -> None:
     """`劈开` 的结果必须构成**划分** —— §10.2 出路 (4) 之后是**收窄**版：
 
         ∪members(子) ⊆ members(父)                       ← 不许**多**（重叠）
@@ -306,6 +306,17 @@ def b4_split_is_partition(kernel: Any, rep: Report) -> None:
     ⚠️ 查的是**内核的归属分配**，不是插件返回的 payload。
        理由见 `core/kernel.py` 开头：`命中` 允许假阳 ⇒ 重叠永远看不出来，
        所以「不重不漏」只能由内核的分配来保证，也只能查那里。
+
+    ## ★ `path` 参数：**判据落在哪条装配上，必须印出来**
+
+    同一条性质在**不同的批/维护比例**下不是同一件事 —— `run_checks` 跑三条：
+
+        batch          一次建完
+        maintenance    先建 6、维护其余（`MAINT_INIT`，照 `C7` / `C10` 的读数口径）
+        cli 切分       先建 n−12、维护 12（`cli --holdout` 的默认值）
+
+    「只跑一条」与「三条都跑」在汇总里长得**一模一样** ⇒ `path` 必须印进标题。
+    （与 `B1` / `B16` 的 `path` 参数同一条纪律。）
 
     ## 为什么是「等式 + 账」，而不是裸的 `⊆`
 
@@ -350,9 +361,9 @@ def b4_split_is_partition(kernel: Any, rep: Report) -> None:
             bad.append(
                 f"{d.did} 的滞留与账不符：漏 {sorted(miss)[:3]}，账上 {sorted(accounted)[:3]}")
     if checked == 0:
-        rep.add("B4", "劈开成划分", Tri.UNEXPANDED, "没有任何方向被展开过")
+        rep.add("B4", f"劈开成划分（{path}）", Tri.UNEXPANDED, "没有任何方向被展开过")
         return
-    rep.add("B4", "劈开成划分：不重，且漏的恰好是账上那些",
+    rep.add("B4", f"劈开成划分（{path}）：不重，且漏的恰好是账上那些",
             Tri.NO if bad else Tri.YES,
             f"{len(bad)} 处破划分：{bad[:2]}" if bad
             else f"{checked} 个已展开方向：子集不重叠，"

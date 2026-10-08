@@ -299,6 +299,125 @@ def render_cover_leak(batch: dict[str, Any], inc: dict[str, Any],
             f"不是与健全性并列的另一条机制")
 
 
+# --- 「漏了、而且没有证明」—— 判据侧的那一个数 -------------------------------
+#
+# ⚠️ 这一族是 2026-10-08 从 `cover_leak_profile` **分出来**的，理由只有一条：
+#    `cover_leak_profile` 报的那个数**含两类完全不同的东西**，混在一起时
+#    「读数」与「违规」长得一模一样（本仓库的中心反模式）。
+#
+#        ① **论域外**的项     还没进结构的（`holdout`）⇒ 结构对它**没有义务**
+#        ② **有证明**的滞留项 每个子方向都**证明**不收它（§10.2 出路 (4)）⇒ 设计如此
+#
+#    实测（`outputs/_probe_d2_four.py`，4 份语料 × 3 方向 × 3 段 = 36 行）：
+#
+#        D2 裸          总漏 3    ← `cli` 的 B′ 原来用的是这一个
+#        D2 收域        总漏 2    ← 减掉 ①
+#        D2 记账        总漏 1    ← 减掉 ②
+#        D2 收域+记账   总漏 **0** ← 两个都减掉 ⇒ **基线绿**，才能当判据
+#
+#    ⇒ 「要么不漏，要么每一条漏都有证明」的**可红形态**是最后那一个。
+#
+# ⚠️ **两个前提都必须显式给，不许有默认值** —— 理由与 `B18` 的语料指纹同源：
+#    防御不能因为调用方少传一个参数而**静默消失**。
+
+
+def _stayed_map(kernel: Any) -> dict[str, set[str]]:
+    """一次扫账本，把 `stayed_of` 全算出来。
+
+    ⚠️ 逐方向调 `kernel.stayed_of(d)` 是 **`O(方向数 × 账本条数)`** ——
+       3907 项语料上方向数是 7813、账本上万条 ⇒ 那是**小时级**。
+       本函数一次扫完，形状是 `O(账本条数)`。
+    """
+    from ..core.direction import EVENT_STAYED
+
+    out: dict[str, set[str]] = {}
+    for e in kernel.ledger:
+        if e.kind == EVENT_STAYED:
+            out.setdefault(e.did, set()).add(e.detail.get("item", ""))
+    return out
+
+
+def cover_leak_unaccounted(kernel: Any,
+                           cover: Callable[[Any], frozenset[str]]) -> dict[str, Any]:
+    """**漏了、而且没有证明**的项 —— 「要么不漏，要么每一条漏都有证明」的判据侧。
+
+    与 `cover_leak_profile` 的分工（两个数都要，缺一个读不出来）：
+
+        `cover_leak_profile`      漏了几项        —— **度量**（报趋势；含上面 ①② 两类）
+        本函数 `无证明漏项数`       其中没证明的几项 —— **判据**（进退出码）
+
+    ## 两个前提
+
+    **① 论域收在「结构真的持有的项」上**（`kernel.placed`）。
+
+    `cover(p)` 是在**整份语料**上算的（`_fixtures.coverage_of`），
+    而结构的论域是它**真的持有**的项。两者不同域时，父的覆盖里会混进
+    **树从没见过**的项 —— 实测（`openalex-n100` / `sequence` 批建后）：
+
+        漏 1 项（`W2995022099`），而它在 `holdout` 里、**不在结构 items 里**
+        ⇒ `remove` **改不动**它（`kernel.remove` 的 ③：payload 由插件声明、
+          `Direction` 不可变 ⇒ 删一个成员**不改变任何 payload**
+          ⇒ `覆盖(父)` 与 `∪覆盖(子)` 两边都不动）
+        ⇒ 「删了 12 项，漏还是 1」不是「删不掉」，是**这条读数压根与删除无关**
+
+    ⚠️ 不收论域 ⇒ 判据在**批建之后**就红，而那不是违规 —— 是一条**基线就红**的判据，
+       它过不了注入验证（注入验证要求「基线绿 + 注入红」）。
+
+    **② 账目收在「活项」上。**
+
+    `stayed_of(d)` 从**账本**读（`§K4` 只增不改）⇒ 删掉那个滞留项之后，
+    账上那条 `STAYED` **还在**。不筛活项 ⇒ 「漏」是空的而「账」还在 ⇒
+    报「滞留与账不符」—— 而真相是**账目陈旧**，不是划分破了。
+    实测（`outputs/_probe_stay_delete.py`，n100/sequence）：删掉滞留项
+    `W2995022099` 之后，`B4` 现写法报「漏 []，账上 ['W2995022099']」。
+
+    ## 返回值
+
+        `无证明漏项数`   判据用的那个数（**进退出码**）
+        `论域外漏项数`   被 ① 排除掉的（**读数** —— 排除必须看得见）
+        `陈旧滞留数`     被 ② 排除掉的（**读数**）
+        `漏项数`         裸漏（与 `cover_leak_profile` 同一个数，便于对照）
+    """
+    placed = set(kernel.placed)
+    stayed = _stayed_map(kernel)
+    raw = unaccounted = outside_domain = stale = 0
+    detail: list[dict[str, Any]] = []
+    for d in kernel.all_directions():
+        kids = kernel.children_of(d)
+        if not kids:
+            continue
+        try:
+            cp = cover(d.payload)
+            union: set[str] = set()
+            for k in kids:
+                union |= cover(k.payload)
+        except Exception:  # noqa: BLE001 - payload 由插件产出
+            continue
+        leaked = cp - union
+        if not leaked:
+            continue
+        raw += len(leaked)
+        acc = stayed.get(d.did, set())
+        outside = leaked - placed
+        live_leak = leaked & placed
+        stale_here = acc - placed
+        bad = live_leak - acc
+        outside_domain += len(outside)
+        stale += len(stale_here)
+        unaccounted += len(bad)
+        if bad:
+            detail.append({"父": d.did, "子": [k.did for k in kids],
+                           "无证明": sorted(bad)[:3], "无证明数": len(bad)})
+    return {
+        "漏项数": raw,
+        "无证明漏项数": unaccounted,
+        "论域外漏项数": outside_domain,
+        "陈旧滞留数": stale,
+        "明细": detail,
+    }
+
+
+
 # --- B18：覆盖不漏的 baseline 守卫 -------------------------------------------
 
 def _key(which: str, path: str) -> str:

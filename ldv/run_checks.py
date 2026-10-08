@@ -88,6 +88,12 @@ from .checks._fixtures import (
 )
 from .core.tri import Tri
 from .checks._framework import Report
+from .checks.multilevel import (
+    MULTILEVEL_CODES,
+    render_levels,
+    run_multilevel,
+    skip_all,
+)
 from .checks.abstraction import (
     VIEW_CODES,
     a1_soundness,
@@ -182,6 +188,53 @@ def maintenance_kernel(which: str, nodes, edges):
     return build_incremental(mk_build, nodes, ids_all[:MAINT_INIT], ids_all[MAINT_INIT:])
 
 
+#: `cli --holdout` 的默认值 —— 第三条路径的切分点。
+CLI_HOLDOUT = 12
+
+
+def cli_split_kernel(which: str, nodes, edges, holdout: int = CLI_HOLDOUT,
+                     remove: int = CLI_HOLDOUT):
+    """**`cli` 实际用的那条装配** —— 直接调 `cli._assemble`，**不复制**。
+
+    ## 为什么要有第三条路径（2026-10-08）
+
+    `run_checks` 原来两条路径，而 `cli` 用的是**第三条**：
+
+        路径            批/维护比例      谁在用
+        ──────────────────────────────────────────────────────────────
+        batch           一次建完         `run_checks` 的 `B1` / `B16` 批建那半
+        maintenance     **6 : n−6**      `run_checks` 的维护那半（`MAINT_INIT`）
+        **cli 切分**     **n−12 : 12**    `cli all`（`--holdout` 默认 12）
+
+    三条**互不相同**，而「跑了哪条」在汇总里长得**一模一样** ⇒
+    「`run_checks` 全绿」**不蕴含**「`cli` 绿」。实测（`outputs/_findings_real_data.md`
+    问题 1 / 8）：`cli all --remove 12` 在真实语料上退出码 1 的时候，
+    `run_checks` 是**绿的**。
+
+    ## ★ 为什么是**调**而不是**抄**
+
+    抄一份装配（`build(root)` + `insert` 每一项 + 根 payload 按 `init_items` 算）
+    会与 `cli` **各自演化** —— 而两处「长得一样」的代码里，**只有一处**会被改。
+    这正是本仓库记过的形状：`reach` 的根口径在 `_fixtures.make_builder` 与
+    `cli._assemble` 两处**不一致**，而症状不是报错，是**检查报绿**。
+
+    ⇒ 所以这里直接调 `cli._assemble`。它改了，这一条**跟着改**，不会漏。
+
+    ⚠️ **`remove`** 只影响 `_assemble` **挑出**哪几项待删（返回值的第 4 项）——
+       本函数**不删**。删除那一段由 `run_one` 在**所有用到 `cli_k` 的判据跑完之后**
+       才做（`remove_items` 会就地改内核）。
+       「`run_checks` 绿」覆盖的是 `cli all`（默认不删），**不**覆盖 `--remove N`；
+       这一点在 `run_one` 的读数里**显式印出来**（收窄要印、放宽也要印）。
+    """
+    from .cli import _assemble
+    from .flow import insert_items
+
+    kernel, queries, new, removable, cover = _assemble(
+        which, nodes, edges, holdout, remove)
+    insert_items(kernel, new)            # ← 维护那 12 项（`cli` 的流程 B）
+    return kernel, cover, removable
+
+
 def leak_obs(which: str, batch_kernel, inc_kernel, cover) -> dict:
     """`B18` 的观测 —— 键是 `<方向>|<路径>`，baseline 与它逐键比。"""
     return {
@@ -202,6 +255,12 @@ def run_one(which: str, loaded, probes: bool = True) -> Report:
     # ★ **维护路径的内核只建一次，两条判据共用**（`B1` / `B16`）。
     inc = maintenance_kernel(which, nodes, edges)
 
+    # ★★ **第三条路径：`cli` 实际用的那条切分**（2026-10-08）。
+    #    直接调 `cli._assemble` ⇒ 它改了这里跟着改，不会两处各自演化。
+    #    为什么非有不可：三条路径**互不相同**，而「跑了哪条」在汇总里长得
+    #    一模一样 ⇒ 原来「`run_checks` 全绿」**不蕴含**「`cli` 绿」。
+    cli_k, cli_cover, cli_removable = cli_split_kernel(which, nodes, edges)
+
     # ★ `B1` 与 `B16` 都**两条路径各判一次** —— 它们的 ground truth 在两条路径上不同：
     #   `B1` 是「**成员** ∩ 查询」（成员集维护后会变）、`B16` 是「成员 ⊆ 覆盖」
     #   （维护时 payload 已冻结）。**「只跑一条路」与「两条路都跑」在汇总里
@@ -210,7 +269,10 @@ def run_one(which: str, loaded, probes: bool = True) -> Report:
     b1_no_false_negative(inc, plugin, queries, rep, path="维护")
     b2_merge_covers(plugin, kernel, queries, rep)
     b3_penalty_comparable(kernel, plugin, rep)
-    b4_split_is_partition(kernel, rep)
+    b4_split_is_partition(kernel, rep, path="批建")
+    # ★ 第三条：`cli` 切分。⚠️ 这一条**必须与 `cli` 同装配**，所以它用的是
+    #   `cli_k`（`cli._assemble` 造出来的那个），不是另建一个「差不多」的。
+    b4_split_is_partition(cli_k, rep, path="cli 切分")
     b5_decode_covers(plugin, kernel, queries, rep)
     b6_signal_not_collapsed(kernel, plugin, rep)
     b7_witness_complete(kernel, rep)
@@ -227,6 +289,8 @@ def run_one(which: str, loaded, probes: bool = True) -> Report:
     #   **每一行单独判、单独注入验证**。
     b16_members_covered(kernel, cover, rep, path="批建")
     b16_members_covered(inc, cover, rep, path="维护")
+    # ★ 第三条：`cli` 切分（同 `B4` 的理由 —— 三条路径互不相同，各占一行）。
+    b16_members_covered(cli_k, cli_cover, rep, path="cli 切分")
 
     # 覆盖不漏（§1 表第四行，⬜ 2026-10-07 已降级）**只在批建路径上是判据**：
     # 维护路径 baseline 里有既存违规（sequence 16 漏 / 2 对）。⚠️ 那**不是**「另一条
@@ -242,6 +306,31 @@ def run_one(which: str, loaded, probes: bool = True) -> Report:
     #   只看得见它慢。`leak_obs` 现在只留给 `--write-cover-leak-baseline` 用。
     b18_cover_leak_baseline({f"{which}|batch": leak_b, f"{which}|maintenance": leak_i},
                             rep, corpus=corpus_fingerprint(nodes, edges))
+
+    # ★ 第三条路径（`cli` 切分）的**覆盖不漏读数** —— **度量**，不进 baseline。
+    #   ⚠️ 为什么**不**并进 `b18`：`B18` 的两条规则之一是「baseline 里有、现在没有 ⇒ 红」
+    #      （ESLint 的 `--prune-suppressions`）。多一条键会让那条规则拿一份
+    #      **没冻过**的 baseline 去比 ⇒ 报「条目不再发生」—— 而真相是**新加的键**。
+    #      「新加的键」与「条目失效」长得一模一样，所以这里只印、不比。
+    cli_leak = cover_leak_profile(cli_k, cli_cover)
+    rep.note(f"覆盖不漏（{which}·cli 切分，**度量**）："
+             f"{cli_leak['漏项数']} 漏 / {cli_leak['已展开方向数']} 对"
+             f"（装配与 `cli --holdout {CLI_HOLDOUT}` 逐字同一条）")
+
+    # ★ 删除那一段（`cli --remove N`）—— **读数**，不是判据。
+    #   ⚠️ `D1–D6` 是 `cli` **退出码**的一部分，但它们不在
+    #      `PLUGIN_CODES` / `KERNEL_CODES` / `VIEW_CODES` / `MULTILEVEL_CODES` 里
+    #      ⇒ 这一行**不声称**覆盖它们。逐条判据 + 注入在 `run_tests.test_deletion_path`。
+    #   ⇒ 「`run_checks` 绿」覆盖 `cli all`（默认不删），**不**覆盖 `--remove N`。
+    #     这句话必须印出来 —— 否则「没覆盖」与「覆盖了且是绿的」长得一样。
+    #   ⚠️ 必须在**所有用到 `cli_k` 的判据之后**跑：`remove_items` 就地改内核。
+    from .flow import remove_items
+    _del = remove_items(cli_k, cli_removable, cover=cli_cover)
+    _d_bad = sum(len(x.违规) for x in _del)
+    rep.note(f"删除路径（{which}·cli 切分，**读数不是判据**）：删 {len(_del)} 项、"
+             f"`D1–D6` 违规 {_d_bad} 处"
+             + (f" ⇒ 与 `cli all --remove {CLI_HOLDOUT}` 同装配下为 0"
+                if not _d_bad else f"：{[x.违规 for x in _del if x.违规][:2]}"))
 
     # B19 —— 变细守卫。**跨次数**的性质：反复声称能分、却连续 N 次没让覆盖变细。
     # 与 `§K2 判空`（单次性质）不是一回事，不能合并。
@@ -456,6 +545,57 @@ def _skip_views(rep: Report, why: str) -> None:
             Tri.UNEXPANDED, why)
 
 
+def multilevel_report(loaded, targets: list[str]) -> Report:
+    """多层抽象 `§M0`–`§M6` —— **又一组**，与 `(视图)` 那一组分开。
+
+    ## 为什么单列一组（而不是并进 `(视图)`）
+
+    两组**问的不是同一件事**：`(视图)` 问「这一层成不成立」，
+    `(多层)` 问「把 `E` 反复套在自己身上时，刹车与账成不成立」。
+    并成一组的话，「七条视图判据全过」这句话会**顺手覆盖**七条多层判据 ——
+    而它们对**折叠**一个字节的信息都没有。
+
+    ⚠️ 外生输入与 `(视图)` **同一份**（`view_spec.json`）⇒ 三种「跳过」的话也一样。
+       但**跳过的范围不同**：这一组跳的是 `M0`–`M6`。
+    """
+    nodes, edges, _ = loaded
+    corpus = corpus_fingerprint(nodes, edges)
+    rep = Report(plugin="(多层)", expects=MULTILEVEL_CODES)
+    doc = load_spec_file()
+
+    if not doc:
+        skip_all(rep, "外生项**未声明**（`view_spec.json` 不在）—— "
+                      "`P` / `E` 必须**外生**（设计稿 §3 / §K9），"
+                      "猜一个就是替人做决定（§10 停止条件 1）。**跳过 ≠ 通过**。")
+        return rep
+
+    which = str(doc.get("方向") or "")
+    if which not in targets:
+        skip_all(rep, f"外生声明写的是 `{which}`，而本趟跑的是 {targets} "
+                      f"⇒ 本方向**判不了**（跳过 ≠ 通过）")
+        return rep
+
+    spec, why = spec_for(doc, which, corpus)
+    if spec is None:
+        skip_all(rep, why + " —— 判不了，**不是通过**")
+        return rep
+
+    kernel, plugin, _q, _mk = batch_kernel(which, nodes, edges)
+    cover = coverage_of(which, nodes, edges)
+    levels = run_multilevel(spec, kernel, cover, plugin, rep)
+    rep.note(why + f"；方向 `{which}`")
+    rep.note(render_levels(levels))
+    # ⚠️ 这一句必须印出来：多层在这两份语料上**只折得动一层** ——
+    #   第 1 层的商**不缩**（`|Q| == |U|`）。那正是前作核验 §四 (1) 说的
+    #   「收缩比在 ldv 里**不受任何结构保证**」在真数据上的样子，
+    #   而不是「实现坏了」。读数与判据分开：`§M1` 绿（末层豁免），这句话只是读数。
+    if len(levels) == 2 and levels[-1].n_blocks == len(levels[-1].spec.universe):
+        rep.note("★ 读数：第 1 层的商**不缩**（`|Q| == |U|`）⇒ 折叠在此终止。"
+                 "「每层缩一个常数因子」在 ldv 里是**实测的经验事实**，不是定理"
+                 "（前作核验 §四 (1)）—— 这条不是红，是这一层压不动。")
+    return rep
+
+
 def main(argv: list[str]) -> int:
     # ⚠️ `--cap 400` 里的 `400` **不是**方向名 —— 所以先摘掉带值的选项再取位置参数。
     cap = 0
@@ -536,6 +676,16 @@ def main(argv: list[str]) -> int:
     view_rep = view_report(loaded, targets)
     reps.append(view_rep)
     print(view_rep.render())
+    print()
+
+    # ★ 多层抽象 `§M0`–`§M6` —— **又一组**，与 `(视图)` 分开。
+    #   两组问的不是同一件事：`(视图)` 问「这一层成不成立」，
+    #   `(多层)` 问「把 `E` 反复套在自己身上时，刹车与账成不成立」。
+    #   并成一组的话，「视图七条全过」会顺手覆盖多层七条 —— 而它们对**折叠**
+    #   一个字节的信息都没有。见 `multilevel_report` 的 docstring。
+    ml_rep = multilevel_report(loaded, targets)
+    reps.append(ml_rep)
+    print(ml_rep.render())
     print()
 
     total_red = sum(len(r.red) for r in reps)

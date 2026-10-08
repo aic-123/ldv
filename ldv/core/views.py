@@ -94,10 +94,19 @@ __all__ = [
     "refines",
     "refines_partition",
     "coarser_stable_exists",
+    "n_coarsening_candidates",
     "partition_of",
     "reach_of",
     "view_parts",
     "MAX_COARSENING_CANDIDATES",
+    # --- 多层（`§M0`–`§M6`） ---
+    "Level",
+    "MAX_LEVELS",
+    "MIN_SHRINK_RATIO",
+    "block_namer",
+    "quotient_spec",
+    "quotient_universe",
+    "fold_until",
 ]
 
 #: 暴力搜「更粗的稳定划分」时，枚举上限 —— 超了就**报跳过**（不是报过）。
@@ -495,6 +504,49 @@ class _LazyPool:
         return self._make()
 
 
+def n_coarsening_candidates(
+    spec: ViewSpec,
+    q: Sequence[frozenset[str]],
+    cap: int = MAX_COARSENING_CANDIDATES,
+) -> int:
+    """`∏ Bell(组内 Q 块数)` —— 「枚举更粗的稳定划分」要试多少个候选。**只数不建**。
+
+    ## 为什么要单列一个函数（2026-10-08）
+
+    这个量原来**只**是 `coarser_stable_exists` 内部的一个局部变量，也就是
+    「`§A3` 判得了还是判不了」的私事。多层抽象（`§M4`）要用**同一个量**做
+    **另一件事**：每一层折叠之前，先看这一层的验证代价爆没爆。
+
+    ⇒ 两处必须**逐字同一个数**，否则会出现「`§A3` 说判得了、`§M4` 说爆了」
+       —— 而那个矛盾的症状不是红，是**两个判据各自看着都对**。
+       这与 `reach` 的根口径在两份装配之间分岔过的那次是同一个形状。
+
+    ⚠️ **`cap` 只影响「早不早停」，不影响返回值**：超了就返回那个**已经超过**的数
+       （不是 `None`）—— 调用方拿它跟 `cap` 比。返回 `None` 会让
+       「爆了」与「算不出来」合并成一种。
+
+    ⚠️ 计数器**不叫** `total` —— `B12`（`checks/source.py`）按**名字**扫内核源码，
+       `total` 在它的禁用表里（`score|objective|utility|global|importance|total`）。
+       这里数的是「**枚举了多少个候选粗化**」，与跨方向评分毫无关系 ⇒ 那是**假红**。
+       处置按纪律：**改代码不改扫描器**（扫描器是唯一守 E-1 的东西，放宽它才是真损失）。
+    """
+    groups: dict[frozenset[str], list[frozenset[str]]] = {p: [] for p in spec.partition}
+    for b in q:
+        home = next((p for p in spec.partition if b <= p), None)
+        if home is None:
+            # `Q` 不是 `P` 的细化 ⇒ 这个量**问不出来**。返回 `0`（而不是一个大数）：
+            # 「问不出来」与「很大」是两件事，混起来会让 `§M4` 把一种**声明错误**
+            # 报成「验证代价爆了」。
+            return 0
+        groups[home].append(b)
+    n = 1
+    for p in spec.partition:
+        n *= _bell(len(groups[p]))
+        if n > cap:
+            return n
+    return n
+
+
 def coarser_stable_exists(
     spec: ViewSpec,
     q: Sequence[frozenset[str]],
@@ -540,15 +592,9 @@ def coarser_stable_exists(
             return None, "`Q` 不是 `P` 的细化（有块跨出了 `P` 的块）⇒ 搜不了", 0
         groups[home].append(b)
 
-    # ★ 先算规模。⚠️ 这个计数器**不叫** `total` —— `B12`（`checks/source.py`）按
-    #    **名字**扫内核源码，`total` 在它的禁用表里（`score|objective|utility|global|importance|total`）。
-    #    这里数的是「**枚举了多少个候选粗化**」，与跨方向评分毫无关系 ⇒ 那是**假红**。
-    #    处置按纪律：**改代码不改扫描器**（扫描器是唯一守 E-1 的东西，放宽它才是真损失）。
-    n_cand = 1
-    for p in spec.partition:
-        n_cand *= _bell(len(groups[p]))
-        if n_cand > cap:
-            return None, f"候选数 {n_cand} 超过上限 {cap} ⇒ **没搜完**", n_cand
+    n_cand = n_coarsening_candidates(spec, q, cap)
+    if n_cand > cap:
+        return None, f"候选数 {n_cand} 超过上限 {cap} ⇒ **没搜完**", n_cand
 
     pools = [_LazyPool(partial(_coarsenings, sorted(groups[p], key=min)))
              for p in spec.partition]
@@ -658,3 +704,194 @@ def view_parts(
                 parts.append(cut)
         out[b] = tuple(parts)
     return out
+
+
+# --- 多层抽象（`§M0`–`§M6`） ---------------------------------------------------
+#
+# 「把流程 E 反复套在自己身上」。前作核验（`docs/分层方向视图-多层抽象-前作核验.md`）
+# 把成熟范式（METIS 的三段式 / LSM 的层数）与 ldv 的处境逐条对过，结论是：
+#
+#     MGP 与 LSM 能「反复套自己」，是因为那个操作是**自同态**且**收缩比有保证**。
+#     ldv 的归组**两条都不满足**：
+#       **不是自同态**（`方向结构 → 划分`，要套自己得先造一个**商规格**）
+#       **收缩比无保证**（抽象层 §4 的 `E3` 明说「块数 == 方向数」是可能的）
+#     ⇒ ldv 的多层 = 「反复套自己 + **每层重新外生声明一次尺度** + 阈值当**主刹车**」。
+#
+# 三条边界照旧（E-1/E-2/E-3）：**没有全局目标函数、不排序、不写外生项**。
+# 折叠的每一层都只由 `csr`（Paige–Tarjan，解唯一）产出 ⇒ 不需要目标函数。
+
+
+#: 多层的两个**外生**参数（`§M1` / `§M2`）。**必填，没有默认值** —— 与 `ViewSpec`
+#: 同一个理由：猜一个就是替人做 `§K9` 的决定。
+#:
+#: `MIN_SHRINK_RATIO = 0.5` 的出处：METIS 论文 p.365 逐字
+#: 「the number of vertices in Gi+1 cannot be less than half the number of
+#: vertices in Gi」。**那一侧是结构性保证**（先验成立，阈值只兜病态）；
+#: ldv **没有**这条保证 ⇒ 同一个数在这里从「兜底」变成**要求**。
+#: 实测基线（36 项语料、25 个方向 ⇒ 8 张视图）收缩比约 **0.32** ⇒ 基线绿。
+#:
+#: ⚠️ `MAX_LEVELS` 是**兜底**，不是主刹车 —— 已核文献里直接给层数封顶只是
+#:   「configured maximum level」那种配置项。主刹车是 `MIN_SHRINK_RATIO`。
+MAX_LEVELS = 8
+MIN_SHRINK_RATIO = 0.5
+
+
+@dataclass(frozen=True)
+class Level:
+    """折叠出来的一层。**判据要的每一件事都在这里**，不许去别处现算。
+
+        `spec`      这一层的外生规格（第 0 层是调用方给的，之后每层是新声明的）
+        `q`         这一层的视图划分（`csr(spec)`，第 0 层由调用方给）
+        `shrink`    `|q| / |spec.universe|` —— `§M1` 的输入
+        `n_cand`    `∏ Bell(组内块数)` —— `§M4` 的输入（与 `§A3` **同一个函数**）
+        `stopped`   这一层为什么停：`""` / `"M1 收缩比"` / `"M2 层数"`
+        `ans`       这一层**答得出**的原始项（由调用方的 `answer` 给）
+        `lost`      从上一层到这一层**丢掉**的：`ans(上) − ans(本)`（第 0 层为 ∅）
+        `ledger`    **携带**下来的账：`ledger(上) ∪ lost`
+
+    ⚠️ `lost` 与 `ledger` 是**分开**两个字段，不许用一个算另一个。
+       这正是 `§M6` 判的东西：**账必须被携带**，而不是「用的时候现推」。
+       现推的话，「账被丢了」与「账本来就是空的」**长得一模一样** ——
+       而前者是把误差**偷偷优化掉**，正是设计稿 §1 花一整节挡掉的那条路。
+    """
+
+    spec: ViewSpec
+    q: tuple[frozenset[str], ...]
+    shrink: float
+    n_cand: int
+    stopped: str = ""
+    ans: frozenset[str] = frozenset()
+    lost: frozenset[str] = frozenset()
+    ledger: frozenset[str] = frozenset()
+
+    @property
+    def n_blocks(self) -> int:
+        return len(self.q)
+
+
+def block_namer(q: Sequence[frozenset[str]]) -> dict[frozenset[str], str]:
+    """块 → 视图 id。**按 `partition_of` 的同一套排序**（最小元素、块大小）⇒ 可复现。
+
+    ⚠️ 排序**不是**「按好坏排」（E-2 禁排序），只是为了让同一个划分只有一种写法。
+    """
+    return {b: f"V{i}" for i, b in enumerate(partition_of(q))}
+
+
+def quotient_universe(q: Sequence[frozenset[str]]) -> tuple[str, ...]:
+    """`q` 折成一层之后的 `universe` —— 就是那些**视图 id**，按名字里的数字排。
+
+    ⚠️ 单列一个函数是为了 `fold_until` 能**先**把新 `universe` 算出来、再交给
+       `next_partition` —— 下一层的 `P` 是**人声明的**，而人要声明它就得先看见
+       它是对**哪些东西**的划分。把这一步藏在 `quotient_spec` 里面，调用方
+       拿到的就永远是**上一层**的 `universe`（实测踩到：`P = {上一层 25 个方向}`
+       被当成新层的划分 ⇒ `ViewSpec` 抛「不是划分」）。
+    """
+    return tuple(sorted((b for b in block_namer(q).values()), key=lambda s: int(s[1:])))
+
+
+def quotient_spec(
+    spec: ViewSpec,
+    q: Sequence[frozenset[str]],
+    partition: Iterable[Iterable[str]],
+) -> ViewSpec:
+    """把一层折成下一层的**规格** —— 商。
+
+        `universe`  := 视图 id（由 `q` 的块规范化命名）
+        `relation`  := { (块(a), 块(b)) : ∃(a,b) ∈ E, **块(a) ≠ 块(b)** }
+        `partition` := **不由这里产出** —— 是**参数**
+
+    ## ★ 为什么 `partition` 是参数，不是算出来的（`§M0` 的兄弟条款）
+
+    设计稿 §三 3.1 与 §四 (3) 定死了这一条：`E` 套在自己身上时，
+    **第 k 层的 `P` 就是第 k−1 层的 `Q`** ⇒ **尺度在每一层被重新外生化一次**。
+    对照：MGP 的「目标块数 k」全程不变、LSM 的 `T` 全程不变 ——
+    **「每层重新外生声明一次尺度」这个形态，文献里没有。**
+
+    ⇒ 把它做成参数（而不是默认 `{U}`），是为了让「谁声明了这一层的尺度」
+      在**调用点**上看得见。默认一个值就等于把它**偷偷内生化**了（违反 `§K9`）。
+
+    ## ⚠️ `A ≠ B` 那个过滤（`§M0`）
+
+    `A == B` 的边会让「稳定」条件退化成**恒真** —— 一个**空转的判据**。
+    所以自环必须被挡在这里，而不是靠下游判据「顺便不管它」。
+    """
+    namer = block_namer(q)
+    home = {x: namer[b] for b in partition_of(q) for x in b}
+    relation = frozenset(
+        (home[a], home[b])
+        for (a, b) in spec.relation
+        if home.get(a) is not None and home.get(b) is not None and home[a] != home[b]
+    )
+    return ViewSpec(universe=quotient_universe(q),
+                    partition=partition_of(partition),
+                    relation=relation)
+
+
+def fold_until(
+    spec: ViewSpec,
+    q0: Sequence[frozenset[str]],
+    next_partition: Callable[[int, tuple[str, ...]], Iterable[Iterable[str]]],
+    answer: Callable[[ViewSpec, Sequence[frozenset[str]], dict[str, frozenset[str]]],
+                     frozenset[str]],
+    *,
+    max_levels: int = MAX_LEVELS,
+    min_shrink_ratio: float = MIN_SHRINK_RATIO,
+    cap: int = MAX_COARSENING_CANDIDATES,
+) -> list[Level]:
+    """把 `E` 反复套在自己身上，**到「收缩比」或「层数」刹车为止**。
+
+    `next_partition(k, universe_k)` 给出第 `k` 层（`k` 从 1 起）的 `P` ——
+    ⚠️ 它拿到的是**新一层**的 `universe`（视图 id），不是上一层的方向 id
+    （见 `quotient_universe` 的 ⚠️）。`P` 是**外生**的，见 `quotient_spec`。
+
+    `answer(spec_k, q_k, down_k)` 给出这一层答得出的原始项（**由调用方定义** ——
+    本模块不认识内核，也不认识覆盖 oracle）。⚠️ `down_k` 是**第三个数**：
+    第 `k` 层的一个视图 id 对应**第 0 层**的哪些方向 —— 没有它，调用方拿到
+    `V0` 这种名字**根本无从下手**（实测踩到：`KeyError: 'V0'`）。
+
+    ## `§M5`：终止**只许**由 `§M1` / `§M2` 触发
+
+    不许有第三条路（「跑到不动点」）。⚠️ 这条不是形式主义：
+    `csr` 完全可以返回一个**不比 `P` 更细**的划分（抽象层 §4 `E3`：
+    「块数 == 方向数」是**可能**的），那时下一层的 `universe` 与这一层**一样大**
+    ⇒ 层数**不会自己终止**。⇒ 那种情形必须被 `§M1`（收缩比 = 1.0 > 阈值）接住，
+    **恰好返回 1 层**。所以「不动点」不是一条独立出路，它是 `§M1` 的一个特例。
+
+    ## ⚠️ `stopped` 是**判据的输入**，不是日志
+
+    `§M5` 判的就是「最后一层的 `stopped` 非空且取值合法」。若把它写成日志，
+    判据就只能**重新推断**为什么停 —— 而「推断出来的原因」与「真实原因」
+    在只看布尔值时长得一模一样。
+    """
+    levels: list[Level] = []
+    cur: ViewSpec = spec
+    q = partition_of(q0)
+    down: dict[str, frozenset[str]] = {d: frozenset({d}) for d in spec.universe}
+    prev_ans: frozenset[str] | None = None
+    ledger: frozenset[str] = frozenset()
+
+    while True:
+        shrink = len(q) / len(cur.universe) if cur.universe else 1.0
+        n_cand = n_coarsening_candidates(cur, q, cap)
+        stop = ""
+        if shrink > min_shrink_ratio:
+            stop = "M1 收缩比"
+        elif len(levels) + 1 >= max_levels:
+            stop = "M2 层数"
+
+        ans = frozenset(answer(cur, q, down))
+        lost = frozenset() if prev_ans is None else (prev_ans - ans)
+        ledger = ledger | lost
+        levels.append(Level(spec=cur, q=q, shrink=shrink, n_cand=n_cand,
+                            stopped=stop, ans=ans, lost=lost, ledger=ledger))
+        if stop:
+            return levels
+
+        # ⚠️ 先算**新一层**的 `universe`，再交给 `next_partition` ——
+        #    `P` 是对**新**那一层的划分（见 `quotient_universe` 的 ⚠️）。
+        part = next_partition(len(levels), quotient_universe(q))
+        down = {name: frozenset().union(*(down[x] for x in block))
+                for block, name in block_namer(q).items()}
+        cur = quotient_spec(cur, q, part)
+        q = partition_of(coarsest_stable_refinement(cur))
+        prev_ans = ans

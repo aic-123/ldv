@@ -618,6 +618,93 @@ def inj_b16_maintenance(nodes, edges, injected: bool) -> Report:
     return rep
 
 
+# ═══ 第三条路径（`cli` 切分）的两行 ══════════════════════════════════════════
+#
+# ⚠️ **为什么这两行各自要有注入**（不能拿批建 / 维护那两条代替）：
+#    **装配是判据的一部分** —— 三条路径的批/维护比例不同
+#    （一次建完 / 6:n−6 / n−12:12），结构不同 ⇒ ground truth 不同。
+#    `inj_b16_maintenance` 的 docstring 已经把这条纪律说过一次：
+#    「批建那行的注入在维护路径上**不红**」。
+#
+# ⚠️ 两条都**调 `run_checks.cli_split_kernel`**，不另抄一份装配 ——
+#    抄的那一份会与生产那份各自演化，而症状不是报错、是**检查报绿**。
+
+
+def inj_b4_cli_split(nodes, edges, injected: bool) -> Report:
+    """`B4` 的**第三条**判据（`cli` 切分）。
+
+    注入的是 **「子方向多出父没有的项」** —— 就是 2026-10-08 修掉的那个真缺陷
+    （`_expand_inner` 重试分桶时没把新子方向记进锥 ⇒ `remove` 摘不干净）。
+    这里手工把同一件事做出来：**只从父摘、不摘子**。
+
+    ⚠️ 为什么**不**沿用 `inj_b4`（重叠）：那一条建的是**批建**内核，
+       而这一行判的是 `cli` 切分的内核 —— 换装配就是换判据。
+    """
+    from ldv.run_checks import cli_split_kernel
+
+    kernel, _cover, _rm = cli_split_kernel("keyset", nodes, edges)
+    if injected:
+        for d in kernel.all_directions():
+            done = False
+            for kid in kernel.children_of(d):
+                mk = set(kernel.members_of(kid))
+                if mk:
+                    kernel._members[d.did].discard(sorted(mk)[0])   # noqa: SLF001
+                    done = True
+                    break
+            if done:
+                break
+    rep = _rep()
+    b4_split_is_partition(kernel, rep, path="cli 切分")
+    return rep
+
+
+def inj_b16_cli_split(nodes, edges, injected: bool) -> Report:
+    """`B16` 的**第三条**判据（`cli` 切分）。
+
+    ## ★ 为什么**不**沿用维护路径那条注入（`_NoRefusal`）—— 实测它**空转**
+
+    先试的就是它（同一个病灶、另一条装配）。实测：**基线绿、注入也绿**。
+
+        ✗ B16·cli 切分  基线=是  注入=是   ← 注入后没变红（是）
+
+    理由是**装配比例**：`cli` 切分先建 **24** 项（36 − 12），24 项建出来的树
+    已经足够深，后 12 项的**第一符号都已在树里** ⇒ 它们**本来就落对了地方**
+    ⇒ 关掉两条出路**什么都不改**。而维护路径先建 **6** 项、树很浅，
+    后 30 项才会撞上「没有子方向收它」那种情形。
+
+    ⇒ 这正是本套件开头那条纪律的**第三个实例**（`B15` 两个、这里一个）：
+      **「想当然的注入」与「有效的注入」长得一模一样**。
+      注入必须**挑**，而挑不出来就说明这条判据的真实内容还没被说清。
+
+    ## 换成「塞进一个盖不住它的方向」
+
+    与 `inj_b4` 同形（直接动 `_members`，不走插件）—— 因为要注入的是
+    **「成员 ⊆ 覆盖」这一条被破**，而不是「插件分配得不好」。
+    取第一个 `x ∉ cover(d.payload)` 的方向 `d`，把 `x` 塞进它的成员里。
+
+    ⚠️ 根方向天然过不了这一筛（`sequence` 的根 payload 是空前缀 ⇒ 覆盖一切）
+       ⇒ 循环会跳过它，落在真正「盖不住」的方向上。
+    """
+    from ldv.run_checks import cli_split_kernel
+
+    k, cover, _rm = cli_split_kernel("sequence", nodes, edges)
+    if injected:
+        placed = False
+        for d in k.all_directions():
+            cov = set(cover(d.payload))
+            for x in sorted(k.items):
+                if x not in cov:
+                    k._members.setdefault(d.did, set()).add(x)      # noqa: SLF001
+                    placed = True
+                    break
+            if placed:
+                break
+    rep = _rep()
+    b16_members_covered(k, cover, rep, path="cli 切分")
+    return rep
+
+
 # ═══ B18 ═════════════════════════════════════════════════════════════════════
 
 class _DropBucket:
@@ -1502,6 +1589,195 @@ def inj_a7_recompute(nodes: Any, edges: Any, injected: bool) -> Report:
                             "new_q": coarsest_stable_refinement(spec) if injected else None})
 
 
+# ═══ 多层 `§M0`–`§M6`（2026-10-08） ══════════════════════════════════════════
+#
+# ## ⚠️ 先读这一段：七条里有**三条是守卫**，不是会开火的判据
+#
+# 与删除路径的 `D2`/`D3` 同一个处境（设计文档 §10.2 C：它们是**守卫**）：
+#
+#     `§M3`  总代价 `Σ|U_k| ≤ 2|U_0|` —— `fold_until` 每层缩一半以上 ⇒ **几何级数的推论**
+#            ⇒ 对它的输出**恒真**。守的是「另一个实现允许不缩的层继续折」。
+#     `§M6`  顶层账 ⊇ 各层丢的并 —— `ledger_k = ∪_{j≤k} lost_j` **按构造相等**
+#            ⇒ 对它的输出**恒真**。守的是「另一个实现不携带账」。
+#     `§M5`  的「`stopped` 为空」那半 —— `fold_until` 的循环**只有两个出口**，
+#            都带非空 `stopped` ⇒ 那半**不可达**。守的是「另一个实现跑到不动点就停」。
+#
+# ⇒ 这三条的红形态只能**手造**（`inj_m3` / `inj_m6` 与 `known_answer_controls`）。
+#   这不是「注入挑不出来」，是**它们的红形态本来就在契约层**：
+#   判据守的是**接口的承诺**，不是**这一份实现**。写在这里，免得把
+#   「恒真」读成「没在判」—— 两者在只看布尔值时长得一模一样。
+#
+# 能**真跑红**的四条：`§M0`（塞一条自环）/ `§M1`（第一层就不缩）/
+#   `§M2`（把 `MAX_LEVELS` 拆掉）/ `§M4`（一层 11 块 ⇒ `Bell(11) > cap`）/
+#   `§M5` 的反向那半（只折一层）。
+
+
+def _ml_chain(nodes, edges):
+    """多层注入的公共装配：**生产口径**的 spec / kernel / cover / plugin。"""
+    from ldv.checks.abstraction import load_spec_file, spec_for
+    from ldv.checks.coverage import corpus_fingerprint
+    from ldv.run_checks import batch_kernel
+
+    loaded = load()
+    doc = load_spec_file()
+    which = str(doc.get("方向") or "keyset")
+    spec, _why = spec_for(doc, which, corpus_fingerprint(nodes, edges))
+    kernel, plugin, _q, _mk = batch_kernel(which, nodes, edges)
+    cover = coverage_of(which, nodes, edges)
+    return spec, kernel, plugin, cover
+
+
+def _ml_report(spec, kernel, plugin, cover, *, q0=None, max_levels=None,
+               min_shrink_ratio=None) -> Report:
+    from ldv.checks.multilevel import MULTILEVEL_CODES, run_multilevel
+
+    kw = {}
+    if max_levels is not None:
+        kw["max_levels"] = max_levels
+    if min_shrink_ratio is not None:
+        kw["min_shrink_ratio"] = min_shrink_ratio
+    rep = Report(plugin="(多层)", expects=MULTILEVEL_CODES)
+    run_multilevel(spec, kernel, cover, plugin, rep, q0=q0, **kw)
+    return rep
+
+
+def inj_m0(nodes, edges, injected: bool) -> Report:
+    """`§M0` —— 注入一条**自环**（人写进 `E` 的那种）。
+
+    红形态：`E` 里出现 `(x, x)`。后果是「稳定」在某些块上**自动为真**
+    ⇒ 判据退化成**空转**。所以它必须在这里被挡住，不能靠下游「顺便不管它」。
+    """
+    from ldv.core.views import ViewSpec
+
+    spec, kernel, plugin, cover = _ml_chain(nodes, edges)
+    if injected:
+        x = spec.universe[0]
+        spec = ViewSpec(universe=spec.universe, partition=spec.partition,
+                        relation=spec.relation | {(x, x)})
+    return _ml_report(spec, kernel, plugin, cover)
+
+
+def inj_m1(nodes, edges, injected: bool) -> Report:
+    """`§M1` —— 注入「第一层就**不缩**」：`q0` = **离散划分**（每块一个元素）。
+
+    ⚠️ **不是** `q0 = spec.partition`。前作核验 §3.2 的原文写的是
+       「喂一层 `Q == P`（**已知不缩**）」，而那句与它自己的 §3.4
+       （「**块数 == 方向数**（什么都没压）」）**不是同一件事**：
+
+           `Q == P` = `{U}` = **1 块**   ⇒ `shrink = 1/|U|` ⇒ **缩得最狠**
+           `|Q| == |U|` = 离散            ⇒ `shrink = 1.0`   ⇒ **一点没缩**
+
+       在 `shrink = |Q| / |U|` 这个定义下，§3.2 那句把**两个极端**写反了。
+       实现按定义走（`|Q|/|U|`），注入取**真的不缩**那一侧 ——
+       这正是 §3.4 说的「块数 == 方向数」，也正是设计文档 §4 `E3` 承认可能的那种输入。
+       （这条更正是实测撞出来的：先按 §3.2 的字面注入 `Q == P`，结果**没变红**。）
+
+    ⚠️ 这个注入同时命中 `§M1` 的**两个**分支（只折一层 + 该层超阈值）——
+       对的，不是串扰：那两件事在这里本来就是同一件事。
+    """
+    spec, kernel, plugin, cover = _ml_chain(nodes, edges)
+    q0 = tuple(frozenset({x}) for x in spec.universe) if injected else None
+    return _ml_report(spec, kernel, plugin, cover, q0=q0)
+
+
+def inj_m2(nodes, edges, injected: bool) -> Report:
+    """`§M2` —— 注入「把主刹车拆掉，只靠层数兜底」。
+
+    `min_shrink_ratio = 1.0` ⇒ 收缩比**永远不超阈值** ⇒ 折叠一路折到层数上限。
+    再给一个 `max_levels = 12`（> 声明的 `MAX_LEVELS = 8`）⇒ `§M2` 红。
+
+    ⚠️ **`§M3` 会一起红**（12 层里后面 11 层都不缩 ⇒ `Σ|U_k|` 远超 `2|U_0|`）——
+       那是**对的**，不是串扰：前作核验 §3.2 的原文就写着
+       「喂一个「每层不缩」的构造 ⇒ **与 `§M1` 同时红**」。多判据同时开火在本项目里是常态。
+    """
+    spec, kernel, plugin, cover = _ml_chain(nodes, edges)
+    if not injected:
+        return _ml_report(spec, kernel, plugin, cover)
+    return _ml_report(spec, kernel, plugin, cover,
+                      max_levels=12, min_shrink_ratio=1.0)
+
+
+def inj_m3(nodes, edges, injected: bool) -> Report:
+    """`§M3` —— **手造**一个「每层不缩」的层叠（见本节开头：这一条是守卫）。"""
+    from ldv.checks.multilevel import m3_cost
+    from ldv.core.views import Level, ViewSpec
+
+    spec, kernel, plugin, cover = _ml_chain(nodes, edges)
+    if not injected:
+        return _ml_report(spec, kernel, plugin, cover)
+    u = tuple(spec.universe[:4])
+    flat = ViewSpec(universe=u, partition=(frozenset(u),), relation=frozenset())
+    levels = [Level(spec=flat, q=tuple(frozenset({x}) for x in u),
+                    shrink=1.0, n_cand=1) for _ in range(3)]
+    rep = Report(plugin="(多层)", expects=("M3",))
+    m3_cost(levels, rep)
+    return rep
+
+
+def inj_m4(nodes, edges, injected: bool) -> Report:
+    """`§M4` —— 注入「一层 11 块 ⇒ `Bell(11) = 678570 > 200000`」。
+
+    这一条与 `§A3` 的**跳过**必须分得开：`§M4` 在**折叠之前**就红
+    （设计层面：这一层压根不该这么设计），而 `§A3` 那时只会报**跳过**
+    （读数层面：判不了）。两者在只看布尔值时长得一模一样 ⇒
+    `test_multilevel` 里那一条断言**同时观察**这两个。
+    """
+    spec, kernel, plugin, cover = _ml_chain(nodes, edges)
+    if not injected:
+        return _ml_report(spec, kernel, plugin, cover)
+    # 把 `universe` 切成 11 块（尽量均匀，但只保证非空、无重、覆盖全集）。
+    u = list(spec.universe)
+    k = 11
+    blocks: list[frozenset[str]] = []
+    for i in range(k):
+        chunk = u[i * len(u) // k:(i + 1) * len(u) // k]
+        if chunk:
+            blocks.append(frozenset(chunk))
+    while len(blocks) < k:                      # `len(u) < k` 时补单元素块
+        blocks.append(frozenset({f"__pad{len(blocks)}__"}))
+    pad = frozenset().union(*blocks) - set(u)
+    if pad:                                     # 把补出来的占位并进第一块，保持覆盖
+        blocks[0] = (blocks[0] - pad) | frozenset()
+    q0 = tuple(b for b in blocks if b and b <= set(u))
+    return _ml_report(spec, kernel, plugin, cover, q0=q0)
+
+
+def inj_m5(nodes, edges, injected: bool) -> Report:
+    """`§M5` —— 注入「只折了一层」（阈值太松、第一层就误停）。
+
+    ⚠️ 这一条注入的是 `§M5` 的**反向**那半。它的**正向**那半
+       （末层 `stopped` 为空 = 跑到不动点）**不可达** ——
+       `fold_until` 的循环只有两个出口，都带非空 `stopped`。
+       那半由 `multilevel.known_answer_controls` 用手造层叠守。
+
+    ⚠️ `q0` 取**离散划分**（真不缩）—— 理由同 `inj_m1`（`Q == P` 是缩得最狠那侧）。
+    """
+    spec, kernel, plugin, cover = _ml_chain(nodes, edges)
+    q0 = tuple(frozenset({x}) for x in spec.universe) if injected else None
+    return _ml_report(spec, kernel, plugin, cover, q0=q0)
+
+
+def inj_m6(nodes, edges, injected: bool) -> Report:
+    """`§M6` —— **手造**一个「下层有账、上层账为空」的层叠（见本节开头：这一条是守卫）。"""
+    from dataclasses import replace
+
+    from ldv.checks.multilevel import m6_ledger
+    from ldv.core.views import Level, ViewSpec
+
+    spec, kernel, plugin, cover = _ml_chain(nodes, edges)
+    if not injected:
+        return _ml_report(spec, kernel, plugin, cover)
+    u = tuple(spec.universe[:4])
+    flat = ViewSpec(universe=u, partition=(frozenset(u),), relation=frozenset())
+    lv0 = Level(spec=flat, q=(frozenset(u),), shrink=1.0, n_cand=1,
+                lost=frozenset({"x"}), ledger=frozenset({"x"}))
+    lv1 = Level(spec=flat, q=(frozenset(u),), shrink=1.0, n_cand=1,
+                lost=frozenset({"y"}), ledger=frozenset())      # ← 账被丢了
+    rep = Report(plugin="(多层)", expects=("M6",))
+    m6_ledger([lv0, lv1], rep)
+    return rep
+
+
 # ═══ 驱动 ════════════════════════════════════════════════════════════════════
 
 CASES: dict[str, Callable] = {
@@ -1511,6 +1787,8 @@ CASES: dict[str, Callable] = {
     "B16": inj_b16, "B17": inj_b17, "B18": inj_b18, "B19": inj_b19, "B20": inj_b20,
     "A1": inj_a1, "A2": inj_a2, "A3": inj_a3,
     "A4": inj_a4, "A5": inj_a5, "A6": inj_a6, "A7": inj_a7,
+    "M0": inj_m0, "M1": inj_m1, "M2": inj_m2, "M3": inj_m3,
+    "M4": inj_m4, "M5": inj_m5, "M6": inj_m6,
 }
 
 #: 同一条检查的**第二条**判据。键是标签，值是 `(判据编号, 注入函数)`。
@@ -1519,7 +1797,9 @@ EXTRA_CASES: dict[str, tuple[str, Callable]] = {
     "B1·维护路径": ("B1", inj_b1_maintenance),
     "B11·位置敏感": ("B11", inj_b11_uniform),
     "B4·滞留要记账": ("B4", inj_b4_stay_unaccounted),
+    "B4·cli 切分": ("B4", inj_b4_cli_split),
     "B16·维护路径": ("B16", inj_b16_maintenance),
+    "B16·cli 切分": ("B16", inj_b16_cli_split),
     "B13·树性": ("B13", inj_b13_two_parents),
     "A3·稳定但更细": ("A3", inj_a3_not_coarsest),
     "A5·项不是语料的项": ("A5", inj_a5_bad_item),
@@ -1540,14 +1820,16 @@ def _registry_gap() -> tuple[list[str], list[str]]:
 
     比的两个集合都**外生给定**，不看任何一边的自我声明：
 
-        左边  `run_checks.PLUGIN_CODES | KERNEL_CODES | abstraction.VIEW_CODES`
+    左边  `run_checks.PLUGIN_CODES | KERNEL_CODES | abstraction.VIEW_CODES
+           | multilevel.MULTILEVEL_CODES`
               —— 声明要跑的编号
-        右边  `CASES` 的键 ∪ `EXTRA_CASES` 的值          —— 真被验过的编号
+    右边  `CASES` 的键 ∪ `EXTRA_CASES` 的值          —— 真被验过的编号
 
-    ⚠️ **`VIEW_CODES` 必须一起比进来**，不能只比插件与内核那两批：
-       视图那七条是**另一组**（`Report(plugin="(视图)")`），漏掉它的话
-       「新增一条视图判据、忘了配注入」这件事**照样报全绿** ——
+    ⚠️ **`VIEW_CODES` 与 `MULTILEVEL_CODES` 必须一起比进来**，不能只比插件与内核那两批：
+       视图那七条与多层那七条各是**另一组**（`Report(plugin="(视图)")` /
+       `(多层)`），漏掉任一组的话「新增一条判据、忘了配注入」这件事**照样报全绿** ——
        而这句话对新增的编号一个字节的信息都没有。这正是本节开头那个形状。
+       （`MULTILEVEL_CODES` 是 2026-10-08 补进来的 —— 补之前那一组**没有任何东西守**。）
 
     ⚠️ 反过来也要比：`VIEW_CODES` **只列已经实现了的**。
        少实现一条就**不写进来** —— 于是「套件全绿」这句话**不覆盖它**，
@@ -1565,9 +1847,11 @@ def _registry_gap() -> tuple[list[str], list[str]]:
     只不过它这次出现在**注册表**上。别处没有任何东西守它，所以守在这里。
     """
     from ldv.checks.abstraction import VIEW_CODES
+    from ldv.checks.multilevel import MULTILEVEL_CODES
     from ldv.run_checks import KERNEL_CODES, PLUGIN_CODES
 
-    declared = set(PLUGIN_CODES) | set(KERNEL_CODES) | set(VIEW_CODES)
+    declared = (set(PLUGIN_CODES) | set(KERNEL_CODES) | set(VIEW_CODES)
+                | set(MULTILEVEL_CODES))
     covered = set(CASES) | {code for code, _ in EXTRA_CASES.values()}
     return sorted(declared - covered), sorted(covered - declared)
 

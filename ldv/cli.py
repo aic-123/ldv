@@ -76,6 +76,7 @@ def _assemble(name: str, nodes, edges, holdout: int, remove: int = 0):
     ids = sorted(nodes)
     hold = set(ids[-holdout:]) if holdout > 0 else set()
     all_items = make_items(nodes)
+    init_items = {k: v for k, v in all_items.items() if k not in hold}
 
     if name == "keyset":
         plug = KeysetPlugin()
@@ -83,7 +84,19 @@ def _assemble(name: str, nodes, edges, holdout: int, remove: int = 0):
         queries = keyset_queries(nodes)
     elif name == "reach":
         plug = ReachPlugin(edges)
-        root = frozenset(ids)                       # 外生：覆盖一切
+        # ⚠️ **根 payload 只许引用「当时进树的那批项」** —— `init_items`，不是 `ids`。
+        #
+        # 这里原先写的是 `frozenset(ids)`（全语料当锚点），而 `holdout` 那批项
+        # **压根没进树**（它们是流程 B 的「新项」）。于是根声明了它引用不到的锚点 ⇒
+        # 覆盖的项集比树里的多 ⇒ **B′ 的 `D2 覆盖漏` 在每个真实语料上必红**。
+        # 实测（`openalex-n100` / `n150` / `b280` / `small`）：全语料根 ⇒ 每次都 `D2 漏`；
+        # 换成「当时已知的那批」⇒ 漏 0。单变量对照见 `outputs/_probe_root_ab.py`。
+        #
+        # 口径与 `checks/_fixtures.make_builder` **逐字同一条**（那里的注释写着
+        # 「用全集就等于作弊」）：那一侧是「增量 vs 全量」要比较的对照实现，
+        # 它一直用的是 `frozenset(sub)`。这里原先与它不一致，是**接线漏了**，
+        # 不是两种正当口径 —— 所以修的是这一处，不是把对照实现改成全集。
+        root = frozenset(init_items)
         queries = reach_queries(nodes, edges)
     elif name == "sequence":
         plug = SequencePlugin(sequences(nodes, edges))
@@ -92,7 +105,6 @@ def _assemble(name: str, nodes, edges, holdout: int, remove: int = 0):
     else:
         raise ValueError(name)
 
-    init_items = {k: v for k, v in all_items.items() if k not in hold}
     kernel = Kernel(plug, init_items)
     kernel.build(root)
     for iid in sorted(init_items):                  # 批建：把初始项纳入结构

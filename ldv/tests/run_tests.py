@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+from typing import Any
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -28,6 +29,7 @@ from ldv.checks._fixtures import (  # noqa: E402
 )
 from ldv.checks.coverage import (  # noqa: E402
     cover_leak_profile,
+    cover_leak_unaccounted,
     soundness_profile,
 )
 from ldv.core import selfopt  # noqa: E402
@@ -64,6 +66,25 @@ def raises(name: str, fn) -> None:
         PASS.append(name)
         return
     FAIL.append(name + "  —— 该抛异常却没抛")
+
+
+def _cone_invariant_bad(kernel) -> list[tuple[str, list[str], list[str]]]:
+    """`_path` 的**不变量**违约清单（2026-10-08 起）。
+
+        不变量：`set(Cone(x))` == {d : x ∈ members(d)}
+        也就是说锥是「**当前真的持有** x 的方向」，不是「插入时走过的路径」。
+
+    返回 `(项, 只被持有而锥上没有, 只在锥上而没被持有)` 的三元组列表。
+    **两个方向都要报**：只看 `hold - cone` 会漏掉「摘多了」那一半。
+    """
+    bad: list[tuple[str, list[str], list[str]]] = []
+    for x in sorted(kernel.items):
+        hold = {d.did for d in kernel.all_directions()
+                if x in set(kernel.members_of(d))}
+        cone = set(kernel.cone(x))
+        if hold != cone:
+            bad.append((x, sorted(hold - cone), sorted(cone - hold)))
+    return bad
 
 
 # ═══ 三态 ════════════════════════════════════════════════════════════════════
@@ -173,8 +194,22 @@ def test_kernel() -> None:
            for c in k.children_of(k.direction(d))))
     ok("§K1 见证比自身粗",
        all(k.direction(w).rank < d.rank for d in k.all_directions() for w in d.witness))
-    ok("§K3 支撑锥 = 插入路径",
-       all(k.cone(i) and k.cone(i)[0] == k.root.did for i in k.items))
+    ok("§K3 支撑锥从根起", all(k.cone(i) and k.cone(i)[0] == k.root.did for i in k.items))
+    # ★ 不变量的**强**形式（2026-10-08 加）。
+    #
+    # 这一行原来写的是「支撑锥 = 插入路径」，而且只查了「首位是根」——
+    # **标题**与**断言**都不到位：`expand` 会重试，重试时项被分进一个**新的**
+    # 子方向，那一笔不在「插入时走过的路径」上。于是
+    #     `x` 是子方向的成员，却不在自己的锥上 ⇒ `remove(x)` 摘不干净
+    #     ⇒ 子方向留**幽灵成员** ⇒ 删除路径上 `B4` 报「子方向多出父没有的项」。
+    #
+    # 真不变量是：**锥 == 「当前真的持有这个项的方向集合」**。
+    # 实测（4 份语料 × 3 个方向，`outputs/_probe_ghost_before_after.py`）：
+    #     批建后 0 项（不重试）｜维护 12 项后 **49 项**（重试发生在这里）
+    # 修好后两处都是 0。
+    ok("§K3 支撑锥 == 持有它的方向集合（不是「插入时走过的路径」）",
+       _cone_invariant_bad(k) == [],
+       f"违约 {len(_cone_invariant_bad(k))} 项，例 {_cone_invariant_bad(k)[:1]}")
     ok("账本只增不改", k.ledger.verify_append_only() == [])
     ok("方向 id 按数值排（D3 在 D12 前）",
        sorted(["D3", "D12", "D100"], key=_did_order) == ["D3", "D12", "D100"])
@@ -525,6 +560,11 @@ def test_flows() -> None:
        (len(kb.ledger) - before_events > 0) == (kb.stats()["方向"] > before_dirs),
        f"事件 +{len(kb.ledger) - before_events}，方向 +{kb.stats()['方向'] - before_dirs}")
     ok("B：B9 插入后账本仍只增不改", kb.ledger.verify_append_only() == [])
+    # ★ 维护路径上锥的不变量 —— **这一条才是幽灵成员的守卫**。
+    #   批建路径不重试 ⇒ 那里恒为 0；重试发生在维护 ⇒ 缺陷只在这里显形。
+    bad = _cone_invariant_bad(kb)
+    ok("B：锥 == 持有它的方向集合（维护路径，**重试之后**）",
+       bad == [], f"违约 {len(bad)} 项，例 {bad[:1]}")
 
     # §K2 字面 = **不建这一层** —— 手造一个必然退化的层，比等真语料碰巧出现可靠。
     # ⚠️ 这一段原来查的是「失效方向仍在 all_directions 里（标记不删）」。
@@ -2861,8 +2901,26 @@ def _d1_empty_needs_record(kernel) -> list[str]:
 
 
 def _d2_cover_leak(kernel, cover) -> int:
-    """`D2` 删除后 `覆盖(父) ⊆ ∪覆盖(子)` 仍成立 —— `B18` 的删除路径版本。"""
-    return cover_leak_profile(kernel, cover)["漏项数"]
+    """`D2` 删除后 `覆盖(父) ⊆ ∪覆盖(子)` 仍成立 —— `B18` 的删除路径版本。
+
+    ⚠️ **取的是「漏了、而且没有证明」那一个数**（2026-10-08 改），不是裸漏。
+       裸漏含两类**不是违规**的东西：
+
+           ① 论域外的项        还没进结构的（`holdout`）⇒ 结构对它没有义务
+           ② 有证明的滞留项    每个子方向都**证明**不收它（§10.2 出路 (4)）
+
+       实测（`outputs/_probe_d2_four.py`，4 份语料 × 3 方向 × 3 段 = 36 行）：
+       裸漏 3 ｜收域 2 ｜记账 1 ｜**收域+记账 0**。
+       拿裸漏当判据 ⇒ **基线就红**，而那条红与删除**毫无关系**
+       （`kernel.remove` 不碰 payload，见它 docstring 的 ③）。
+       逐对摊开的实测见 `outputs/_probe_d2_stage2.py` 与 `ldv/flow.py` 的 `RemoveReport`。
+    """
+    return cover_leak_unaccounted(kernel, cover)["无证明漏项数"]
+
+
+def _d2_cover_leak_raw(kernel, cover) -> int:
+    """`D2` 的**裸漏** —— 度量（报趋势），不是判据。见 `_d2_cover_leak`。"""
+    return cover_leak_unaccounted(kernel, cover)["漏项数"]
 
 
 def _d3_soundness(kernel, cover) -> int:
@@ -2945,6 +3003,43 @@ class _DropChild(Kernel):
                 self._children[par] = tuple(
                     c for c in self._children.get(par, ()) if c != did)
                 break
+        return path
+
+
+class _AccountedChild(_DropChild):
+    """`D2` 的**已知答案对照组**：漏是**有账**的那种 ⇒ 判据必须**绿**。
+
+    与 `_DropChild` **同一处结构破坏**（父的 `_children` 掉一条边），
+    唯一区别是**给漏掉的每一项补一条 `stayed` 账目** ——
+    于是它们从「无证明的漏」变成「有证明的滞留」（§10.2 出路 (4)）。
+
+    ⇒ 这一格的**已知答案**是：判据 **0**（绿），而**裸漏非 0**。
+
+    为什么必须有这一格：判据从「裸漏」换成「漏 − 账」之后，
+    `_DropChild` 仍然红（它漏的项本来就没账）—— **光有红那一侧分不出
+    两种写法**。要证明判据**真的在读账目**，就得有一个「同一处破坏、
+    只多一条账」的对照，而它**必须绿**。两个数印在同一行，
+    「没有漏」与「漏了但有账」才分得开。
+    """
+
+    #: 由 `_del_arm` 注入外生覆盖 oracle（与 `_DeleteDir` 同一条路）。
+    _cover: Any = None
+
+    def remove(self, item_id: str) -> tuple[str, ...]:
+        path = super().remove(item_id)
+        if self._cover is None:
+            return path
+        for d in self.all_directions():
+            kids = self.children_of(d)
+            if not kids:
+                continue
+            miss = set(self._cover(d.payload))
+            for k in kids:
+                miss -= set(self._cover(k.payload))
+            have = self.stayed_of(d)
+            for x in sorted(miss - have):
+                self.ledger.append(EVENT_STAYED, d.did, item=x,
+                                   reason="对照组：把这条漏记成**有证明**的滞留")
         return path
 
 
@@ -3041,6 +3136,11 @@ _DEL_MUTANTS: dict[str, type] = {
     "D4": _OffPath, "D5": _Tamper, "D6": _DeleteDir,
 }
 
+#: 进「基线必须全绿」核对的那六个编号。⚠️ `_del_arm` 的返回里还有一个
+#: **度量**键 `D2·裸`（裸漏）—— 它**不是判据**，不能进这条 `all(... == 0)`：
+#: 度量非 0 是**允许**的（有证明的滞留就是非 0），把它算进去会让基线假红。
+_DEL_CODES = ("D1", "D2", "D3", "D4", "D5", "D6")
+
 
 def _del_arm(cls, which, nodes, edges, cover, frac: int = 3) -> dict:
     """建内核 ⇒ 删最后 `1/frac` 的项 ⇒ 返回六条检查的读数。
@@ -3055,11 +3155,12 @@ def _del_arm(cls, which, nodes, edges, cover, frac: int = 3) -> dict:
     mem_before = {did: set(m) for did, m in kernel._members.items()}
     lines_before = _ledger_lines(kernel.ledger)
 
-    out = {"D1": 0, "D2": 0, "D3": 0, "D4": 0, "D5": 0, "D6": 0}
+    out = {"D1": 0, "D2": 0, "D3": 0, "D4": 0, "D5": 0, "D6": 0, "D2·裸": 0}
     for v in sorted(nodes)[len(nodes) * (frac - 1) // frac:]:
         path = kernel.remove(v)
         out["D1"] += len(_d1_empty_needs_record(kernel))
         out["D2"] = max(out["D2"], _d2_cover_leak(kernel, cover))
+        out["D2·裸"] = max(out["D2·裸"], _d2_cover_leak_raw(kernel, cover))
         out["D3"] = max(out["D3"], _d3_soundness(kernel, cover))
         out["D4"] += len(_d4_change_within_cone(mem_before, kernel, path))
         out["D5"] += len(_d5_append_only(lines_before, kernel))
@@ -3111,7 +3212,8 @@ def test_deletion_path() -> None:
         cover = coverage_of(which, nodes, edges)
         base = _del_arm(Kernel, which, nodes, edges, cover)
         ok(f"★ [删除路径·{which}] 基线：`D1–D6` **全绿**（真 `Kernel.remove` 干净）",
-           all(v == 0 for v in base.values()), f"基线不干净：{base}")
+           all(base[c] == 0 for c in _DEL_CODES),
+           f"基线不干净：{ {c: base[c] for c in _DEL_CODES} }")
 
         for code, cls in _DEL_MUTANTS.items():
             shot = _del_arm(cls, which, nodes, edges, cover)
@@ -3119,11 +3221,22 @@ def test_deletion_path() -> None:
                f"基线绿、注入红（否则这条是空转）",
                base[code] == 0 and shot[code] > 0,
                f"基线={base[code]} 注入={shot[code]}")
-            others = {k: v for k, v in shot.items() if k != code and v > 0}
+            others = {k: v for k, v in shot.items()
+                      if k != code and k in _DEL_CODES and v > 0}
             print(f"    · {which:8s} {code} ← {cls.__name__:12s} "
                   f"基线 {base[code]} → 注入 {shot[code]}"
                   + (f"；另带红 {others}（D6 对照与 D2 耦合，见 docstring）"
                      if others else "；只此一条红"))
+
+        # ★★ `D2` 的**已知答案对照组**：同一处破坏、只多一条账 ⇒ 判据必须**绿**。
+        #    这一格是「判据真的在读账目」的唯一证据 —— 见 `_AccountedChild`。
+        ctl = _del_arm(_AccountedChild, which, nodes, edges, cover)
+        ok(f"★★ [删除路径·{which}] `D2` **已知答案对照**：漏是**有账**的那种 ⇒ "
+           f"判据绿（而裸漏非 0 ⇒ 判据真的在读账，不是把裸漏换个名字）",
+           ctl["D2"] == 0 and ctl["D2·裸"] > 0,
+           f"判据={ctl['D2']}（应 0）、裸漏={ctl['D2·裸']}（应 > 0）")
+        print(f"    · {which:8s} D2 已知答案 ← _AccountedChild "
+              f"判据 {ctl['D2']}（绿）、**裸漏 {ctl['D2·裸']}**（非 0 ⇒ 两个数确实不同）")
 
 
 # ═══ 持久化（§10.2 D 的 P6） ═════════════════════════════════════════════════
@@ -3512,6 +3625,23 @@ def test_lock_scope() -> None:
        f"方向 {len(k.all_directions())} vs {len(k0.all_directions())}")
 
 
+def _spec_mechanical_mismatch(doc: dict, which: str, nodes, edges) -> list[str]:
+    """committed 的 `view_spec.json` 里**机械那几栏**与生成器算出来的差在哪。
+
+    只比生成器**拥有**的那几栏（`MECHANICAL`）—— `_note` 与 `读数` 是**人写的**，
+    人改它们**不该**让这条红。反过来，人**没**改而机械栏漂了，那就是缺陷。
+
+    ⚠️ 为什么这条非要不可：`reach` 的根口径在**两份装配之间分岔过一次**
+       （`cli.py` vs `_fixtures.make_builder`），而分岔的症状不是红 ——
+       是**两边各自演化、各自看着都对**。生成器与文件之间是同一个形状。
+    """
+    from ldv.tools.gen_view_spec import MECHANICAL, build_spec
+
+    spec, _ = build_spec(which, nodes, edges)
+    return [f"{k}: 文件里 {doc.get(k)!r} ≠ 算出来 {spec[k]!r}"
+            for k in MECHANICAL if doc.get(k) != spec[k]]
+
+
 def test_views() -> None:
     """流程 E · 抽象层 —— `core/views.py` 的算法 + `checks/abstraction.py` 的七条判据。
 
@@ -3526,9 +3656,12 @@ def test_views() -> None:
         ⑥ 闸门自己   `cap` 要在**时间与内存上**都拦得住（实测踩到过挂住）
         ⑦ committed 声明  `view_spec.json` 读得进来、非退化、七条判据全跑
         ⑧ 合成对照   `§A1`–`§A7` 的已知答案（含 `§A6` / `§A7` 的**分支拆分**）
+        ⑨ 生成器 ↔ 文件   `ldv/tools/gen_view_spec.py` 与 committed 文件**不许分岔**，
+                        且落盘**不丢人写的键**（配已知答案对照）
 
-    ⚠️ ⑥ / ⑦ / ⑧ 是**三件不同的事**，都要有：⑥ 验「搜不完时会不会如实报跳过」，
-       ⑦ 验「生产里那份声明成不成立」，⑧ 验「判据本身会不会红、会不会**红错地方**」。
+    ⚠️ ⑥ / ⑦ / ⑧ / ⑨ 是**四件不同的事**，都要有：⑥ 验「搜不完时会不会如实报跳过」，
+       ⑦ 验「生产里那份声明成不成立」，⑧ 验「判据本身会不会红、会不会**红错地方**」，
+       ⑨ 验「那份声明还是不是从内核算出来的」（⑦ 只验它**自己**成不成立）。
        少任何一段，对应的那种缺陷都没有东西守着。
     """
     from ldv.checks._framework import Report
@@ -3853,6 +3986,42 @@ def test_views() -> None:
                   f"具体化 {p2p['具体化']} vs 成员 {p2p['成员']}｜"
                   f"读数声明 {len(doc.get('读数') or [])} 条，`§A5` {a5}")
 
+            # --- ⑨ 生成器 ↔ 文件不许分岔（2026-10-08 加） --------------------
+            #
+            # 上一条只验「这份声明**自己**成不成立」—— 它**不**验「这份声明
+            # 还是不是从内核算出来的」。两者在输出里长得一模一样。
+            mis = _spec_mechanical_mismatch(doc, which, nodes, edges)
+            ok("★★ [E] committed 声明的**机械那几栏** == 生成器从内核算出来的"
+               "（`语料`/`方向`/`universe`/`partition`/`relation`）—— "
+               "「生成器与文件分岔」的症状是**两边各自看着都对**",
+               mis == [], "；".join(mis)[:220])
+            # ★ 已知答案对照：把 `relation` 掐掉一条 ⇒ 上面那条**必须**报出来。
+            #   没有这一条，上面那条是恒真还是真在判，**看不出来**。
+            bad_doc = dict(doc)
+            bad_doc["relation"] = list(doc.get("relation") or [])[:-1]
+            mis_bad = _spec_mechanical_mismatch(bad_doc, which, nodes, edges)
+            ok("★★ [E] 上面那条的**已知答案对照**：`relation` 少一条边 ⇒ 必须报出来"
+               "（否则那条断言恒真）",
+               len(mis_bad) == 1 and mis_bad[0].startswith("relation"),
+               f"改坏后报的是：{mis_bad}")
+
+            from ldv.tools.gen_view_spec import build_spec, carry_readings, merge_spec
+
+            _spec2, _ = build_spec(which, nodes, edges)
+            _rd2, _rnote2 = carry_readings(doc, which)
+            _merged2, _dropped2 = merge_spec(doc, _spec2, _rd2)
+            ok("★★ [E] 生成器落盘**不丢人写的键**（`_note` 与 `读数` 逐字保留）—— "
+               "第一版直接 `json.dumps(spec)` ⇒ 把 `_note` 88 行**整块抹掉**，"
+               "而 `--write` 的输出看起来**完全正常**",
+               _merged2.get("_note") == doc.get("_note")
+               and _merged2.get("读数") == doc.get("读数") and _dropped2 == [],
+               f"被丢的键={_dropped2}")
+            _m3, _d3 = merge_spec(doc, _spec2, None)
+            ok("★★ [E] 方向不符时生成器**拒绝照抄** `读数`，且把它算作「被丢的键」"
+               "（别人的读数**留着比丢掉更糟** —— 它会被当成这一条方向的声明来判）",
+               _d3 == ["读数"] and "读数" not in _m3,
+               f"被丢的键={_d3}")
+
     # --- ⑧ `§A1`–`§A7` 的**合成**对照 ----------------------------------------
     #
     # ⚠️ 与 ⑦ 分工不同，两边都不许省：
@@ -3889,6 +4058,150 @@ def test_views() -> None:
        not a7_fails, "；".join(a7_fails))
 
 
+def test_multilevel() -> None:
+    """多层抽象 `§M0`–`§M6`（`checks/multilevel.py` + `core/views.py` 的多层那段）。
+
+    ## 分五段，每段都要有已知答案
+
+        ① 合成对照   七条各自的「该绿时绿、该红时红」（`known_answer_controls`）
+        ② 真折叠     在 committed 规格上跑一遍 ⇒ 七条全过、**不止一层**
+        ③ 商的结构   `quotient_spec` 的 `universe` / `relation` / `partition` 三件事
+        ④ `§M4` vs `§A3`  **同时观察**两条（否则「分得开」这句话是空的）
+        ⑤ 同一个数   `§M4` 与 `§A3` 用的 `n_cand` 必须是**同一个函数**算的
+
+    ⚠️ ④ 是前作核验 §3.3 明写的验收条件：`§A3` 跳过 = 「这一层判不了」（读数层面），
+       `§M4` 红 = 「这一层压根不该这么设计」（设计层面，阻止交付）。
+       两者在只看布尔值时**长得一模一样** ⇒ 必须**同时**观察到才算验过。
+    """
+    from ldv.checks._framework import Report
+    from ldv.checks.abstraction import load_spec_file, spec_for
+    from ldv.checks.coverage import corpus_fingerprint
+    from dataclasses import replace as _replace
+    from ldv.checks.multilevel import (
+        MULTILEVEL_CODES,
+        known_answer_controls,
+        m4_verifiable,
+        render_levels,
+        run_multilevel,
+    )
+    from ldv.core.views import (
+        MAX_COARSENING_CANDIDATES,
+        ViewSpec,
+        block_namer,
+        coarser_stable_exists,
+        coarsest_stable_refinement,
+        n_coarsening_candidates,
+        partition_of,
+        quotient_spec,
+    )
+    from ldv.run_checks import batch_kernel
+
+    # ── ① 合成对照 ────────────────────────────────────────────────────────
+    ctl = known_answer_controls()
+    ok("★★ [M] `§M0`–`§M6` 的**合成对照**：每条都造了一个会红的输入 —— "
+       "「这条判据在判」与「这条判据恒真」长得一模一样",
+       not ctl, "；".join(ctl))
+
+    loaded = load()
+    if loaded is None:
+        return
+    nodes, edges, _ = loaded
+    doc = load_spec_file()
+    if not doc:
+        return
+    spec, _why = spec_for(doc, str(doc.get("方向") or ""), corpus_fingerprint(nodes, edges))
+    if spec is None:
+        return
+    which = str(doc["方向"])
+
+    # ── ③ 商的结构（先判这个：它是 ② 的前提） ──────────────────────────────
+    q0 = coarsest_stable_refinement(spec)
+    raised = False
+    try:
+        quotient_spec(spec, q0, [])              # 空 `P` ⇒ 必须抛
+    except ValueError:
+        raised = True
+    ok("★ [M] `quotient_spec` 的 `P` 是**参数**、不是算出来的（空 `P` 被拒绝）—— "
+       "「默认一个 `P`」就等于把尺度**偷偷内生化**（违反 `§K9`）", raised)
+    spec1 = quotient_spec(spec, q0, [sorted(block_namer(q0).values())])
+    ok("★ [M] 商的 `universe` == 视图 id（块名），且 `|universe| == |Q|`",
+       len(spec1.universe) == len(partition_of(q0))
+       and set(spec1.universe) == set(block_namer(q0).values()),
+       f"{spec1.universe[:4]}… vs |Q| = {len(partition_of(q0))}")
+    ok("★★ [M] `§M0`：商的 `relation` **无自环**（`A == B` 被过滤掉）—— "
+       "自环会让「稳定」退化成恒真，那是一个**空转的判据**",
+       not any(a == b for a, b in spec1.relation),
+       f"自环：{[p for p in spec1.relation if p[0] == p[1]][:2]}")
+    ok("★ [M] 商只丢掉**块内**的边（`A == B` 那些）—— 不是「少算了」，是按定义",
+       len(spec1.relation) <= len(spec.relation),
+       f"{len(spec.relation)} → {len(spec1.relation)}")
+
+    # ── ② 真折叠 ──────────────────────────────────────────────────────────
+    kernel, plugin, _qs, _mk = batch_kernel(which, nodes, edges)
+    cover = coverage_of(which, nodes, edges)
+    rep = Report(plugin="(多层)", expects=MULTILEVEL_CODES)
+    levels = run_multilevel(spec, kernel, cover, plugin, rep)
+    ok("★★ [M] committed 规格上 `§M0`–`§M6` **一条红的都没有**（基线绿 —— "
+       "「基线就红的判据过不了注入验证」）",
+       not rep.red, "；".join(a.line() for a in rep.red))
+    ok("★★ [M] 七条**都跑了**（不是跳过）—— 「全绿」的范围必须与声明的范围恰好相等",
+       all(a.result is Tri.YES for a in rep.assertions)
+       and len(rep.assertions) == len(MULTILEVEL_CODES),
+       f"{[(a.code, str(a.result)) for a in rep.assertions]}")
+    ok("★★ [M] 折叠**不止一层** —— 只有一层的话「折了」与「没折」长得一模一样"
+       "（`§M5` 的反向判据就是这个）",
+       len(levels) > 1, f"{len(levels)} 层")
+    ok("★ [M] 每一层的 `stopped` 只有**最后一层**非空 —— 中间层不该有停因"
+       "（有的话说明它本该停却继续折了）",
+       all(not lv.stopped for lv in levels[:-1]) and bool(levels[-1].stopped),
+       f"{[lv.stopped for lv in levels]}")
+    print("    · 多层折叠读数：" + "｜".join(
+        f"L{i}: |U|={len(lv.spec.universe)} |Q|={len(lv.q)} "
+        f"收缩比 {lv.shrink:.3f} n_cand {lv.n_cand} 停因 {lv.stopped or '-'}"
+        for i, lv in enumerate(levels)))
+    print("      " + render_levels(levels).splitlines()[0])
+
+    # ── ④ `§M4` 与 `§A3` **同时观察** ──────────────────────────────────────
+    u = list(spec.universe)
+    k = 11
+    blocks = [frozenset(u[i * len(u) // k:(i + 1) * len(u) // k]) for i in range(k)]
+    q_big = tuple(b for b in blocks if b)
+    ok("★ [M] 造出来的那一层真的是 11 块（否则下面那次观察是空的）",
+       len(q_big) == 11, f"{len(q_big)} 块")
+    n_cand = n_coarsening_candidates(spec, q_big)
+    ok(f"★★ [M] `§M4` 与 `§A3` **用的是同一个数**：`n_cand = {n_cand}`"
+       f"（`Bell(11) = 678570 > {MAX_COARSENING_CANDIDATES}`）—— "
+       f"两处各算一份的话，症状是「`§A3` 说判得了、`§M4` 说爆了」，"
+       f"而**两个判据各自看着都对**",
+       n_cand > MAX_COARSENING_CANDIDATES, f"n_cand = {n_cand}")
+    rep_m4 = Report(plugin="(多层)", expects=("M4",))
+    m4_verifiable([_replace(levels[0], q=q_big, n_cand=n_cand)], rep_m4)
+    found, why_a3, _seen = coarser_stable_exists(spec, q_big)
+    ok("★★ [M] `§M4` 红 **且** `§A3` 跳过 —— **同时观察到**，才证明两条分得开"
+       "（只看布尔值时它们长得一模一样：都是「没通过」）",
+       rep_m4.assertions[0].result is Tri.NO and found is None,
+       f"`§M4`={rep_m4.assertions[0].result}、"
+       f"`§A3`={'跳过' if found is None else found}（{why_a3[:40]}）")
+
+    # ── ⑤ 不超上限时 `§A3` **不**报跳过 ────────────────────────────────────
+    ok("★ [M] 不超上限时 `§A3` **不**报跳过（否则「跳过」会变成一条常驻的红）",
+       coarser_stable_exists(spec, q0)[0] is not None,
+       f"{coarser_stable_exists(spec, q0)[1][:60]}")
+    ok("★ [M] 多层没有放松 `ViewSpec` 的三条必填检查（空 `P` 仍抛）",
+       _raises_valueerror(
+           lambda: ViewSpec(universe=("a",), partition=(), relation=frozenset())))
+
+
+def _raises_valueerror(fn) -> bool:
+    try:
+        fn()
+    except ValueError:
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+    return False
+
+
 def main() -> int:
     for fn in (test_tri, test_loader, test_kernel, test_exposure_model, test_selfopt,
                test_sequence, test_flows, test_emergence, test_divergence,
@@ -3897,7 +4210,7 @@ def main() -> int:
                test_b3_reduction_premise, test_reach_cache_premise,
                test_reach_cache_transparency, test_tree_premise,
                test_deletion_path, test_persistence, test_lock_scope,
-               test_query_hit_items, test_views):
+               test_query_hit_items, test_views, test_multilevel):
         fn()
     total = len(PASS) + len(FAIL)
     for f in FAIL:

@@ -284,11 +284,26 @@ class RemoveReport:
         ──────────────────────────────────────────────
         `invalidated`         `D1` 空方向必须带失效记录（这里是「记了几条」）
         `unrecorded_empty`    `D1` 的反面：空了却**没记账**的方向 ⇒ 必须为空
-        `cover_leak`          `D2` 覆盖(父) ⊆ ∪覆盖(子)（由调用方传 oracle 算）
+        `cover_leak`          `D2` **度量**：覆盖(父) − ∪覆盖(子)（整份语料）
+        `cover_leak_unaccounted` `D2` **判据**：其中**没有证明**的项数 ⇒ 必须为 0
         `outside_members`     `D3` members(父) ⊆ 覆盖(父)
         `out_of_cone`         `D4` 变动 ⊆ `Cone(x)`（M3 的删除路径版本）
         `ledger_rewritten`    `D5` 账本只增不改
         `gone_directions`     `D6` 「已失效」与「从来没存在过」分得开
+
+    ⚠️ **`D2` 为什么要两个数（2026-10-08 改）**：`cover_leak` 那个数**含两类不同的东西**
+    —— ① 论域外的项（还没进结构的 `holdout`）、② 有证明的滞留项（§10.2 出路 (4)）。
+    拿它当判据 ⇒ **基线就红**，而那条红与删除**毫无关系**（`remove` 不碰 payload）。
+
+        实测（`outputs/_probe_d2_four.py`，4 份语料 × 3 方向 × 3 段 = 36 行）
+            D2 裸 3 ｜收域 2 ｜记账 1 ｜**收域+记账 0**
+        以及 `outputs/_probe_d2_stage2.py`（n100/sequence 逐对摊开）：
+            批建后  归属漏 0 语义漏 1（漏的是 `holdout`，不在树里）
+            维护后  归属漏 1 语义漏 1 滞留 1（**同一项** ⇒ 有证明）
+            删除后  与维护后**逐项相同**（12 次删除，读数一次都没动）
+
+    ⇒ 判据取「**漏了、而且没有证明**」，度量取裸漏。两个都印 —— 只印一个，
+      读的人分不出「没有漏」与「漏了但有账」。
 
     ⚠️ `D2` / `D3` 的读数**要外生 oracle**（`checks/_fixtures.coverage_of`）。
        所以这两个字段**默认 `None`**（= 未展开），由**调用方**填；`flow.py` 平时
@@ -306,7 +321,13 @@ class RemoveReport:
     out_of_cone: tuple[str, ...] = ()      # `D4` / M3：落在锥外的变动 ⇒ 必须为空
     gone_directions: tuple[str, ...] = ()  # `D6`：删前在、删后不在 `_dirs` ⇒ 必须为空
     ledger_rewritten: tuple[str, ...] = ()  # `D5`：被改写的既有账目 ⇒ 必须为空
-    cover_leak: int | None = None          # `D2`（外生 oracle；`None` = 未展开）
+    cover_leak: int | None = None          # `D2` 度量（整份语料；`None` = 未展开）
+    #: `D2` **判据** —— 漏了、而且**没有证明**的项数（论域收在 `placed` 上）。
+    #: ⚠️ 与 `cover_leak` **不是同一个数**，见类 docstring。
+    cover_leak_unaccounted: int | None = None
+    #: `D2` 的**排除读数** —— 被论域/账目筛掉的项数。排除必须**看得见**，
+    #: 否则「一个漏都没有」与「漏都被筛掉了」长得一模一样。
+    cover_leak_excluded: int | None = None
     outside_members: int | None = None     # `D3`（外生 oracle；`None` = 未展开）
     events: int = 0                        # 本次追加的账本事件条数
 
@@ -326,8 +347,9 @@ class RemoveReport:
             bad.append(f"D6 方向被真删：{list(self.gone_directions)}")
         if self.ledger_rewritten:
             bad.append(f"D5 账本被改写：{list(self.ledger_rewritten)}")
-        if self.cover_leak:
-            bad.append(f"D2 覆盖漏 {self.cover_leak}")
+        # ⚠️ 判据取的是**无证明**那个数，不是裸漏 —— 见类 docstring 的实测表。
+        if self.cover_leak_unaccounted:
+            bad.append(f"D2 无证明的覆盖漏 {self.cover_leak_unaccounted}")
         if self.outside_members:
             bad.append(f"D3 越界成员 {self.outside_members}")
         return tuple(bad)
@@ -337,10 +359,19 @@ class RemoveReport:
         if self.emptied:
             bits.append(f"支持集空了 {len(self.emptied)}：{list(self.emptied[:3])}")
         bits.append(f"失效记账 {len(self.invalidated)} 条")
-        # ★ `D2` / `D3` 必须把「没量」与「量了是 0」印成**不同的字**
+        # ★ `D2` / `D3` 必须把「没量」与「量了是 0」印成**不同的字**；
+        #   `D2` 还要把「漏了几项」与「其中没有证明的几项」分开印 ——
+        #   只印一个数的话，「没有漏」与「漏了但有账」长得一模一样。
         d23 = []
-        for tag, v in (("D2 漏", self.cover_leak), ("D3 越界", self.outside_members)):
-            d23.append(f"{tag} {v}" if v is not None else f"{tag} **未展开**")
+        if self.cover_leak is None:
+            d23.append("D2 漏 **未展开**")
+        else:
+            ex = self.cover_leak_excluded
+            d23.append(f"D2 漏 {self.cover_leak}"
+                       f"（其中无证明 {self.cover_leak_unaccounted}"
+                       + (f"；论域/账目外 {ex}" if ex else "") + "）")
+        d23.append(f"D3 越界 {self.outside_members}"
+                   if self.outside_members is not None else "D3 越界 **未展开**")
         bits.append("｜".join(d23))
         if self.违规:
             bits.append("‼ " + "；".join(self.违规))
@@ -393,10 +424,21 @@ def remove_items(kernel: Any, ids: Iterable[str], *,
         #      不是「有没有出现过 `invalidated`」—— 后者会把**还活着**的方向也标上。
         unrecorded = tuple(did for did in emptied if did not in recorded)
 
-        leak = outside = None
+        leak = outside = leak_bad = leak_ex = None
         if cover is not None:
-            from .checks.coverage import cover_leak_profile, soundness_profile
+            from .checks.coverage import (
+                cover_leak_profile,
+                cover_leak_unaccounted,
+                soundness_profile,
+            )
             leak = cover_leak_profile(kernel, cover)["漏项数"]
+            # ★ **判据**取「漏了、而且没有证明」的那一个数 —— 不是裸漏。
+            #   理由与实测见 `RemoveReport` 的 docstring：裸漏含
+            #   ① 论域外的项（还没进结构的）、② 有证明的滞留项，
+            #   拿它当判据 ⇒ **基线就红**，而那条红与删除毫无关系。
+            acc = cover_leak_unaccounted(kernel, cover)
+            leak_bad = acc["无证明漏项数"]
+            leak_ex = acc["论域外漏项数"] + acc["陈旧滞留数"]
             outside = soundness_profile(kernel, cover)["越界成员数"]
 
         reports.append(RemoveReport(
@@ -411,6 +453,8 @@ def remove_items(kernel: Any, ids: Iterable[str], *,
             gone_directions=tuple(sorted(before_dirs - {d.did for d in kernel.all_directions()})),
             ledger_rewritten=tuple(rewritten),
             cover_leak=leak,
+            cover_leak_unaccounted=leak_bad,
+            cover_leak_excluded=leak_ex,
             outside_members=outside,
             events=len(new_events),
         ))

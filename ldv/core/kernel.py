@@ -214,6 +214,11 @@ class Kernel:
         #: 展开**失败**过的方向 → **它是对哪一批成员判的**。
         #: 「分不开」只对那一次的成员集成立 —— 成员集变了就重试（见 `expand`）。
         self._tried: dict[str, frozenset[str]] = {}
+        #: 每个项的**支撑锥**（§3 / §K3）。⚠️ **不变量**（2026-10-08 起）：
+        #:     `set(_path[x])` == {d : x ∈ members(d)}
+        #: 也就是说它**不**只是「插入时走过的路径」—— `expand` 重试时把 `x`
+        #: 分进新的子方向，那一笔由 `_expand_inner` 追加进来（见那里的注释）。
+        #: 破这条不变量的后果是 `remove` 摘不干净 ⇒ 子方向留**幽灵成员**。
         self._path: dict[str, tuple[str, ...]] = {}
         self._counter = 0
         self._root: Direction | None = None
@@ -303,9 +308,22 @@ class Kernel:
         return d.did in self._expanded
 
     def cone(self, item_id: str) -> tuple[str, ...]:
-        """§3 的**支撑锥** —— 插入路径。
+        """§3 的**支撑锥** —— 「见证含 x 的方向」。
 
-        「见证含 x 的方向」在内核里等于「x 在插入时走过的那些方向」。
+        在内核里，这一条落地成 **「当前真的持有 x 的方向」**：
+
+            set(cone(x)) == {d : x ∈ members(d)}          ← `_path` 的不变量
+
+        ⚠️ 它**曾经**只是「插入时走过的那些方向」，而那个口径是**错的**：
+           `expand` 会**重试**（叶不是终态），重试时 `x` 被分进一个新的子方向，
+           那条路径**没被记下来** ⇒ `remove(x)` 摘不干净 ⇒ 子方向留**幽灵成员**
+           ⇒ `B4` 报「子方向多出父没有的项」。实测（4 语料 × 3 方向）：
+
+               批建后 0 项（`B15`：批建时成员集第一次展开就完整 ⇒ 重试不触发）
+               维护后 **49 项**（重试发生在这里）
+
+           修法在 `_expand_inner` 与 `insert`（合并而非覆盖）。详见
+           `outputs/_findings_real_data.md` 问题 7。
         """
         return tuple(self._path.get(item_id, ()))
 
@@ -557,6 +575,29 @@ class Kernel:
                      for p in group)
         for kid, g in zip(kids, buckets):
             self._members[kid.did] = set(g)
+            # ★ 成员写进了子方向 ⇒ **那个项的锥必须跟着长**。
+            #
+            # `_path[x]` 原来只在 `insert` 结尾写一次（= 当时的下降路径）。
+            # 而 `expand` 会**重试**（叶不是终态：成员集变了就重判），重试时
+            # `x` 被分桶分进一个**新的**子方向 —— 那一笔**没有记到 `_path[x]` 上**。
+            # ⇒ `x` 是子方向的成员，却不在自己的锥上。
+            #
+            # 后果**只在删除路径上显现**（批建不重试 ⇒ 实测 0 项）：
+            # `remove(x)` 只从 `_path[x]` 上摘 ⇒ 子方向留下**幽灵成员**
+            # ⇒ `B4` 报「子方向多出父没有的项」。实测（4 份语料 × 3 个方向）：
+            #
+            #     批建后      0 项     ← 不重试
+            #     维护 12 项  49 项    ← 重试发生在这里
+            #
+            # ⚠️ `_path.get(iid) is None` 时**跳过**是对的：那说明这个项还没有
+            #    「自己的锥」（`insert` 尚未走到写锥那一步）。此时它正**在被插入
+            #    的路上**，`insert` 会先记下当时的路径、再让这一笔追加进去
+            #    （见 `insert` 里「先记路径」那一段）。在这里凭空造一条锥，
+            #    会把「还没进结构」的项写成「已经持有」。
+            for iid in g:
+                p = self._path.get(iid)
+                if p is not None and kid.did not in p:
+                    self._path[iid] = p + (kid.did,)
         self._children[d.did] = tuple(k.did for k in kids)
         self._expanded.add(d.did)
         self._tried.pop(d.did, None)        # 长出来了 ⇒ 上一次的失败不再成立
@@ -645,6 +686,14 @@ class Kernel:
                     #    刚落地的那一项永远轮不到被考虑 —— 它的叶带着**落它之前**
                     #    的结论。落完再试一次，才闭合。
                     self._members.setdefault(d.did, set()).add(item_id)
+                    # ★ **先把这个项当时的路径记上**，再重试展开。
+                    #
+                    # 下面那次 `expand(d)` 会把 `item_id` 分桶分进某个子方向
+                    # （分桶按 `代价`，**不看** `_refuses`）⇒ 它成了那个子方向的成员
+                    # ⇒ `_expand_inner` 要把那一笔追加到 `_path[item_id]` 上。
+                    # 不先记 ⇒ `_path.get(item_id)` 是 `None` ⇒ 那一笔**丢掉**
+                    # ⇒ 幽灵成员（`remove` 摘不干净）。见 `_expand_inner` 那段注释。
+                    self._path[item_id] = tuple(path)
                     kids = self.expand(d)
                     if not kids:
                         break
@@ -672,8 +721,21 @@ class Kernel:
             # ⚠️ 这一笔**必须在下降结束之后**写 —— 见下面「为什么不随行写」。
             for did in path:
                 self._members.setdefault(did, set()).add(item_id)
-        self._path[item_id] = tuple(path)
-        return tuple(path)
+        # ⚠️ **合并**，不是覆盖。
+        #
+        # `_expand_inner` 会把「重试展开时被分桶分进的子方向」追加到
+        # `_path[item_id]` 上（那一笔写在 `path` **之外**，因为分桶与下降是两件事：
+        # 分桶按 `代价` 选，下降还过一遍 `_refuses`，两者可以选到**不同**的子方向）。
+        # 覆盖会丢掉那一笔 ⇒ 幽灵成员回来。
+        #
+        # 合并的结果就是**支撑锥的定义**：`_path[x]` == 「当前真的持有 x 的方向」。
+        # 这一条是 `remove` 摘得干净的前提，也是 §K3「失效范围 ⊆ Cone(x)」的前提。
+        merged = list(path)
+        for did in self._path.get(item_id, ()):
+            if did not in merged:
+                merged.append(did)
+        self._path[item_id] = tuple(merged)
+        return tuple(merged)
 
     # --- 删除（§10.2 C） --------------------------------------------------
 
@@ -681,6 +743,11 @@ class Kernel:
         """删除一个项 —— `§M2 情形③`。流程见设计文档 §10.2 C / 成熟方案 §4.7。
 
         返回它走过的路径（= `Cone(x)`），与 `insert` 对称。
+
+        ⚠️ **它摘得干净，靠的是 `_path` 的不变量**：`set(_path[x])` ==
+           「当前真的持有 x 的方向」（见 `cone`）。这条不变量 2026-10-08 才补齐 ——
+           在那之前 `_path[x]` 只是插入路径，`expand` **重试**分进去的新子方向
+           没被记下 ⇒ 这里摘不干净 ⇒ 子方向留幽灵成员。实测 49 项 / 4 语料。
 
         ## 只做两件事，一件都不多
 
