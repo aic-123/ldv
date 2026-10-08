@@ -3513,7 +3513,7 @@ def test_lock_scope() -> None:
 
 
 def test_views() -> None:
-    """流程 E · 抽象层 —— `core/views.py` 的算法 + `checks/abstraction.py` 的六条判据。
+    """流程 E · 抽象层 —— `core/views.py` 的算法 + `checks/abstraction.py` 的七条判据。
 
     分八段，**每段都要有已知答案**（本仓库的老纪律：合成图上的已知答案是对照组里
     最便宜的那一档，「跑一遍看看」不构成对照）：
@@ -3521,11 +3521,11 @@ def test_views() -> None:
         ① 核心算法   `Q` 与**手推值**逐块比；唯一性；两个 oracle 的已知答案
         ② 三态对照   设计稿 §9 要求的「过 / 红 / 跳过各一例」
         ③ 判据的**独立**性   `§A1` 不被 `B16` 蕴含（否则它只是换个写法）
-        ④ 全链路     真内核 + 合成 spec ⇒ `build_views` + 六条判据
+        ④ 全链路     真内核 + 合成 spec ⇒ `build_views` + 七条判据
         ⑤ 外生门禁   `spec_for` 的三种跳过 + 「声明了却坏了」是**报错**
         ⑥ 闸门自己   `cap` 要在**时间与内存上**都拦得住（实测踩到过挂住）
-        ⑦ committed 声明  `view_spec.json` 读得进来、非退化、六条判据全跑
-        ⑧ 合成对照   `§A1`–`§A6` 的已知答案（含 `§A6` 的**分支拆分**）
+        ⑦ committed 声明  `view_spec.json` 读得进来、非退化、七条判据全跑
+        ⑧ 合成对照   `§A1`–`§A7` 的已知答案（含 `§A6` / `§A7` 的**分支拆分**）
 
     ⚠️ ⑥ / ⑦ / ⑧ 是**三件不同的事**，都要有：⑥ 验「搜不完时会不会如实报跳过」，
        ⑦ 验「生产里那份声明成不成立」，⑧ 验「判据本身会不会红、会不会**红错地方**」。
@@ -3547,6 +3547,8 @@ def test_views() -> None:
         a6_branch_split,
         a6_known_answer,
         a6_roundtrip,
+        a7_known_answer,
+        a7_propagate,
         build_views,
         known_answer_controls,
         ledger_entries,
@@ -3571,6 +3573,7 @@ def test_views() -> None:
         coarsest_stable_refinement,
         partition_of,
         refines,
+        restrict_spec,
         stable,
         view_parts,
     )
@@ -3816,12 +3819,18 @@ def test_views() -> None:
 
             with _tf.TemporaryDirectory() as _td:
                 a6_roundtrip(vs2, k2, cv2, p2, rep2, path=Path(_td) / "views.json")
+            # ★ `§A7` 要一次**结构变动**。与 `run_checks.view_report` **同一处口径**：
+            #   把 `universe` 里最后长出来的那个方向拿掉 ⇒ 传播回来。
+            old_q2 = coarsest_stable_refinement(
+                restrict_spec(s, frozenset({s.universe[-1]})))
+            a7_propagate(old_q2, s, rep2)
             ok("★★ [E] committed 声明上**一条红的都没有** —— "
                "有一条常驻的红等于没人再看红",
                all(_result(rep2, c) is not Tri.NO for c in VIEW_CODES),
                "；".join(a.line() for a in rep2.assertions))
-            ok("★★ [E] `§A1`–`§A4` + `§A6` 在 committed 声明上**全过**（不是跳过）",
-               all(_result(rep2, c) is Tri.YES for c in ("A1", "A2", "A3", "A4", "A6")),
+            ok("★★ [E] `§A1`–`§A4` + `§A6` + `§A7` 在 committed 声明上**全过**（不是跳过）",
+               all(_result(rep2, c) is Tri.YES
+                   for c in ("A1", "A2", "A3", "A4", "A6", "A7")),
                "；".join(a.line() for a in rep2.assertions))
             # ⚠️ `§A5` 在批建路径上**本来就该跳过**（账为空）—— 但「跳过」不是免检：
             #   跳过的**理由**必须是「账为空」。理由写错了就说明它跳错了地方，
@@ -3844,7 +3853,7 @@ def test_views() -> None:
                   f"具体化 {p2p['具体化']} vs 成员 {p2p['成员']}｜"
                   f"读数声明 {len(doc.get('读数') or [])} 条，`§A5` {a5}")
 
-    # --- ⑧ `§A1`–`§A6` 的**合成**对照 ----------------------------------------
+    # --- ⑧ `§A1`–`§A7` 的**合成**对照 ----------------------------------------
     #
     # ⚠️ 与 ⑦ 分工不同，两边都不许省：
     #
@@ -3872,6 +3881,12 @@ def test_views() -> None:
        "才可能发生」这句话是**实测**的；而 ③ 不亮就意味着"
        "**只用 `to_d` 的注入会让「读回后 §A1 仍成立」永远没被验过**",
        not a6_fails, "；".join(a6_fails))
+    a7_fails = a7_known_answer()
+    ok("★★ [E] `§A7` 合成对照（四条路 + 两条自检，**逐分支**断言）："
+       "真传播 ①② 都不亮；`propagate_naive`（挂到父块）**① 亮**；"
+       "全量重算（冒充传播）**② 亮** —— 两者**互不替代**；"
+       "外加「传播 ⊑ 重算」那条**定理**的自检",
+       not a7_fails, "；".join(a7_fails))
 
 
 def main() -> int:

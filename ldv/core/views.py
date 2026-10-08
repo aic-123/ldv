@@ -86,8 +86,13 @@ from typing import Callable, Iterable, Iterator, Sequence
 __all__ = [
     "ViewSpec",
     "coarsest_stable_refinement",
+    "propagate",
+    "propagate_naive",
+    "extend_q",
+    "restrict_spec",
     "stable",
     "refines",
+    "refines_partition",
     "coarser_stable_exists",
     "partition_of",
     "reach_of",
@@ -180,34 +185,28 @@ def _preimage(relation: frozenset[tuple[str, str]],
     return frozenset(x for (x, y) in relation if y in block)
 
 
-def coarsest_stable_refinement(
-    spec: ViewSpec,
-) -> tuple[frozenset[str], ...]:
-    """`P` 对 `E` 的**最粗稳定细化** `Q`。**唯一**（§3）。
+def _refine(blocks: list[frozenset[str]],
+            relation: frozenset[tuple[str, str]]) -> list[frozenset[str]]:
+    """把 `blocks` 对 `relation` 细到**不动点** —— `coarsest_stable_refinement`
+    与 `propagate` **共用的那一层循环**。
 
-    算法（朴素，见模块开头「复杂度」那段）：
-
-        从 `Q := P` 起
-        反复：对 `Q` 的每个块 `B`，把每个块 `S` 切成 `S ∩ E⁻¹(B)` 与 `S \\ E⁻¹(B)`
+        反复：对每个块 `B`，把每个块 `S` 切成 `S ∩ E⁻¹(B)` 与 `S \\ E⁻¹(B)`
               两半都非空才切
-        到「一轮下来一个块都没被切开」为止 —— 那就是不动点
+        到「一轮下来一个块都没被切开」为止
 
     终止：每次切**严格增加**块数，块数 ≤ `|U|`。
-    正确性：任何**稳定**的 `P` 的细化 `R` 都被这个过程的每一步保持
-    （`R` 的块要么整个落在 `E⁻¹(B)` 里，要么整个在外面），
-    所以极限细化每一个稳定细化 ⇒ 它就是**最粗**的那个。∎
 
-    ⚠️ **确定性**：切分的**顺序**会影响中间划分，但**不影响**极限 ——
-       这正是「唯一性」那条定理的内容。为了让输出**逐字可复现**（§8.2），
-       返回值按 `partition_of` 规范化（排元素 id，不排任何度量）。
+    ⚠️ **共用这一层不影响「两个 oracle 不共享盲点」那条纪律。**
+       共享的是**被判对象**的构造（本来就只有一条路），不是 oracle：
+       `stable()` 逐块对验定义、`coarser_stable_exists()` 暴力枚举粗化 ——
+       两者都不走这里一行。
     """
-    blocks = list(spec.partition)
     while True:
         changed = False
         # 快照：本轮的 splitter 是**这一轮开始时**的块。新切出来的块
         # 下一轮才当 splitter —— 外层 `while` 会一直跑到它们都试过为止。
         for splitter in list(blocks):
-            inv = _preimage(spec.relation, splitter)
+            inv = _preimage(relation, splitter)
             new: list[frozenset[str]] = []
             for s in blocks:
                 inside = s & inv
@@ -219,7 +218,145 @@ def coarsest_stable_refinement(
                     new.append(s)
             blocks = new
         if not changed:
-            return partition_of(blocks)
+            return blocks
+
+
+def coarsest_stable_refinement(
+    spec: ViewSpec,
+) -> tuple[frozenset[str], ...]:
+    """`P` 对 `E` 的**最粗稳定细化** `Q`。**唯一**（§3）。
+
+    正确性：任何**稳定**的 `P` 的细化 `R` 都被 `_refine` 的每一步保持
+    （`R` 的块要么整个落在 `E⁻¹(B)` 里，要么整个在外面），
+    所以极限细化每一个稳定细化 ⇒ 它就是**最粗**的那个。∎
+
+    ⚠️ **确定性**：切分的**顺序**会影响中间划分，但**不影响**极限 ——
+       这正是「唯一性」那条定理的内容。为了让输出**逐字可复现**（§8.2），
+       返回值按 `partition_of` 规范化（排元素 id，不排任何度量）。
+    """
+    return partition_of(_refine(list(spec.partition), spec.relation))
+
+
+# --- `E′` 增量传播（§7） -------------------------------------------------------
+#
+# 视图不是一次算完的：结构一动（流程 B），视图要么重算、要么**传播**。
+# 设计稿 §7 把这条定成 `E′`，并且**只定接口不定实现** —— 这里把它落下来。
+#
+# ⚠️ **本设计特有的那条约束**（§7 逐字）：`§10.2 B` 已裁定「增量 ≡ 全量」**不成立**，
+#    且**不成立不破坏任何一条检查** ⇒ 传播**不许**声称「传播后的视图 ≡ 重算的视图」。
+#    能声称的只有「传播后的视图仍**稳定**、仍是 `P′` 的**细化**」。
+#    而「更细」这件事不是观察，是**定理** —— 见 `propagate` 的 docstring。
+
+def restrict_spec(spec: ViewSpec, drop: frozenset[str]) -> ViewSpec:
+    """把 `spec` 投影到 `U ∖ drop` 上 —— **外生项照原样投影，不重新声明**。
+
+    `P` 的每个块减掉 `drop` 里落在它里面的元素，空掉的块去掉；
+    `E` 只留两端都还在的边。
+
+    ⚠️ 这个函数**不做**任何「补一个元素进去」的事 —— 那会让「声明错了」
+       与「声明对了」长得一模一样（`ViewSpec.__post_init__` 的 ⚠️ 同一条）。
+       投影之后仍然要过 `ViewSpec.__post_init__` 那三条检查。
+    """
+    keep = frozenset(spec.universe) - drop
+    if not keep:
+        raise ValueError("投影之后 `universe` 空了 —— 那不是一份声明")
+    part = tuple(b & keep for b in spec.partition if b & keep)
+    rel = frozenset((x, y) for (x, y) in spec.relation if x in keep and y in keep)
+    return ViewSpec(universe=tuple(d for d in spec.universe if d in keep),
+                    partition=part, relation=rel)
+
+
+def refines_partition(
+    coarse: Sequence[frozenset[str]],
+    fine: Sequence[frozenset[str]],
+) -> bool:
+    """`fine` 是不是 `coarse` 的**细化** —— 每个 `coarse` 块恰好被若干 `fine` 块盖住。
+
+    ⚠️ **「恰好」是逐字的**：既要盖满（不许漏）、又要不越界（不许把两个
+       `coarse` 块并进同一个 `fine` 块）。只查「盖满」会让**合并**蒙混过关 ——
+       而合并正是 `E′` 最要防的那一种（它是信息丢失，`§K8` 的假阴那一侧）。
+    """
+    for b in coarse:
+        cover = [f for f in fine if f & b]
+        merged = frozenset().union(*cover) if cover else frozenset()
+        if merged != b:
+            return False
+    return True
+
+
+def extend_q(
+    old_q: Sequence[frozenset[str]],
+    spec: ViewSpec,
+) -> tuple[frozenset[str], ...]:
+    """`Q_ext` = 旧 `Q` ∪ { `spec.universe` 里旧 `Q` **没覆盖到**的方向，各自成块 }。
+
+    ⚠️ **`Q_ext` 的定义是 `E′` 的一部分，不是实现细节。** `§A7` 的判据 ②
+       （传播只许**细分**）判的就是「结果细化 `Q_ext`」—— 所以 `Q_ext` 必须
+       由**一个**函数定义，判据与实现**共用**它，否则两边各写一份、
+       写着写着就不一样了（`test_injections` 第 0 条防的是同一类事）。
+    """
+    known = frozenset().union(*old_q) if old_q else frozenset()
+    return partition_of(list(old_q) + [frozenset({d}) for d in spec.universe
+                                        if d not in known])
+
+
+def propagate(
+    old_q: Sequence[frozenset[str]],
+    spec: ViewSpec,
+) -> tuple[frozenset[str], ...]:
+    """`E′`：从**旧划分** `old_q` 出发，把 `spec.universe` 里的**新方向**
+    （`old_q` 没覆盖到的那些）各自成块并进去，再跑到不动点。
+
+    ## ★ 传播的结果**不一定**等于重算的结果 —— 而且这是**定理**，不是观察
+
+        `Q_ext` = `old_q` ∪ { 每个新方向一块 }
+        `Q′`    = `csr(Q_ext)`        ← 本函数
+        `Q*`    = `csr(P′)`           ← 重算（`coarsest_stable_refinement`）
+
+    `old_q` 是 `P` 的细化 ⇒ `Q_ext` 是 `P′` 的细化（新方向按 `P′` 落位）。
+    `Q′` 稳定且细化 `P′` ⇒ 由**最粗**的定义，`Q′` 细化 `Q*`：
+
+        Q′ ⊑ Q*        传播出来的只会**更细**（或相等），不会更粗
+
+    ⚠️ **所以「传播后 == 重算后」是一句会被实测打脸的话**（§7 逐字），
+       而**打脸不破坏任何一条检查** —— `§10.2 B` 已裁定。
+       ⇒ 这条**只报不判**：块数差进输出，不进退出码（`abstraction.a7_reading`）。
+
+    ⚠️ **反向也成立，而且它才是判据**：`Q′` 细化 `old_q`（**传播只细分，不合并**）。
+       合并 = 信息丢失 ⇒ `§K8` 的假阴那一侧 ⇒ 那是**红**，不是读数。
+       `refines_partition` 逐块查的就是这一条。
+    """
+    return partition_of(_refine(list(extend_q(old_q, spec)), spec.relation))
+
+
+def propagate_naive(
+    old_q: Sequence[frozenset[str]],
+    spec: ViewSpec,
+) -> tuple[frozenset[str], ...]:
+    """`E′` 的**对照**实现 —— 把新方向挂到**父方向所在的那一块**上，**不重跑不动点**。
+
+    ⚠️ **这是对照，不是备选方案。** 它复现的是「传播 = 把新东西挂上去」这个
+       最自然的错觉。错觉的代价在这一条上：新边 `(父, 新)` 把 `父` 塞进了
+       `E⁻¹({新})`，于是 `{新}` 那一块**跨在** `E⁻¹({新})` 的内外
+       （`父` 在里面、`父` 的同块兄弟在外面）⇒ 划分**不再稳定**。
+
+    ⇒ `§A7` 的注入就是它：真 `propagate` ⇒ 过，`propagate_naive` ⇒ 红。
+       （`abstraction.a7_known_answer`。）
+    """
+    blocks = [set(b) for b in old_q]
+    owner = {d: i for i, b in enumerate(blocks) for d in b}
+    for d in spec.universe:
+        if d in owner:
+            continue
+        parent = next((x for (x, y) in sorted(spec.relation) if y == d), None)
+        home = owner.get(parent) if parent is not None else None
+        if home is None:
+            owner[d] = len(blocks)
+            blocks.append({d})
+        else:
+            blocks[home].add(d)
+            owner[d] = home
+    return partition_of(blocks)
 
 
 # --- 两个**独立**的 oracle -----------------------------------------------------

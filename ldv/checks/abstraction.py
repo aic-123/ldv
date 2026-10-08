@@ -1,13 +1,13 @@
-"""流程 E · 抽象层 —— `§A1`–`§A6`（`docs/分层方向视图-抽象层.md` §9）。
+"""流程 E · 抽象层 —— `§A1`–`§A7`（`docs/分层方向视图-抽象层.md` §9）。
 
     python -m ldv.run_checks            # 判据在 `(视图)` 那一组里
 
 算法在 `core/views.py`（纯的）。本模块只做两件事：**把结构装成视图**、
-**把六条判据变成会红的断言**。
+**把七条判据变成会红的断言**。
 
 ---
 
-## 六条判据各守什么
+## 七条判据各守什么
 
     §A1 健全性   `具体化(v) ⊇ ∪{v 覆盖的原始项}`      —— 视图**不许丢东西**
     §A2 稳定     `B₁ ⊆ E⁻¹(B₂)` 或 `B₁ ∩ E⁻¹(B₂) = φ` —— 「稳定」是对 `E` 说的
@@ -15,6 +15,7 @@
     §A4 类别     `distributive` 要给出 `G` 且实测对得上；`holistic` 要附见证
     §A5 账       视图答不出的那些必须**逐条指得出来**
     §A6 落盘     读回之后 `§A1` 仍然成立，且存档**不许带派生边**
+    §A7 传播     `E′` 之后仍稳定，且**只许细分**（不许用重算冒充）
 
 ⚠️ **`§A3` 在谓词上包含 `§A2`**（不稳定的 `Q` 不可能是那个唯一解 ⇒ `§A3` 也红）。
    两条都留着，理由与各自的覆盖面写在 `a3_coarsest` 的 docstring 里 ——
@@ -24,8 +25,9 @@
 Cousot & Cousot 1977 §6 的 `Co ⊑ C_A` **必须**、`C_A ⊑ Co` **不必须**，
 逐字就是「视图不许丢东西、但可以更粗」。见设计稿 §2。
 
-`§A4`–`§A6` 各自的前置件（读数声明 / 账 / 视图存档）在 `core/view_persist.py`
-与 `view_spec.json` 里，落地范围与**没做的部分**写在 §9.1 那张表上。
+`§A4`–`§A7` 各自的前置件（读数声明 / 账 / 视图存档 / 一次结构变动）在
+`core/view_persist.py`、`core/views.py` 与 `view_spec.json` 里，
+落地范围与**没做的部分**写在 §9.1 那张表上。
 
 ---
 
@@ -60,7 +62,7 @@ docstring 里那条证明）。⇒ 这一步**不新增接口方法**，也不�
 `P` 与 `E` 必须外生（设计稿 §3 两条边界 / `§K9` / `B14`）。所以：
 
     人把它们写在 `ldv/checks/view_spec.json` 里（带**语料指纹**）
-    没写 / 指纹对不上 / 写的是别的方向 ⇒ 六条判据**全部报「跳过」**并印原因
+    没写 / 指纹对不上 / 写的是别的方向 ⇒ 七条判据**全部报「跳过」**并印原因
 
 ⚠️ **「跳过」不是「通过」**。这正是设计稿 §10 停止条件第 1 条：
    「初始划分 `P` 或关系 `E` 没声明 —— 它们必须外生。猜一个就是替人做 `§K9` 的决定。」
@@ -73,7 +75,7 @@ docstring 里那条证明）。⇒ 这一步**不新增接口方法**，也不�
 
 ## 已知答案的对照组：**合成图上先跑三态，再上真语料**
 
-设计稿 §9 的 ⚠️ 逐字：`§A1`–`§A6` 都必须先在**已知答案的合成图上**跑一遍
+设计稿 §9 的 ⚠️ 逐字：`§A1`–`§A7` 都必须先在**已知答案的合成图上**跑一遍
 （三态：过 / 红 / 跳过各一例），再上真语料。
 
 ⇒ `known_answer_controls()` 就是那一批，`run_tests.test_view_known_answers` 跑它。
@@ -84,13 +86,16 @@ docstring 里那条证明）。⇒ 这一步**不新增接口方法**，也不�
 
 ## 本趟**没有**做的（写在明处，不留给读者猜）
 
-设计稿 §9 的 `§A1`–`§A6` **六条都已落地**，但三条各有**边界**，写在 §9.1：
+设计稿 §9 的 `§A1`–`§A7` **七条都已落地**，但四条各有**边界**，写在 §9.1：
 
     `§A4` 只判**已在注册表里**的读数（`READINGS`）。「能不能自动发现某个读数的类别」
           没做，也不该做 —— 类别是**外生声称**（§10 停止条件 2：定不下来就停）。
     `§A5` 只判**可指认**（每条账指得到方向与项）。**完整性**（漏的恰好是账上那些）
           是 `B4` 的活，不在这里重复 —— 两条判同一件事会让「红」分不清是谁的。
-    `§A6` 判「读回后 `§A1` 仍成立」+「存档不许带派生边」。**增量传播（`E′`）**没做。
+    `§A6` 判「读回后 `§A1` 仍成立」+「存档不许带派生边」。**只判一次落盘-读回**，
+          **不做「落盘后结构又动、再读回」的多轮往返**。
+    `§A7` 判传播后「仍稳定 + 只许细分」。**不判「传播 ≡ 重算」** ——
+          设计稿 §7 逐字说那**不成立**，且**不成立不破坏任何检查** ⇒ 它是**读数**。
 
 **没做就是没做**：`VIEW_CODES` 里**没有**任何未实现的编号，
 所以「套件全绿」这句话的范围与它声明的范围**恰好相等**
@@ -109,8 +114,13 @@ from ..core.views import (
     ViewSpec,
     coarser_stable_exists,
     coarsest_stable_refinement,
+    extend_q,
     partition_of,
+    propagate,
+    propagate_naive,
     refines,
+    refines_partition,
+    restrict_spec,
     stable,
     view_parts,
 )
@@ -120,7 +130,7 @@ from ._framework import Report
 #: 不是它们的一部分（视图层与插件无关，见模块开头）。
 #: ⚠️ **只列**已经实现了的。没实现的不许写进来 —— 写进来就等于声称
 #:    「套件全绿」覆盖了它，而它根本没跑（注册表自检会红）。
-VIEW_CODES = ("A1", "A2", "A3", "A4", "A5", "A6")
+VIEW_CODES = ("A1", "A2", "A3", "A4", "A5", "A6", "A7")
 
 #: 外生声明放**代码旁边**，与 `cover_leak_baseline.json` 同一个理由：
 #: 它要跟着代码走、进版本库，换了语料或换了方向就该一起改。
@@ -849,6 +859,127 @@ def a6_branches(
     return {"①": b1, "②": b2, "③": b3, "条数": len(stored.get("视图") or ())}
 
 
+# --- §A7 `E′` 增量传播 ---------------------------------------------------------
+#
+# 设计稿 §7：结构一动（流程 B），视图要么重算、要么**传播**。`E′` 的**定义**
+# （本文档定下来，之前只有「只定接口不定实现」那句话）：
+#
+#     Q_ext = 旧 Q ∪ { 新方向各自成块 }
+#     Q′    = csr(Q_ext)        ← `core/views.propagate`
+#
+# ⚠️ **`§A7` 判的是「划分」那两件事，不重复判 `§A1`。**
+#    `§A7` 的两条都能红而 `§A1` 一条都判不到（`§A1` 只看见具体化与成员）；
+#    反过来 `§A1` 判的健全性 `§A7` 也不判 —— 两条判同一件事会让「红」分不清是谁的
+#    （`§A5` 的边界那条纪律，逐字同款）。
+#
+# ⚠️ **「传播 ≡ 重算」不在这里判。** 设计稿 §7 逐字：那是一句**会被实测打脸**的话，
+#    而**打脸不破坏任何一条检查**（§10.2 B 已裁定）⇒ 它是**读数**
+#    （`a7_reading`，进输出不进退出码），不是判据。
+
+def a7_branches(
+    old_q: Sequence[frozenset[str]],
+    spec: ViewSpec,
+    *,
+    new_q: Sequence[frozenset[str]] | None = None,
+) -> dict[str, Any]:
+    """`§A7` 的**分支**（结构化返回）—— 判据从散文里认分支，改个措辞就失效。
+
+    与 `a6_branches` 同一条理由：**分支要能被逐条断言**，所以它必须先是**结构**。
+
+        ① 传播后不稳定        ② 传播后不细化 `Q_ext`
+    """
+    q_new = tuple(new_q) if new_q is not None else propagate(old_q, spec)
+    q_ext = extend_q(old_q, spec)
+    b1: list[str] = []
+    b2: list[str] = []
+    if spec.relation:
+        ok, why = stable(spec, q_new)
+        if not ok:
+            b1.append(f"传播后**不稳定**（{len(why)} 对块）⇒ 新边改变了 `E⁻¹`，"
+                      f"而受影响的块**没被重新检查**；反例：{why[:1]}")
+    if not refines_partition(q_ext, q_new):
+        b2.append(f"传播后**不细化 `Q_ext`**（{len(q_ext)} 块 ⇒ {len(q_new)} 块）"
+                  f"⇒ 旧块被**重新合并**了 —— 那不是传播，是重算")
+    return {"①": b1, "②": b2, "块数": len(q_new), "Q_ext": len(q_ext)}
+
+
+def a7_propagate(
+    old_q: Sequence[frozenset[str]],
+    spec: ViewSpec,
+    rep: Report,
+    *,
+    new_q: Sequence[frozenset[str]] | None = None,
+) -> None:
+    """`§A7` —— `E′` 传播后的划分必须**仍稳定**、且**只许细分**。
+
+    ## 两个红分支，各自指得出东西
+
+        ① 传播后**不稳定**          ⇒ 红
+           形状：把新方向**挂到父方向所在的那一块**上，然后**不重跑不动点**。
+           新边 `(父, 新)` 把 `父` 塞进了 `E⁻¹({新})` ⇒ `{新}` 那一块
+           **跨在内外**（`父` 在里面、同块的兄弟在外面）。`propagate_naive` 就是它。
+
+        ② 传播后**不细化 `Q_ext`**  ⇒ 红
+           形状：**用全量重算冒充传播**。重算从 `P′` 出发，会把「旧 Q 已经劈开、
+           而 `P′` 层面看不出要劈」的那些块**重新合并回去** —— 实测四例全中
+           （`重算 ⊑ Q_ext` 一律为假）。
+           ⚠️ 这一条**不是**「重算不好」：重算是**另一个**合法对象（它就是 `§A3`
+           要的那个唯一解）。红的是**把它叫做「传播」** —— 那是把
+           「从旧结果出发」这个定义**换掉了**而没改文档。
+
+    ⚠️ **② 的措辞是「细化 `Q_ext`」，不是「细化旧 `Q`」** —— 差的那一格正是
+       ②唯一能红的地方。实测：`重算 ⊑ 旧 Q` 四例**全为真**（重算不合并旧块），
+       而 `重算 ⊑ Q_ext` 四例**全为假**。用「细化旧 `Q`」当谓词，
+       这条注入**一次都红不了**，判据会与空转长得一模一样。
+
+    ⚠️ **`E′` 只在这里判「划分」；传播后视图的健全性仍归 `§A1`。**
+       传 `new_q` 是给**对照**用的口子（`a7_known_answer` / `test_injections`），
+       生产路径不传。
+
+    ⚠️ **旧 `Q` 为空 ⇒ 跳过**（没有「从旧结果出发」这回事，那是重算）。
+    """
+    title = "视图传播 E′：传播后仍稳定，且只许细分（不许用重算冒充）"
+    if not old_q:
+        rep.add("A7", title, Tri.UNEXPANDED,
+                "没有旧视图 ⇒ 没有「传播」这回事（那是重算）—— 判不了，不是通过")
+        return
+    br = a7_branches(old_q, spec, new_q=new_q)
+    bad = br["①"] + br["②"]
+    rep.add("A7", title, Tri.NO if bad else Tri.YES,
+            f"{len(bad)} 处：{bad[:2]}" if bad
+            else f"从 {len(old_q)} 张旧视图出发 ⇒ 传播后 {br['块数']} 块，"
+                 f"稳定、且逐块细化 `Q_ext`（{br['Q_ext']} 块）")
+
+
+def a7_reading(old_q: Sequence[frozenset[str]], spec: ViewSpec) -> dict[str, Any]:
+    """`E′` 的**读数** —— 进输出不进退出码（设计稿 §7：不同构是读数）。
+
+    报三个数 + 两条布尔，缺一个都看不出「传播到底做了什么」：
+
+        `旧/传播/重算`  三档块数 —— 「传播比重算细多少」在这里看得见
+        `不同构`        传播 ≠ 重算 —— §7 说它**不成立**，这里把它**量出来**
+        `传播⊑重算`     **定理的自检**（`core/views.propagate` 的 docstring 有证明）
+                        —— 这条**不该为假**；为假说明 `propagate` 的实现错了，
+                        而 `§A7` 的两条判据**都抓不到**它（两条都只看传播自己）
+    """
+    q_new = propagate(old_q, spec)
+    q_rec = coarsest_stable_refinement(spec)
+    return {
+        "旧": len(old_q),
+        "传播": len(q_new),
+        "重算": len(q_rec),
+        "不同构": partition_of(q_new) != partition_of(q_rec),
+        "传播⊑重算": refines_partition(q_rec, q_new),
+    }
+
+
+def render_propagation(prof: dict[str, Any], spec: ViewSpec) -> str:
+    return (f"E′ 传播（把 `{spec.universe[-1]}` 拿掉再长回来）："
+            f"旧 {prof['旧']} 张 ⇒ 传播 {prof['传播']} 张 vs 重算 {prof['重算']} 张"
+            f"｜不同构 {prof['不同构']}｜传播 ⊑ 重算 {prof['传播⊑重算']}"
+            f"（**不同构是读数不是红** —— 设计稿 §7；定理保证传播只会更细）")
+
+
 # --- 已知答案的对照组（合成图，三态各一例） ------------------------------------
 
 def known_answer_specs() -> list[dict[str, Any]]:
@@ -1162,4 +1293,72 @@ def a6_branch_split() -> list[str]:
         if (not (got2 or got3)) is not want_pass:
             fails.append(f"{label}：期望{'过' if want_pass else '红'}，"
                          f"实测{'过' if not (got2 or got3) else '红'}")
+    return fails
+
+
+# --- `§A7` 合成对照 ------------------------------------------------------------
+#
+# 手推的那张小图（`U = a,b,c,d`、`P = {U}`、`E = {(a,b), (c,d)}`）：
+#
+#     旧结构（把 `d` 拿掉）  P_old = {a,b,c}、E_old = {(a,b)}
+#                            E_old⁻¹({a,b,c}) = {a} ⇒ 劈成 {a} / {b,c}
+#                            ⇒ Q_old = {{a}, {b,c}}       ← 手推
+#     Q_ext                  {{a}, {b,c}, {d}}
+#
+#     传播（真实现）          E⁻¹({d}) = {c} ⇒ {b,c} 再劈 ⇒ {{a},{b},{c},{d}}
+#                            稳定、细化 Q_ext ⇒ **过**
+#     挂到父块（naive）       新方向 `d` 的父是 `c`，`c` 在 {b,c} 里
+#                            ⇒ {{a}, {b,c,d}}；而 E⁻¹({b,c,d}) = {a,c}
+#                            跨在内外 ⇒ **① 红**
+#     全量重算               csr({U}, {(a,b),(c,d)}) = {{a,c},{b,d}}
+#                            `{a}` 被并进 `{a,c}` ⇒ 不细化 Q_ext ⇒ **② 红**
+#
+# ⚠️ **② 的那一例是这张图存在的理由。** 只配 naive 一条的话，② 从没被验过，
+#    而套件照样全绿 —— 「全绿」这句话的范围会悄悄缩掉（`§A3` / `§A5` 已各栽过一次）。
+
+_A7_U = ("a", "b", "c", "d")
+_A7_P = (frozenset({"a", "b", "c", "d"}),)
+_A7_E = frozenset({("a", "b"), ("c", "d")})
+
+
+def _a7_fixture() -> tuple[Any, ViewSpec, Any, Any]:
+    """`(old_q, spec_new, propagate, propagate_naive)` —— 合成图，手推得动。"""
+    spec_new = ViewSpec(universe=_A7_U, partition=_A7_P, relation=_A7_E)
+    sub = restrict_spec(spec_new, frozenset({"d"}))
+    old_q = coarsest_stable_refinement(sub)
+    return old_q, spec_new, propagate, propagate_naive
+
+
+def a7_known_answer() -> list[str]:
+    """`§A7` 的合成对照。返回**失败清单**（空 = 全对）。
+
+    四条路各跑一次，**逐分支**断言（见文件里那张手推表）：
+
+        真 `propagate`      ① 不亮、② 不亮  ⇒ 过
+        `propagate_naive`   ① **亮**、② 亮  ⇒ 红
+        全量重算            ① 不亮、② **亮**  ⇒ 红
+        （反向）真 `propagate` 细化旧 `Q`    ⇒ 真 —— 「传播只细分」这条**它满足**
+    """
+    old_q, spec_new, prop, naive = _a7_fixture()
+    fails: list[str] = []
+    rows = [
+        ("真 `propagate`", prop(old_q, spec_new), (False, False)),
+        ("`propagate_naive`（挂到父块）", naive(old_q, spec_new), (True, True)),
+        ("全量重算（冒充传播）", coarsest_stable_refinement(spec_new), (False, True)),
+    ]
+    for label, q, (want1, want2) in rows:
+        br = a7_branches(old_q, spec_new, new_q=q)
+        got = (bool(br["①"]), bool(br["②"]))
+        if got != (want1, want2):
+            fails.append(f"{label}：分支期望 ①={want1} ②={want2}，"
+                         f"实测 ①={got[0]} ②={got[1]}")
+    # ★ 反向判据：真传播**必须**细化旧 `Q`（不合并旧块）——
+    #   少了它，「传播只细分」这句话可以被一个**全量重算**的实现蒙混过关
+    #   （重算 ⊑ 旧 Q 在合成图上恰好为真，所以这一条只能当**正向**判据用，
+    #     它抓不到重算 —— 抓重算的是 ②「细化 Q_ext」）。
+    if not refines_partition(old_q, prop(old_q, spec_new)):
+        fails.append("真 `propagate` 居然不细化旧 `Q` —— 「只细分」这条它该满足")
+    # ★ 定理的自检：传播 ⊑ 重算。**这条不该为假**（`core/views.propagate` 有证明）。
+    if not refines_partition(coarsest_stable_refinement(spec_new), prop(old_q, spec_new)):
+        fails.append("传播**不**细化重算 —— `core/views.propagate` 的定理被推翻了")
     return fails

@@ -88,12 +88,18 @@ from ldv.checks.abstraction import (  # noqa: E402
     a4_category,
     a5_ledger,
     a6_roundtrip,
+    a7_propagate,
     build_views,
     reading_ctx,
     subtree_of,
     warranted_of,
 )
-from ldv.core.views import view_parts  # noqa: E402
+from ldv.core.views import (  # noqa: E402
+    coarsest_stable_refinement,
+    propagate_naive,
+    restrict_spec,
+    view_parts,
+)
 from ldv.checks.contract import (  # noqa: E402
     b1_no_false_negative,
     b2_merge_covers,
@@ -1107,7 +1113,7 @@ def metric_progress(nodes: Any, edges: Any, injected: bool) -> bool:
     return progress_profile(k, coverage_of("reach", dn, de))["最长没变细连续段"] == 4
 
 
-# ═══ §A1–§A6（流程 E · 抽象层）════════════════════════════════════════════════
+# ═══ §A1–§A7（流程 E · 抽象层）════════════════════════════════════════════════
 #
 # 判据本体在 `checks/abstraction.py`，算法在 `core/views.py`。
 # 注入的形态都一样：**在真链路上装出视图集合，然后只动那个视图集合的一处**。
@@ -1117,7 +1123,7 @@ def metric_progress(nodes: Any, edges: Any, injected: bool) -> bool:
 # §K9 / `B14` 禁的是「**系统**替人猜 `P` / `E`」：生产路径只能从
 # `ldv/checks/view_spec.json` 读（见 `run_checks.view_report`，读不到就**跳过**）。
 # **测试就是人的代言**，所以测试里构造 `P` / `E` 不但允许，而且是**必须**的 ——
-# 否则这六条判据的注入就挂在「那个配置文件在不在」上：
+# 否则这七条判据的注入就挂在「那个配置文件在不在」上：
 # 文件一没，基线就塌，注入验证报出来的是**配置缺失**，不是**判据能不能红**。
 #
 # ⇒ 分工写清楚，免得下一个人以为哪边漏了：
@@ -1163,8 +1169,9 @@ def _view_report(
     decls: list[dict[str, Any]] | None = None,
     entries: list[tuple[str, str, str]] | None = None,
     a6kw: dict[str, Any] | None = None,
+    a7: dict[str, Any] | None = None,
 ) -> Report:
-    """跑视图侧的判据。`kernel` / `decls` / `entries` / `a6kw` 不给就**不跑**那一条。
+    """跑视图侧的判据。`kernel` / `decls` / `entries` / `a6kw` / `a7` 不给就**不跑**那一条。
 
     ⚠️ 不给就**不跑**，而不是「跑成跳过」：注入要验的是**那一条判据**，
        把别的判据也塞进来会让「谁红的」分不清。驱动只读 `code` 那一条。
@@ -1183,6 +1190,8 @@ def _view_report(
         with tempfile.TemporaryDirectory() as td:
             a6_roundtrip(vs, kernel, cover, plugin, rep,
                          path=Path(td) / "views.json", **a6kw)
+    if a7 is not None:
+        a7_propagate(a7["old_q"], vs.spec, rep, new_q=a7.get("new_q"))
     return rep
 
 
@@ -1442,6 +1451,57 @@ def inj_a6(nodes: Any, edges: Any, injected: bool) -> Report:
     return _view_report(vs, kernel=kernel, cover=cover, plugin=plugin, a6kw=kw)
 
 
+# ═══ §A7 ═════════════════════════════════════════════════════════════════════
+
+def _a7_old_q(spec: ViewSpec) -> tuple[frozenset[str], ...]:
+    """`§A7` 要的那次**结构变动**：把 `spec.universe` 里**最后长出来**的方向拿掉。
+
+    ⚠️ 选哪个方向是**任意**的（只要确定）—— 判据不依赖这个选择。
+       实测四种选法（单个 / 最大块 / 全部叶）下「传播稳定」全为真、
+       「重算 ⊑ `Q_ext`」全为假（`outputs/_probe_a7b.py`）。
+    """
+    return coarsest_stable_refinement(
+        restrict_spec(spec, frozenset({spec.universe[-1]})))
+
+
+def inj_a7(nodes: Any, edges: Any, injected: bool) -> Report:
+    """`§A7` 注入**甲**：把传播换成「**挂到父方向所在的那一块**」（`propagate_naive`）。
+
+        基线  真传播（新方向各自成块 + 跑到不动点）      ⇒ **绿**
+        注入  挂到父块、**不重跑不动点**                  ⇒ **① 不稳定 ⇒ 红**
+
+    ⚠️ 红的机理是**新边改变了 `E⁻¹`**：`(父, 新)` 把 `父` 塞进 `E⁻¹({新})`，
+       而 `{新}` 那一块**跨在内外**（`父` 在里面、同块兄弟在外面）。
+       ⇒ 这不是「实现写得丑」，是**传播的定义被换掉了**。
+    """
+    spec, kernel, plugin, cover = _view_chain(nodes, edges)
+    old_q = _a7_old_q(spec)
+    return _view_report(build_views(kernel, spec, cover, plugin),
+                        a7={"old_q": old_q,
+                            "new_q": propagate_naive(old_q, spec) if injected else None})
+
+
+def inj_a7_recompute(nodes: Any, edges: Any, injected: bool) -> Report:
+    """`§A7` 注入**乙**：**用全量重算冒充传播** ⇒ **② 不细化 `Q_ext`** ⇒ 红。
+
+    ## ★ 为什么非有这一条不可
+
+    只配甲（`propagate_naive`）的话，`§A7` 的**分支②**一次都没被验过 ——
+    而套件照样报「全绿」，那句「全绿」的范围会**悄悄缩掉**。
+    同一条纪律在 `§A3`（三分支 → 两行）与 `§A5`（三分支 → 三行）上各用过一次。
+
+    ⚠️ 这一条**不是**说「重算不对」：重算是**另一个**合法对象（它就是 `§A3`
+       要的那个唯一解）。红的是**把它叫做「传播」** —— 那换了 `E′` 的定义
+       而没改文档。实测：`重算 ⊑ 旧 Q` 为**真**（重算不合并旧块），
+       而 `重算 ⊑ Q_ext` 为**假** ⇒ 谓词写「细化旧 `Q`」这条注入**一次都红不了**。
+    """
+    spec, kernel, plugin, cover = _view_chain(nodes, edges)
+    old_q = _a7_old_q(spec)
+    return _view_report(build_views(kernel, spec, cover, plugin),
+                        a7={"old_q": old_q,
+                            "new_q": coarsest_stable_refinement(spec) if injected else None})
+
+
 # ═══ 驱动 ════════════════════════════════════════════════════════════════════
 
 CASES: dict[str, Callable] = {
@@ -1450,7 +1510,7 @@ CASES: dict[str, Callable] = {
     "B11": inj_b11, "B12": inj_b12, "B13": inj_b13, "B14": inj_b14, "B15": inj_b15,
     "B16": inj_b16, "B17": inj_b17, "B18": inj_b18, "B19": inj_b19, "B20": inj_b20,
     "A1": inj_a1, "A2": inj_a2, "A3": inj_a3,
-    "A4": inj_a4, "A5": inj_a5, "A6": inj_a6,
+    "A4": inj_a4, "A5": inj_a5, "A6": inj_a6, "A7": inj_a7,
 }
 
 #: 同一条检查的**第二条**判据。键是标签，值是 `(判据编号, 注入函数)`。
@@ -1464,6 +1524,7 @@ EXTRA_CASES: dict[str, tuple[str, Callable]] = {
     "A3·稳定但更细": ("A3", inj_a3_not_coarsest),
     "A5·项不是语料的项": ("A5", inj_a5_bad_item),
     "A5·独立重算不成立": ("A5", inj_a5_unwarranted),
+    "A7·用重算冒充传播": ("A7", inj_a7_recompute),
 }
 
 
@@ -1484,7 +1545,7 @@ def _registry_gap() -> tuple[list[str], list[str]]:
         右边  `CASES` 的键 ∪ `EXTRA_CASES` 的值          —— 真被验过的编号
 
     ⚠️ **`VIEW_CODES` 必须一起比进来**，不能只比插件与内核那两批：
-       视图那六条是**另一组**（`Report(plugin="(视图)")`），漏掉它的话
+       视图那七条是**另一组**（`Report(plugin="(视图)")`），漏掉它的话
        「新增一条视图判据、忘了配注入」这件事**照样报全绿** ——
        而这句话对新增的编号一个字节的信息都没有。这正是本节开头那个形状。
 

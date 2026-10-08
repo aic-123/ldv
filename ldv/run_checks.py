@@ -96,17 +96,20 @@ from .checks.abstraction import (
     a4_category,
     a5_ledger,
     a6_roundtrip,
+    a7_propagate,
+    a7_reading,
     build_views,
     ledger_entries,
     load_spec_file,
     reading_ctx,
+    render_propagation,
     render_views,
     spec_for,
     subtree_of,
     view_profile,
     warranted_of,
 )
-from .core.views import view_parts
+from .core.views import coarsest_stable_refinement, restrict_spec, view_parts
 from .checks.coverage import (
     b16_members_covered,
     b18_cover_leak_baseline,
@@ -357,7 +360,7 @@ def cap_corpus(loaded, cap: int):
 
 
 def view_report(loaded, targets: list[str]) -> Report:
-    """流程 E 的 `§A1`–`§A6` —— **单独一组**，与插件无关。
+    """流程 E 的 `§A1`–`§A7` —— **单独一组**，与插件无关。
 
     为什么单独一组、且**只跑一次**：
 
@@ -423,14 +426,23 @@ def view_report(loaded, targets: list[str]) -> Report:
     with tempfile.TemporaryDirectory() as _td:
         a6_roundtrip(vs, kernel, cover, plugin, rep, path=Path(_td) / "views.json")
 
+    # ★ `§A7`（`E′` 传播）要一次**结构变动**。这里取一个**确定性的代表**：
+    #   把 `spec.universe` 里**最后长出来**的那个方向拿掉 ⇒ 那就是「变动前」的结构，
+    #   再把它传播回来。⚠️ 选哪个方向是任意的（只要确定），而判据不依赖这个选择 ——
+    #   实测四种选法（单方向 / 最大块 / 全部叶）下「传播稳定」全为真、
+    #   「重算 ⊑ Q_ext」全为假（`outputs/_probe_a7b.py`）。
+    old_q = coarsest_stable_refinement(restrict_spec(spec, frozenset({spec.universe[-1]})))
+    a7_propagate(old_q, spec, rep)
+
     prof = view_profile(vs)
     rep.note(f"{why}；方向 `{which}`")
     rep.note(render_views(vs, prof, which))
+    rep.note(render_propagation(a7_reading(old_q, spec), spec))
     return rep
 
 
 def _skip_views(rep: Report, why: str) -> None:
-    """六条一起跳过 —— 用一个函数，免得六条的**理由**各写一遍、写着写着就不一样了。"""
+    """七条一起跳过 —— 用一个函数，免得七条的**理由**各写一遍、写着写着就不一样了。"""
     rep.add("A1", "视图健全性：具体化 ⊇ ∪成员", Tri.UNEXPANDED, why)
     rep.add("A2", "视图稳定：B₁ ⊆ E⁻¹(B₂) 或 B₁ ∩ E⁻¹(B₂) = φ", Tri.UNEXPANDED, why)
     rep.add("A3", "视图最粗：不存在更粗的稳定划分", Tri.UNEXPANDED, why)
@@ -439,6 +451,8 @@ def _skip_views(rep: Report, why: str) -> None:
     rep.add("A5", "视图账：每条都要指得到具体方向 + 项，且独立重算下成立",
             Tri.UNEXPANDED, why)
     rep.add("A6", "视图落盘-读回：权威边逐字相同、存档不带派生边、读回后 §A1 仍成立",
+            Tri.UNEXPANDED, why)
+    rep.add("A7", "视图传播 E′：传播后仍稳定，且只许细分（不许用重算冒充）",
             Tri.UNEXPANDED, why)
 
 
@@ -516,7 +530,7 @@ def main(argv: list[str]) -> int:
     print(kernel_rep.render())
     print()
 
-    # ★ 流程 E 的 `§A1`–`§A6` —— **视图侧**，同样与插件无关，只跑一次。
+    # ★ 流程 E 的 `§A1`–`§A7` —— **视图侧**，同样与插件无关，只跑一次。
     #   它的外生输入（`P` / `E`）必须由人声明；没声明就三条都**跳过**并印原因
     #   （设计稿 §10 停止条件 1）。见 `view_report` 的 docstring。
     view_rep = view_report(loaded, targets)
