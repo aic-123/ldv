@@ -4066,13 +4066,14 @@ def test_multilevel() -> None:
        本设计的产物就是 L0，**一层就够**（实测真折 0 层）。
        见 `m1_shrink` 的 docstring。
 
-    ## 分五段，每段都要有已知答案
+    ## 分六段，每段都要有已知答案
 
         ① 合成对照   七条各自的「该绿时绿、该红时红」（`known_answer_controls`）
         ② 真跑一遍   在 committed 规格上跑 ⇒ 七条全过、**视图层真的在缩**
         ③ 商的结构   `quotient_spec` 的 `universe` / `relation` / `partition` 三件事
         ④ `§M4` vs `§A3`  **同时观察**两条（否则「分得开」这句话是空的）
         ⑤ 同一个数   `§M4` 与 `§A3` 用的 `n_cand` 必须是**同一个函数**算的
+        ⑥ 标题来源   真跑时印的 == 跳过时印的（一处定义、两处用）
 
     ⚠️ ④ 是前作核验 §3.3 明写的验收条件：`§A3` 跳过 = 「这一层判不了」（读数层面），
        `§M4` 红 = 「这一层压根不该这么设计」（设计层面，阻止交付）。
@@ -4084,11 +4085,14 @@ def test_multilevel() -> None:
     from dataclasses import replace as _replace
     from ldv.checks.multilevel import (
         MULTILEVEL_CODES,
+        TITLES,
         known_answer_controls,
+        m2_levels,
         m4_verifiable,
         n_folds,
         render_levels,
         run_multilevel,
+        skip_all,
     )
     from ldv.core.views import (
         MAX_COARSENING_CANDIDATES,
@@ -4229,6 +4233,28 @@ def test_multilevel() -> None:
     ok("★ [M] 这一组没有放松 `ViewSpec` 的三条必填检查（空 `P` 仍抛）",
        _raises_valueerror(
            lambda: ViewSpec(universe=("a",), partition=(), relation=frozenset())))
+
+    # ── ⑥ 标题只有**一个来源**：真跑时印的 == 跳过时印的 ───────────────────
+    #   ⚠️ 这两处原来各写一份字符串 ⇒ 漂移了**没有任何东西看得出来**
+    #      （「跳过时印的标题」与「真跑时印的标题」不一致，读起来像两条不同的判据）。
+    skip_rep = Report(plugin="(L0)", expects=MULTILEVEL_CODES)
+    skip_all(skip_rep, "对照：只为取标题")
+    real = {a.code: a.title for a in rep.assertions}
+    skipped = {a.code: a.title for a in skip_rep.assertions}
+    ok("★★ [M] 「真跑时印的标题」与「跳过时印的标题」**逐字相同**，且 `TITLES` 的键"
+       "**恰好**是 `MULTILEVEL_CODES`（一处定义、两处用 —— 两边都只是字符串，"
+       "漂移了没有任何东西看得出来）",
+       real == skipped and set(TITLES) == set(MULTILEVEL_CODES),
+       f"标题不同：{sorted(k for k in set(real) | set(skipped) if real.get(k) != skipped.get(k))}"
+       f"；键差：{sorted(set(TITLES) ^ set(MULTILEVEL_CODES))}")
+    r12 = Report(plugin="(L0)", expects=("M2",))
+    m2_levels(levels, r12, max_levels=12)
+    rcap = Report(plugin="(L0)", expects=("M4",))
+    m4_verifiable(levels, rcap, cap=1)
+    ok("★★ [M] `M2` / `M4` 的标题带**参数**：形参一改，标题里的数**跟着动** —— "
+       "否则印出来的是**假的数**，而「印错了」与「印对了」在只看红绿时长得一模一样",
+       "（12）" in r12.assertions[0].title and "≤ 1`" in rcap.assertions[0].title,
+       f"{r12.assertions[0].title} ｜ {rcap.assertions[0].title}")
 
 
 def _raises_valueerror(fn) -> bool:

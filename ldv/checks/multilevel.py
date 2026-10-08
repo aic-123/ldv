@@ -72,6 +72,35 @@ from ..core.tri import Tri
 MULTILEVEL_CODES = ("M0", "M1", "M2", "M3", "M4", "M5", "M6")
 
 
+def _title_m2(n: int) -> str:
+    return f"折叠：层数 ≤ `MAX_LEVELS`（{n}）"
+
+
+def _title_m4(cap: int) -> str:
+    return f"每层：验证代价 `n_cand ≤ {cap}`（`§A3` 的**前置门**）"
+
+
+#: 七条的**标题** —— **一处定义，两处用**（真跑时 `rep.add`、跳过时 `skip_all`）。
+#:
+#: ⚠️ **分开写两份会各自漂移**，而两边都只是字符串 ⇒ 漂移了**没有任何东西看得出来**
+#:    ——「跳过时印的标题」与「真跑时印的标题」不一致时，读起来像**两条不同的判据**。
+#:    `run_tests.test_multilevel` ⑥ 段**逐字对照**两边（并核 `set(TITLES) == set(CODES)`）。
+#:
+#: ⚠️ `M2` / `M4` 的标题带**参数**（`max_levels` / `cap`），所以它们是**函数**：
+#:    形参不是默认值时标题要跟着动，否则输出里印的那个数就是**假的**
+#:    （而「印错了数」与「印对了数」在只看红绿时长得一模一样）。
+TITLES: dict[str, str] = {
+    "M0": "视图层：`E` 无自环（自环让「稳定」退化成恒真）",
+    "M1": "视图层：`shrink = |Q₀|/|U₀| ≤ 阈值`"
+          "（视图层**真的在缩** —— 这一层就是产物）",
+    "M2": _title_m2(MAX_LEVELS),
+    "M3": "折叠：总代价 `Σ|U_k| ≤ 2·|U_0|`（几何递减的推论 —— 守卫）",
+    "M4": _title_m4(MAX_COARSENING_CANDIDATES),
+    "M5": "折叠：终止只由 `§M1`（收缩比）/ `§M2`（层数）触发 —— 守卫",
+    "M6": "折叠：顶层账 ⊇ 各层丢掉的并（账必须**被携带**，不许现推）",
+}
+
+
 # --- §M0 ----------------------------------------------------------------------
 
 def m0_no_self_loop(levels: Sequence[Level], rep: Report) -> None:
@@ -90,7 +119,7 @@ def m0_no_self_loop(levels: Sequence[Level], rep: Report) -> None:
     """
     bad = [(i, a) for i, lv in enumerate(levels)
            for (a, b) in lv.spec.relation if a == b]
-    rep.add("M0", "视图层：`E` 无自环（自环让「稳定」退化成恒真）",
+    rep.add("M0", TITLES["M0"],
             Tri.NO if bad else Tri.YES,
             (f"{len(bad)} 处自环：{[(i, x) for i, x in bad[:3]]}"
              f"（第 0 层来自人写的 `E`，之后各层来自 `quotient_spec`）") if bad
@@ -138,8 +167,7 @@ def m1_shrink(levels: Sequence[Level], rep: Report,
     inner = levels[:-1] if len(levels) > 1 else list(levels)
     bad = [(i, round(lv.shrink, 3)) for i, lv in enumerate(inner)
            if lv.shrink > min_ratio]
-    rep.add("M1", "视图层：`shrink = |Q₀|/|U₀| ≤ 阈值`"
-                  "（视图层**真的在缩** —— 这一层就是产物）",
+    rep.add("M1", TITLES["M1"],
             Tri.NO if bad else Tri.YES,
             (f"没缩够：{[(f'L{i}', r) for i, r in bad[:3]]}（阈值 {min_ratio}）—— "
              f"`|Q| == |U|` ⇒ 这一层**没有兑现「粗」**，检索器拿不到模糊掌握") if bad
@@ -163,7 +191,7 @@ def m2_levels(levels: Sequence[Level], rep: Report,
        「有人把刹车拆了」与「没超」在只看层数时**长得一模一样**。
     """
     n = len(levels)
-    rep.add("M2", f"折叠：层数 ≤ `MAX_LEVELS`（{max_levels}）",
+    rep.add("M2", _title_m2(max_levels),
             Tri.NO if n > max_levels else Tri.YES,
             (f"折了 {n} 层，超过声明上限 {max_levels} —— "
              f"最后一层的 `stopped` 是 {levels[-1].stopped!r}") if n > max_levels
@@ -194,7 +222,7 @@ def m3_cost(levels: Sequence[Level], rep: Report) -> None:
     """
     n0 = len(levels[0].spec.universe)
     cost = sum(len(lv.spec.universe) for lv in levels)
-    rep.add("M3", "折叠：总代价 `Σ|U_k| ≤ 2·|U_0|`（几何递减的推论 —— 守卫）",
+    rep.add("M3", TITLES["M3"],
             Tri.NO if cost > 2 * n0 else Tri.YES,
             (f"Σ|U_k| = {cost} > 2·|U_0| = {2 * n0}（{len(levels)} 层）"
              f" —— 有层**不缩还继续折**") if cost > 2 * n0
@@ -212,7 +240,7 @@ def m4_verifiable(levels: Sequence[Level], rep: Report,
     ⇒ 判据在 `fold_until` 之前/之中就该有结论，而不是等 `§A3` 报跳过。
     """
     bad = [(i, lv.n_cand) for i, lv in enumerate(levels) if lv.n_cand > cap]
-    rep.add("M4", f"每层：验证代价 `n_cand ≤ {cap}`（`§A3` 的**前置门**）",
+    rep.add("M4", _title_m4(cap),
             Tri.NO if bad else Tri.YES,
             (f"{len(bad)} 层超上限：{bad[:3]} —— `§A3` 那时只会报**跳过**，"
              f"而跳过不阻止交付") if bad
@@ -250,7 +278,7 @@ def m5_termination(levels: Sequence[Level], rep: Report) -> None:
     if last not in legal:
         why.append(f"末层停因 {last!r} 不在 {sorted(legal)} 里"
                    f"（空 = 没有刹车，那是「跑到不动点」，本设计不许）")
-    rep.add("M5", "折叠：终止只由 `§M1`（收缩比）/ `§M2`（层数）触发 —— 守卫",
+    rep.add("M5", TITLES["M5"],
             Tri.NO if why else Tri.YES,
             "；".join(why) if why
             else (f"末层停因 {last!r} 合法（共 {len(levels)} 层）"))
@@ -283,7 +311,7 @@ def m6_ledger(levels: Sequence[Level], rep: Report) -> None:
         lost_union |= set(lv.lost)
     top = set(levels[-1].ledger)
     miss = sorted(lost_union - top)
-    rep.add("M6", "折叠：顶层账 ⊇ 各层丢掉的并（账必须**被携带**，不许现推）",
+    rep.add("M6", TITLES["M6"],
             Tri.NO if miss else Tri.YES,
             (f"顶层账少了 {len(miss)} 项：{miss[:3]} —— 有层**丢了账没往上带**"
              f"（等价于把误差优化掉）") if miss
@@ -544,19 +572,9 @@ def render_levels(levels: Sequence[Level]) -> str:
 def skip_all(rep: Report, why: str) -> None:
     """七条一起跳过 —— 与 `run_checks._skip_views` 同一个理由：理由只写一遍。
 
-    ⚠️ **这七个标题必须与上面 `rep.add` 里的逐字相同。** 目前**没有东西守它**
-       ——「跳过时印的标题」与「真跑时印的标题」各自漂移的话，两边都只是字符串，
-       看不出来。改一处就要改两处。（与 `_skip_views` 同一个处境。）
+    ⚠️ 标题取自 `TITLES`（**与真跑时同一个来源**）。分开写两份的话，
+       「跳过时印的标题」与「真跑时印的标题」会各自漂移 —— 而两边都只是字符串，
+       漂移了**没有任何东西看得出来**。`test_multilevel` ⑥ 段逐字对照两边。
     """
-    for code, title in (
-        ("M0", "视图层：`E` 无自环（自环让「稳定」退化成恒真）"),
-        ("M1", "视图层：`shrink = |Q₀|/|U₀| ≤ 阈值`"
-               "（视图层**真的在缩** —— 这一层就是产物）"),
-        ("M2", f"折叠：层数 ≤ `MAX_LEVELS`（{MAX_LEVELS}）"),
-        ("M3", "折叠：总代价 `Σ|U_k| ≤ 2·|U_0|`（几何递减的推论 —— 守卫）"),
-        ("M4", f"每层：验证代价 `n_cand ≤ {MAX_COARSENING_CANDIDATES}`"
-               f"（`§A3` 的**前置门**）"),
-        ("M5", "折叠：终止只由 `§M1`（收缩比）/ `§M2`（层数）触发 —— 守卫"),
-        ("M6", "折叠：顶层账 ⊇ 各层丢掉的并（账必须**被携带**，不许现推）"),
-    ):
-        rep.add(code, title, Tri.UNEXPANDED, why)
+    for code in MULTILEVEL_CODES:
+        rep.add(code, TITLES[code], Tri.UNEXPANDED, why)
