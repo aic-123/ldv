@@ -3513,22 +3513,23 @@ def test_lock_scope() -> None:
 
 
 def test_views() -> None:
-    """流程 E · 抽象层 —— `core/views.py` 的算法 + `checks/abstraction.py` 的三条判据。
+    """流程 E · 抽象层 —— `core/views.py` 的算法 + `checks/abstraction.py` 的六条判据。
 
-    分七段，**每段都要有已知答案**（本仓库的老纪律：合成图上的已知答案是对照组里
+    分八段，**每段都要有已知答案**（本仓库的老纪律：合成图上的已知答案是对照组里
     最便宜的那一档，「跑一遍看看」不构成对照）：
 
         ① 核心算法   `Q` 与**手推值**逐块比；唯一性；两个 oracle 的已知答案
         ② 三态对照   设计稿 §9 要求的「过 / 红 / 跳过各一例」
         ③ 判据的**独立**性   `§A1` 不被 `B16` 蕴含（否则它只是换个写法）
-        ④ 全链路     真内核 + 合成 spec ⇒ `build_views` + 三条判据
+        ④ 全链路     真内核 + 合成 spec ⇒ `build_views` + 六条判据
         ⑤ 外生门禁   `spec_for` 的三种跳过 + 「声明了却坏了」是**报错**
         ⑥ 闸门自己   `cap` 要在**时间与内存上**都拦得住（实测踩到过挂住）
-        ⑦ committed 声明  `view_spec.json` 读得进来、非退化、三条判据全过
+        ⑦ committed 声明  `view_spec.json` 读得进来、非退化、六条判据全跑
+        ⑧ 合成对照   `§A1`–`§A6` 的已知答案（含 `§A6` 的**分支拆分**）
 
-    ⚠️ ⑥ 与 ⑦ 是**两件不同的事**，都要有：⑥ 验「搜不完时会不会如实报跳过」，
-       ⑦ 验「生产里那份声明成不成立」。少任何一段，
-       对应的那种缺陷都没有东西守着。
+    ⚠️ ⑥ / ⑦ / ⑧ 是**三件不同的事**，都要有：⑥ 验「搜不完时会不会如实报跳过」，
+       ⑦ 验「生产里那份声明成不成立」，⑧ 验「判据本身会不会红、会不会**红错地方**」。
+       少任何一段，对应的那种缺陷都没有东西守着。
     """
     from ldv.checks._framework import Report
     from ldv.checks.abstraction import (
@@ -3539,11 +3540,22 @@ def test_views() -> None:
         a1_soundness,
         a2_stable,
         a3_coarsest,
+        a4_category,
+        a4_known_answer,
+        a5_known_answer,
+        a5_ledger,
+        a6_branch_split,
+        a6_known_answer,
+        a6_roundtrip,
         build_views,
         known_answer_controls,
+        ledger_entries,
         load_spec_file,
+        reading_ctx,
         spec_for,
+        subtree_of,
         view_profile,
+        warranted_of,
     )
 
     def _result(rep, code: str) -> Tri:
@@ -3560,6 +3572,7 @@ def test_views() -> None:
         partition_of,
         refines,
         stable,
+        view_parts,
     )
 
     # --- ① 核心算法 ---------------------------------------------------------
@@ -3696,8 +3709,23 @@ def test_views() -> None:
     a1_soundness(vs, rep)
     a2_stable(spec4b, vs.q, rep)
     a3_coarsest(spec4b, vs.q, rep)
-    ok("★ [E] 全链路（真内核 + 合成 spec）：`build_views` 出来的 `Q` 三条判据全绿",
-       all(_result(rep, c) is Tri.YES for c in VIEW_CODES),
+    # ⚠️ 这里**故意**给空的读数声明：要验的正是「一条读数都没声明 ⇒ **跳过**，
+    #    **不许默认成 distributive**」（设计稿 §10 停止条件 2）。
+    a4_category(view_parts(vs.q, lambda d: subtree_of(kernel, d)),
+                reading_ctx(kernel, spec4b), [], rep)
+    a5_ledger(ledger_entries(kernel, spec4b), vs,
+              lambda did, item: warranted_of(kernel, did, item),
+              frozenset(kernel.items), rep)
+    with tempfile.TemporaryDirectory() as _td:
+        a6_roundtrip(vs, kernel, cover, plug, rep, path=Path(_td) / "views.json")
+    ok("★ [E] 全链路（真内核 + 合成 spec）：`build_views` 出来的 `Q` 上 "
+       "`§A1`/`§A2`/`§A3`/`§A6` 全绿",
+       all(_result(rep, c) is Tri.YES for c in ("A1", "A2", "A3", "A6")),
+       "；".join(a.line() for a in rep.assertions))
+    ok("★★ [E] 而 `§A4`/`§A5` 在这条链路上**跳过**（没声明读数、账为空）—— "
+       "**跳过不是红，但也不是过**：判据的适用范围由「它在这条方向上有没有内容」"
+       "决定。默认成「过」的话，「空转」与「通过」就再也分不开了",
+       all(_result(rep, c) is Tri.UNEXPANDED for c in ("A4", "A5")),
        "；".join(a.line() for a in rep.assertions))
     prof = view_profile(vs)
     print(f"    · 全链路读数：{prof['方向数']} 个方向 ⇒ {prof['视图数']} 张视图，"
@@ -3773,15 +3801,38 @@ def test_views() -> None:
         if s is not None:
             which = str(doc["方向"])
             k2, p2 = build_keyset(nodes)
-            vs2 = build_views(k2, s, coverage_of(which, nodes, edges), p2)
+            cv2 = coverage_of(which, nodes, edges)
+            vs2 = build_views(k2, s, cv2, p2)
             rep2 = Report(plugin="(视图)", expects=VIEW_CODES)
             a1_soundness(vs2, rep2)
             a2_stable(s, vs2.q, rep2)
             a3_coarsest(s, vs2.q, rep2)
-            ok("★★ [E] committed 声明上三条判据**全过** —— "
+            a4_category(view_parts(vs2.q, lambda d: subtree_of(k2, d)),
+                        reading_ctx(k2, s), doc.get("读数") or [], rep2)
+            a5_ledger(ledger_entries(k2, s), vs2,
+                      lambda did, item: warranted_of(k2, did, item),
+                      frozenset(k2.items), rep2)
+            import tempfile as _tf
+
+            with _tf.TemporaryDirectory() as _td:
+                a6_roundtrip(vs2, k2, cv2, p2, rep2, path=Path(_td) / "views.json")
+            ok("★★ [E] committed 声明上**一条红的都没有** —— "
                "有一条常驻的红等于没人再看红",
-               all(_result(rep2, c) is Tri.YES for c in VIEW_CODES),
+               all(_result(rep2, c) is not Tri.NO for c in VIEW_CODES),
                "；".join(a.line() for a in rep2.assertions))
+            ok("★★ [E] `§A1`–`§A4` + `§A6` 在 committed 声明上**全过**（不是跳过）",
+               all(_result(rep2, c) is Tri.YES for c in ("A1", "A2", "A3", "A4", "A6")),
+               "；".join(a.line() for a in rep2.assertions))
+            # ⚠️ `§A5` 在批建路径上**本来就该跳过**（账为空）—— 但「跳过」不是免检：
+            #   跳过的**理由**必须是「账为空」。理由写错了就说明它跳错了地方，
+            #   而那正是「空转与通过长得一模一样」的另一种形态。
+            a5 = _result(rep2, "A5")
+            a5_detail = next((a.detail for a in rep2.assertions if a.code == "A5"), "")
+            ok("★ [E] `§A5` 在 committed 声明上跳过时，理由必须是「账为空」"
+               "（批建路径上 `滞留 == 0`、`根覆盖之外 == 0`）—— "
+               "跳过 ≠ 通过，但**跳错了地方**也 ≠ 跳过",
+               a5 is Tri.YES or "账为空" in a5_detail,
+               f"A5={a5}，理由={a5_detail!r}")
             p2p = view_profile(vs2)
             ok("★ [E] committed 声明**非退化**（视图数 < 方向数）—— "
                "两者相等是**读数**不是失败，但那样这一层什么都没压，"
@@ -3790,7 +3841,37 @@ def test_views() -> None:
                f"{p2p['方向数']} 个方向 ⇒ {p2p['视图数']} 张视图")
             print(f"    · committed 声明读数：{p2p['方向数']} 个方向 ⇒ "
                   f"{p2p['视图数']} 张视图，最大一块 {p2p['最大块']}｜"
-                  f"具体化 {p2p['具体化']} vs 成员 {p2p['成员']}")
+                  f"具体化 {p2p['具体化']} vs 成员 {p2p['成员']}｜"
+                  f"读数声明 {len(doc.get('读数') or [])} 条，`§A5` {a5}")
+
+    # --- ⑧ `§A1`–`§A6` 的**合成**对照 ----------------------------------------
+    #
+    # ⚠️ 与 ⑦ 分工不同，两边都不许省：
+    #
+    #     ⑦ 读 **committed 声明**（真语料）  验「生产里那份声明成不成立」
+    #     ⑧ 用**合成图**（已知答案）          验「判据本身会不会红、会不会红错地方」
+    #
+    # ⚠️ 合成图上的答案必须是**手推**出来的，不许「跑一遍看看再把结果抄成期望」——
+    #    后者只会把实现现在的行为固化下来，包括它的错。
+    ok("★ [E] `§A1` 合成对照：具体化掐掉一项 ⇒ 红（没掐 ⇒ 绿）",
+       a1_known_answer(False) is Tri.YES and a1_known_answer(True) is Tri.NO,
+       f"没掐={a1_known_answer(False)}、掐了={a1_known_answer(True)}")
+    a4_fails = a4_known_answer()
+    ok("★★ [E] `§A4` 合成对照：三类各一例 + 见证成立/不成立各一例 + "
+       "「指不到实现」一例 + 两条跳过 —— 共 9 条**手推**答案",
+       not a4_fails, "；".join(a4_fails))
+    ok("★ [E] `§A5` 合成对照：方向指不到任何视图 ⇒ 红（指得到 ⇒ 绿）",
+       a5_known_answer(False) is Tri.YES and a5_known_answer(True) is Tri.NO,
+       f"指得到={a5_known_answer(False)}、指不到={a5_known_answer(True)}")
+    ok("★ [E] `§A6` 合成对照：真实现 ⇒ 绿；两个对照实现都上 ⇒ 红",
+       a6_known_answer(False) is Tri.YES and a6_known_answer(True) is Tri.NO,
+       f"真实现={a6_known_answer(False)}、对照对={a6_known_answer(True)}")
+    a6_fails = a6_branch_split()
+    ok("★★ [E] `§A6` **分支拆分**（逐分支实测，不是从散文里认）："
+       "只上 `to_d` 时 ② 亮而 ③ **不亮** ⇒「漂移只有在两个对照都上时"
+       "才可能发生」这句话是**实测**的；而 ③ 不亮就意味着"
+       "**只用 `to_d` 的注入会让「读回后 §A1 仍成立」永远没被验过**",
+       not a6_fails, "；".join(a6_fails))
 
 
 def main() -> int:

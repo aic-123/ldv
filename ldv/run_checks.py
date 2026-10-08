@@ -66,6 +66,8 @@
 from __future__ import annotations
 
 import sys
+import tempfile
+from pathlib import Path
 
 from .checks._fixtures import (
     build_incremental,
@@ -91,12 +93,20 @@ from .checks.abstraction import (
     a1_soundness,
     a2_stable,
     a3_coarsest,
+    a4_category,
+    a5_ledger,
+    a6_roundtrip,
     build_views,
+    ledger_entries,
     load_spec_file,
+    reading_ctx,
     render_views,
     spec_for,
+    subtree_of,
     view_profile,
+    warranted_of,
 )
+from .core.views import view_parts
 from .checks.coverage import (
     b16_members_covered,
     b18_cover_leak_baseline,
@@ -347,7 +357,7 @@ def cap_corpus(loaded, cap: int):
 
 
 def view_report(loaded, targets: list[str]) -> Report:
-    """流程 E 的 `§A1`–`§A3` —— **单独一组**，与插件无关。
+    """流程 E 的 `§A1`–`§A6` —— **单独一组**，与插件无关。
 
     为什么单独一组、且**只跑一次**：
 
@@ -397,6 +407,22 @@ def view_report(loaded, targets: list[str]) -> Report:
     a1_soundness(vs, rep)
     a2_stable(spec, vs.q, rep)
     a3_coarsest(spec, vs.q, rep)
+
+    # ★ `§A4` 的「部件」= `reach(块)` 的一个划分（`view_parts`）。视图划分**会横跨树**，
+    #   所以「下层」**不是**「`reach` 里的那些块」—— 那不是嵌套，恒等式根本不成立。
+    #   见 `view_parts` 的 docstring 与 `§A4` 那一段注释。
+    parts = view_parts(vs.q, lambda d: subtree_of(kernel, d))
+    a4_category(parts, reading_ctx(kernel, spec), doc.get("读数") or [], rep)
+
+    a5_ledger(ledger_entries(kernel, spec), vs,
+              lambda did, item: warranted_of(kernel, did, item),
+              frozenset(kernel.items), rep)
+
+    # ⚠️ `§A6` 要一个**真的落盘**才判得了。这里给一个临时文件 ——
+    #   所以生产路径上这条**是跑的**；「没有落盘 ⇒ 跳过」那条路由测试单独验。
+    with tempfile.TemporaryDirectory() as _td:
+        a6_roundtrip(vs, kernel, cover, plugin, rep, path=Path(_td) / "views.json")
+
     prof = view_profile(vs)
     rep.note(f"{why}；方向 `{which}`")
     rep.note(render_views(vs, prof, which))
@@ -404,10 +430,16 @@ def view_report(loaded, targets: list[str]) -> Report:
 
 
 def _skip_views(rep: Report, why: str) -> None:
-    """三条一起跳过 —— 用一个函数，免得三条的**理由**各写一遍、写着写着就不一样了。"""
+    """六条一起跳过 —— 用一个函数，免得六条的**理由**各写一遍、写着写着就不一样了。"""
     rep.add("A1", "视图健全性：具体化 ⊇ ∪成员", Tri.UNEXPANDED, why)
     rep.add("A2", "视图稳定：B₁ ⊆ E⁻¹(B₂) 或 B₁ ∩ E⁻¹(B₂) = φ", Tri.UNEXPANDED, why)
     rep.add("A3", "视图最粗：不存在更粗的稳定划分", Tri.UNEXPANDED, why)
+    rep.add("A4", "视图类别：distributive 的 `G` / holistic 的见证都要实测成立",
+            Tri.UNEXPANDED, why)
+    rep.add("A5", "视图账：每条都要指得到具体方向 + 项，且独立重算下成立",
+            Tri.UNEXPANDED, why)
+    rep.add("A6", "视图落盘-读回：权威边逐字相同、存档不带派生边、读回后 §A1 仍成立",
+            Tri.UNEXPANDED, why)
 
 
 def main(argv: list[str]) -> int:
@@ -484,7 +516,7 @@ def main(argv: list[str]) -> int:
     print(kernel_rep.render())
     print()
 
-    # ★ 流程 E 的 `§A1`–`§A3` —— **视图侧**，同样与插件无关，只跑一次。
+    # ★ 流程 E 的 `§A1`–`§A6` —— **视图侧**，同样与插件无关，只跑一次。
     #   它的外生输入（`P` / `E`）必须由人声明；没声明就三条都**跳过**并印原因
     #   （设计稿 §10 停止条件 1）。见 `view_report` 的 docstring。
     view_rep = view_report(loaded, targets)

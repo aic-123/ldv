@@ -90,6 +90,8 @@ __all__ = [
     "refines",
     "coarser_stable_exists",
     "partition_of",
+    "reach_of",
+    "view_parts",
     "MAX_COARSENING_CANDIDATES",
 ]
 
@@ -460,3 +462,62 @@ def _product(pools: Sequence[Iterable]) -> Iterator[tuple]:
             yield from rec(i + 1, acc + (x,))
 
     yield from rec(0, ())
+
+
+# --- 视图的「下界」与「部件」 --------------------------------------------------
+#
+# `§A4`（类别不许说错）要问的是「这张视图的读数能不能**只从下层算出来**」。
+# 那需要先定义「下层」是什么。这里两个函数就是那个定义。
+#
+# ⚠️ **不许把「下层」直接定义成「块 ⊆ reach(本块) 的那些块」。** 视图划分
+#    **会横跨树**：实测（36 项语料、`P = {U}`）块 `{D10,D15,D22,D3}` 里 `D22`
+#    不在 `D2` 的子树里 ⇒ 那个关系**不构成嵌套**，按它取「极大子块」会漏掉
+#    横跨的那些 ⇒ 恒等式根本不成立（实测 `|block| = 1` 而 `Σ|子块| = 24`）。
+#    ⇒ 改成**截断成部件**：部件恰好**划分** `reach`，恒等式按构造成立。
+
+
+def reach_of(
+    block: Iterable[str],
+    subtree_of: Callable[[str], frozenset[str]],
+) -> frozenset[str]:
+    """一块方向的**下界** `reach(B) = ∪{ 子树(d) : d ∈ B }`。
+
+    `subtree_of` 由调用方给（内核侧是「`d` 及其全部后代」）。
+    ⚠️ 本模块**不认识内核**，所以树是**参数**，不是 import。
+    """
+    out: set[str] = set()
+    for d in block:
+        out |= subtree_of(d)
+    return frozenset(out)
+
+
+def view_parts(
+    q: Sequence[frozenset[str]],
+    subtree_of: Callable[[str], frozenset[str]],
+) -> dict[frozenset[str], tuple[frozenset[str], ...]]:
+    """每块 `B` 的**部件**：`B` 自己 + 其余块与 `reach(B)` 的交（非空的那些）。
+
+    这些部件**恰好划分** `reach(B)` —— 不是巧合，是「块两两不交、并集是 `U`」
+    的直接推论（`ViewSpec` 已经保证）。所以
+
+        reach(B) = B ⊎ p₁ ⊎ p₂ ⊎ …
+
+    是**恒等式**，任何「在集合上可下推」的读数都必须满足它。
+
+    ⚠️ 于是这条恒等式**不能**当成判据用（恒真的东西不提供信息）——
+       `§A4` 判的是**声称的那个合成函数对不对**：声称 `distributive` 就要给出
+       `G`，实测 `读数(reach) == G(读数(B), 读数(p₁), …)`。`G` 给错了就红。
+       这正是设计稿 §9 那句「声称 distributive 但**实测 ≠** ⇒ 红」。
+    """
+    out: dict[frozenset[str], tuple[frozenset[str], ...]] = {}
+    for b in q:
+        reach = reach_of(b, subtree_of)
+        parts = [b]
+        for other in q:
+            if other is b:
+                continue
+            cut = other & reach
+            if cut:
+                parts.append(cut)
+        out[b] = tuple(parts)
+    return out

@@ -1,27 +1,31 @@
-"""流程 E · 抽象层 —— `§A1` / `§A2` / `§A3`（`docs/分层方向视图-抽象层.md` §9）。
+"""流程 E · 抽象层 —— `§A1`–`§A6`（`docs/分层方向视图-抽象层.md` §9）。
 
     python -m ldv.run_checks            # 判据在 `(视图)` 那一组里
 
 算法在 `core/views.py`（纯的）。本模块只做两件事：**把结构装成视图**、
-**把三条判据变成会红的断言**。
+**把六条判据变成会红的断言**。
 
 ---
 
-## 三条判据各守什么
+## 六条判据各守什么
 
     §A1 健全性   `具体化(v) ⊇ ∪{v 覆盖的原始项}`      —— 视图**不许丢东西**
     §A2 稳定     `B₁ ⊆ E⁻¹(B₂)` 或 `B₁ ∩ E⁻¹(B₂) = φ` —— 「稳定」是对 `E` 说的
     §A3 最粗     不存在更粗的稳定划分                  —— `Q` 就是那个**唯一**的解
+    §A4 类别     `distributive` 要给出 `G` 且实测对得上；`holistic` 要附见证
+    §A5 账       视图答不出的那些必须**逐条指得出来**
+    §A6 落盘     读回之后 `§A1` 仍然成立，且存档**不许带派生边**
 
 ⚠️ **`§A3` 在谓词上包含 `§A2`**（不稳定的 `Q` 不可能是那个唯一解 ⇒ `§A3` 也红）。
    两条都留着，理由与各自的覆盖面写在 `a3_coarsest` 的 docstring 里 ——
    **不是**「多一层保险」，是「`§A2` 无条件判、`§A3` 会因为枚举上限跳过」。
-   设计稿 §9 那张表**没有**这一条（它只写了「存在更粗的稳定划分 ⇒ 红」），
-   是**补出来的**：照字面实现会让一个不稳定的 `Q` 报绿。
 
 `§A1` 是 **§K8 那条不对称契约**（假阴禁止 / 假阳计量）的视图侧对应物 ——
 Cousot & Cousot 1977 §6 的 `Co ⊑ C_A` **必须**、`C_A ⊑ Co` **不必须**，
 逐字就是「视图不许丢东西、但可以更粗」。见设计稿 §2。
+
+`§A4`–`§A6` 各自的前置件（读数声明 / 账 / 视图存档）在 `core/view_persist.py`
+与 `view_spec.json` 里，落地范围与**没做的部分**写在 §9.1 那张表上。
 
 ---
 
@@ -56,7 +60,7 @@ docstring 里那条证明）。⇒ 这一步**不新增接口方法**，也不�
 `P` 与 `E` 必须外生（设计稿 §3 两条边界 / `§K9` / `B14`）。所以：
 
     人把它们写在 `ldv/checks/view_spec.json` 里（带**语料指纹**）
-    没写 / 指纹对不上 / 写的是别的方向 ⇒ 三条判据**全部报「跳过」**并印原因
+    没写 / 指纹对不上 / 写的是别的方向 ⇒ 六条判据**全部报「跳过」**并印原因
 
 ⚠️ **「跳过」不是「通过」**。这正是设计稿 §10 停止条件第 1 条：
    「初始划分 `P` 或关系 `E` 没声明 —— 它们必须外生。猜一个就是替人做 `§K9` 的决定。」
@@ -69,7 +73,7 @@ docstring 里那条证明）。⇒ 这一步**不新增接口方法**，也不�
 
 ## 已知答案的对照组：**合成图上先跑三态，再上真语料**
 
-设计稿 §9 的 ⚠️ 逐字：`§A1`–`§A3` 都必须先在**已知答案的合成图上**跑一遍
+设计稿 §9 的 ⚠️ 逐字：`§A1`–`§A6` 都必须先在**已知答案的合成图上**跑一遍
 （三态：过 / 红 / 跳过各一例），再上真语料。
 
 ⇒ `known_answer_controls()` 就是那一批，`run_tests.test_view_known_answers` 跑它。
@@ -78,17 +82,19 @@ docstring 里那条证明）。⇒ 这一步**不新增接口方法**，也不�
 
 ---
 
-## 本趟**没有**做的三条（写在明处，不留给读者猜）
+## 本趟**没有**做的（写在明处，不留给读者猜）
 
-    `§A4` 类别不许说错（distributive / algebraic / holistic）  —— 见设计稿 §5
-    `§A5` 账逐条可指认                                        —— 见设计稿 §6
-    `§A6` 落盘-读回                                           —— 见设计稿 §9
+设计稿 §9 的 `§A1`–`§A6` **六条都已落地**，但三条各有**边界**，写在 §9.1：
 
-它们各自要的前置件还没有：`§A4` 要「读数的类别声明」这个外生字段，
-`§A5` 要先把「视图答不出的那些」与内核账本上的 `stayed` / `out_of_scope` 对齐，
-`§A6` 要 `core/persist.py` 的视图侧对应物。
-**没做就是没做** —— 这三条现在**不在** `VIEW_CODES` 里，
-所以「套件全绿」这句话**不覆盖它们**（`test_injections` 的注册表自检守这件事）。
+    `§A4` 只判**已在注册表里**的读数（`READINGS`）。「能不能自动发现某个读数的类别」
+          没做，也不该做 —— 类别是**外生声称**（§10 停止条件 2：定不下来就停）。
+    `§A5` 只判**可指认**（每条账指得到方向与项）。**完整性**（漏的恰好是账上那些）
+          是 `B4` 的活，不在这里重复 —— 两条判同一件事会让「红」分不清是谁的。
+    `§A6` 判「读回后 `§A1` 仍成立」+「存档不许带派生边」。**增量传播（`E′`）**没做。
+
+**没做就是没做**：`VIEW_CODES` 里**没有**任何未实现的编号，
+所以「套件全绿」这句话的范围与它声明的范围**恰好相等**
+（`test_injections` 的注册表自检**双向**守这件事）。
 """
 
 from __future__ import annotations
@@ -106,6 +112,7 @@ from ..core.views import (
     partition_of,
     refines,
     stable,
+    view_parts,
 )
 from ._framework import Report
 
@@ -113,7 +120,7 @@ from ._framework import Report
 #: 不是它们的一部分（视图层与插件无关，见模块开头）。
 #: ⚠️ **只列**已经实现了的。没实现的不许写进来 —— 写进来就等于声称
 #:    「套件全绿」覆盖了它，而它根本没跑（注册表自检会红）。
-VIEW_CODES = ("A1", "A2", "A3")
+VIEW_CODES = ("A1", "A2", "A3", "A4", "A5", "A6")
 
 #: 外生声明放**代码旁边**，与 `cover_leak_baseline.json` 同一个理由：
 #: 它要跟着代码走、进版本库，换了语料或换了方向就该一起改。
@@ -413,6 +420,435 @@ def render_views(vs: ViewSet | None, prof: dict[str, Any], which: str = "") -> s
             + "（度量，不进退出码）")
 
 
+# --- §A4 类别不许说错 ---------------------------------------------------------
+#
+# 「视图能不能**只从下层算出来**」不是设计选择，它有**定理**（Gray 等 1997 的
+# 三分法，设计稿 §5）。`§A4` 判的是**声称与实测一致**：
+#
+#     distributive  ⇒  必须给出 `G`，且  读数(reach) == G(各部件读数)     逐块成立
+#     algebraic     ⇒  必须给出 `S`（定长摘要）与 `H`，且
+#                      读数(reach) == H(Σ S(各部件))
+#     holistic      ⇒  必须附一个**见证**：两组方向的 `S` **相同**而读数**不同**
+#                      ⇒ 那个定长摘要**分不开**它们 ⇒ 「没有常数额摘要」有支撑
+#
+# ⚠️ **「下层」= 部件，不是「块 ⊆ reach 的块」。** 视图划分**会横跨树**
+#    （实测：块 `{D10,D15,D22,D3}` 里 `D22` 不在 `D2` 的子树里）⇒ 按后者定义
+#    **不构成嵌套**，恒等式根本不成立（实测 `|block| = 1` 而 `Σ|子块| = 24`）。
+#    部件（`core/views.view_parts`）恰好**划分** `reach`，恒等式按构造成立。
+#
+# ⚠️ **恒等式本身不能当判据用** —— 它按构造恒真，不提供任何信息。
+#    判的是**声称的那个 `G` / `S` / `H` 对不对**。实测（36 项语料）：
+#    `最大成员数` 配 `G=取最大` ⇒ 8/8 块过；配 `G=取和` ⇒ 7/8 块红。
+#    ⇒ 这条判据**能红**，而且红的形状就是「声称的那个合成函数错了」。
+
+
+@dataclass(frozen=True)
+class ReadingCtx:
+    """读数要的两张表：每个方向的**数值**、以及它的**覆盖**。
+
+    两者都**从结构读出来**（不是声明），所以由调用方给。
+    ⚠️ 覆盖是**集合**而不是数 —— `覆盖计数` 之所以是 holistic，正是因为它要的是
+       那个集合本身，而集合没有常数额摘要（`§A4` 的见证就建在这上面）。
+    """
+
+    value_of: dict[str, float]
+    cover_of: dict[str, frozenset[str]]
+
+
+def _vals(S: frozenset[str], ctx: ReadingCtx) -> list[float]:
+    return [ctx.value_of[d] for d in sorted(S)]
+
+
+def subtree_of(kernel: Any, did: str) -> frozenset[str]:
+    """`did` **及其全部后代** —— `_children` 是权威边（`§10.2 D`）。
+
+    ⚠️ 用 `_children`（父→子），**不是** `parent` / `witness`。理由与持久化那边
+       同一条：入度按 `parent` **不常数**（实测 max 7），按 `_children` 恒为 1。
+    """
+    out: set[str] = set()
+    stack = [did]
+    while stack:
+        x = stack.pop()
+        if x in out:
+            continue
+        out.add(x)
+        for c in kernel.children_of(kernel.direction(x)):
+            stack.append(c.did)
+    return frozenset(out)
+
+
+def reading_ctx(kernel: Any, spec: ViewSpec) -> ReadingCtx:
+    """真链路上的读数上下文。
+
+        每个方向的**数值** = `|members(d)|`（成员数）
+        每个方向的**覆盖** = `members(d)`
+
+    ⚠️ 两者都是**从结构读出来的**，不是声明。声明的是**读数怎么合成**（`§A4`）。
+    """
+    return ReadingCtx(
+        value_of={d: float(len(kernel.members_of(kernel.direction(d))))
+                  for d in spec.universe},
+        cover_of={d: kernel.members_of(kernel.direction(d)) for d in spec.universe},
+    )
+
+
+def _median(xs: list[float]) -> float:
+    if not xs:
+        return 0.0
+    ys = sorted(xs)
+    n = len(ys)
+    return ys[n // 2] if n % 2 else (ys[n // 2 - 1] + ys[n // 2]) / 2
+
+
+#: 读数注册表：`名 → (在方向集合上算, 定长摘要)`。
+#: ⚠️ **类别不在这里** —— 类别是**外生声称**，写在 `view_spec.json` 里。
+#:    注册表只提供「这个读数怎么算」与「它的候选定长摘要是什么」。
+READINGS: dict[str, tuple[Callable, Callable]] = {
+    "计数": (lambda S, c: len(S), lambda S, c: (len(S),)),
+    "和": (lambda S, c: sum(_vals(S, c)), lambda S, c: (len(S), sum(_vals(S, c)))),
+    "平均": (lambda S, c: (sum(_vals(S, c)) / len(S)) if S else 0.0,
+             lambda S, c: (len(S), sum(_vals(S, c)))),
+    "中位数": (lambda S, c: _median(_vals(S, c)), lambda S, c: (len(S), sum(_vals(S, c)))),
+    "最大": (lambda S, c: max(_vals(S, c), default=0.0),
+             lambda S, c: (len(S), sum(_vals(S, c)))),
+    "覆盖计数": (lambda S, c: len(set().union(*[c.cover_of[d] for d in S]) if S else set()),
+                 lambda S, c: (len(S), sum(_vals(S, c)))),
+}
+
+#: `distributive` 的 `G`：吃「各部件读数」这个列表，吐一个读数。
+COMBINERS: dict[str, Callable[[list], Any]] = {
+    "取和": lambda vs_: sum(vs_),
+    "取最大": lambda vs_: max(vs_),
+    "取最小": lambda vs_: min(vs_),
+    "取平均": lambda vs_: (sum(vs_) / len(vs_)) if vs_ else 0.0,
+}
+
+#: `algebraic` 的 `H`：吃「各部件摘要的**逐分量和**」，吐一个读数。
+H_FUNCS: dict[str, Callable[[tuple], Any]] = {
+    "和除计数": lambda t: (t[1] / t[0]) if t and t[0] else 0.0,
+    "取第二项": lambda t: t[1] if len(t) > 1 else 0,
+    "取第一项": lambda t: t[0] if t else 0,
+}
+
+#: 定长摘要注册表。`§A4` **只认这里有的名字** —— 声明里现造一个名字会被判红。
+SUMMARIES: dict[str, Callable] = {
+    "计数": lambda S, c: (len(S),),
+    "计数与和": lambda S, c: (len(S), sum(_vals(S, c))),
+}
+
+
+def _close(a: Any, b: Any, tol: float = 1e-9) -> bool:
+    """读数相等吗 —— 数是**容差比**，别的一律 `==`。
+
+    ⚠️ 不能一律 `==`：`平均` 这类要除，浮点会差最后一位，
+       于是**一条永远红的判据** —— 而一条常驻的红等于没人再看红。
+       也不能一律用容差：整数与集合上的「差一点」**没有意义**。
+    """
+    if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+        return abs(float(a) - float(b)) <= tol * max(1.0, abs(float(a)), abs(float(b)))
+    return a == b
+
+
+def judge_reading(
+    name: str, category: str, decl: dict[str, Any],
+    parts: dict[frozenset[str], tuple[frozenset[str], ...]], ctx: ReadingCtx,
+) -> tuple[bool, str]:
+    """判**一条**读数声明。返回 `(过?, 说明)`。`§A4` 与它的已知答案对照共用它。"""
+    if name not in READINGS:
+        return False, (f"读数 {name!r} 不在注册表里（只有 {sorted(READINGS)}）"
+                       f"⇒ 声明**指不到实现**")
+    f, summary = READINGS[name]
+
+    if category in ("distributive", "algebraic"):
+        if category == "distributive":
+            gname = decl.get("G")
+            if gname not in COMBINERS:
+                return False, (f"`{name}` 声称 distributive，却没给出可用的 `G`"
+                               f"（{gname!r}；只有 {sorted(COMBINERS)}）")
+        else:
+            sname, hname = decl.get("摘要"), decl.get("H")
+            if sname not in SUMMARIES or hname not in H_FUNCS:
+                return False, (f"`{name}` 声称 algebraic，却没给出可用的 `摘要` / `H`"
+                               f"（{sname!r} / {hname!r}）")
+        bad: list[str] = []
+        judged = 0
+        for block, ps in parts.items():
+            if len(ps) < 2:
+                continue                      # 叶：没有下层 ⇒ 这一块不判
+            judged += 1
+            lhs = f(frozenset().union(*ps), ctx)
+            if category == "distributive":
+                rhs = COMBINERS[str(gname)]([f(p, ctx) for p in ps])
+                why = f"G={gname}"
+            else:
+                sf = SUMMARIES[str(sname)]
+                acc = [0.0] * len(sf(frozenset(), ctx))
+                for p in ps:
+                    for i, x in enumerate(sf(p, ctx)):
+                        acc[i] += x
+                rhs = H_FUNCS[str(hname)](tuple(acc))
+                why = f"摘要={sname}、H={hname}"
+            if not _close(lhs, rhs):
+                bad.append(f"{sorted(block)[:3]}…：实测 {lhs} ≠ 声称 {rhs}")
+        if not judged:
+            return True, "没有一块有下层 ⇒ 这条读数**没有内容**"
+        return ((not bad), (f"{judged} 块逐块对上（{why}）" if not bad
+                            else f"{len(bad)} 块对不上：{bad[:2]}"))
+
+    if category == "holistic":
+        w = decl.get("见证") or {}
+        sname = w.get("摘要")
+        if sname not in SUMMARIES:
+            return False, (f"`{name}` 声称 holistic，却没附可用的**见证摘要**"
+                           f"（{sname!r}；只有 {sorted(SUMMARIES)}）")
+        sf = SUMMARIES[str(sname)]
+        A = frozenset(w.get("A") or ())
+        B = frozenset(w.get("B") or ())
+        if not A or not B:
+            return False, f"`{name}` 声称 holistic，却没附见证的**两组方向**（A / B）"
+        unknown = sorted((A | B) - set(ctx.value_of))[:3]
+        if unknown:
+            return False, f"见证里的方向不在 `universe` 里：{unknown}"
+        sa, sb = sf(A, ctx), sf(B, ctx)
+        fa, fb = f(A, ctx), f(B, ctx)
+        if sa != sb:
+            return False, (f"见证**不成立**：`{sname}` 在 A / B 上本来就不同"
+                           f"（{sa} vs {sb}）⇒ 它证明不了「这个摘要不够用」")
+        if _close(fa, fb):
+            return False, (f"见证**不成立**：`{sname}` 相同（{sa}）而读数**也相同**"
+                           f"（{fa}）⇒ 这个摘要**够用** ⇒ 「holistic」没有支撑")
+        return True, (f"见证成立：`{sname}` 两边都是 {sa}，而读数 {fa} ≠ {fb} "
+                      f"⇒ 定长摘要分不开它们 ⇒ 「无常数额摘要」有支撑")
+
+    return False, f"未知类别 {category!r}（只认 distributive / algebraic / holistic）"
+
+
+def a4_category(
+    parts: dict[frozenset[str], tuple[frozenset[str], ...]],
+    ctx: ReadingCtx, decls: Sequence[dict[str, Any]], rep: Report,
+) -> None:
+    """`§A4` —— 逐条判 `view_spec.json` 里声明的读数。
+
+    ⚠️ **两条「跳过」，都不许折成「过」**：
+
+        没有一块有下层（全是叶）  ⇒ 判不了（设计稿 §9 的「视图没有子视图 ⇒ 跳过」）
+        一条读数都没声明          ⇒ 判不了。**不许默认成 distributive** ——
+                                    设计稿 §10 停止条件 2 逐字要求「停」。
+
+    ⚠️ 一条读数声明都**指不到实现**（名字不在 `READINGS` 里）也判红：
+       那说明声明是**写错了**，与「还没写」是两件事（同 `spec_for` 的纪律）。
+    """
+    title = "视图类别：distributive 的 `G` / holistic 的见证都要实测成立"
+    if not any(len(ps) >= 2 for ps in parts.values()):
+        rep.add("A4", title, Tri.UNEXPANDED,
+                "没有一块有下层（全是叶）⇒ 判不了，**不是通过**（设计稿 §9）")
+        return
+    if not decls:
+        rep.add("A4", title, Tri.UNEXPANDED,
+                "**没有任何读数声明** ⇒ 判不了。不许默认成 distributive"
+                "（设计稿 §10 停止条件 2：定不下来就**停**）")
+        return
+    bad: list[str] = []
+    okd: list[str] = []
+    for decl in decls:
+        name = str(decl.get("名") or "")
+        ok, why = judge_reading(name, str(decl.get("类别") or ""), decl, parts, ctx)
+        (okd if ok else bad).append(f"{name}：{why}")
+    rep.add("A4", title, Tri.NO if bad else Tri.YES,
+            (f"{len(bad)}/{len(decls)} 条读数声明与实测不符：{bad[:2]}") if bad
+            else f"{len(decls)} 条读数声明全部实测成立：{okd}")
+
+
+# --- §A5 账逐条可指认 ---------------------------------------------------------
+#
+# Navlakha 的「摘要 `S` + 修正项 `C`」= 本设计的「视图 + 账」（设计稿 §6）。
+# 本设计把「**有界**误差」读成「**账必须是真的**」：账**不许**是「剩下的那些」
+# 这种含糊说法 —— 它必须**逐条可指认**。
+#
+# ⚠️ `§A5` **只判可指认**，不判完整性。完整性（「漏的恰好是账上那些」）
+#    是 `B4` 已经在做的事；两条判同一件事会让「红」分不清是谁的。
+#    ⇒ 这里判三件事，每一件都能单独红：
+#
+#        ① 每条账的方向**指得到某张视图**（`did ∈ ∪ block`）
+#        ② 每条账的项**是语料里的项**
+#        ③ 每条账**成立**：项真的在 `members(did)` 里，而**不在任何子方向的**里面
+#           —— ③ 用的是**独立重算**的 oracle（从成员集现算），不是读账本自己的说法
+#
+# ⚠️ 账为空 ⇒ **跳过**（设计稿 §9）。判据的适用范围由「它在这条方向上有没有内容」
+#    决定：批建路径上 `滞留 == 0`、`根覆盖之外 == 0` ⇒ 账**本来就该是空的**。
+#    那不是「通过」，是「这一层没有东西要记账」。
+
+
+def warranted_of(kernel: Any, did: str, item: str) -> bool:
+    """**独立重算**的 oracle：`item` 真的落在 `did` 上，而且**没有**子方向收它。
+
+    ⚠️ **从成员集现算**，不读账本自己的说法。拿账本当 oracle 会与被判对象
+       共享盲点（两边同时错、判据永远绿 —— `false-green` 形状 3）。
+       这条 oracle 只用到 `members_of` / `children_of` 两个访问器。
+    """
+    d = kernel.direction(did)
+    if item not in kernel.members_of(d):
+        return False
+    return all(item not in kernel.members_of(c) for c in kernel.children_of(d))
+
+
+def ledger_entries(kernel: Any, spec: ViewSpec) -> list[tuple[str, str, str]]:
+    """把内核账本里「**视图答不出的那些**」抽成 `(方向, 项, 理由)`。
+
+    只取两类，因为它们才**带着一个具体的项**：
+
+        滞留（`§10.2` 出路 (4)）  项在父的覆盖里，但**每个子方向都证明不收它**
+        根覆盖之外（出路 (1)）    项按证明落在根的覆盖之外，**根本没进结构**
+
+    ⚠️ `born` / `witness_updated` / `unsplittable` **不取** —— 它们是**结构事件**，
+       不带项。把它们混进来会让账里出现一堆「指不出项」的行，
+       于是「账不可指认」这条判据**从第一天起就常驻红** ——
+       而一条常驻的红等于没人再看红。
+
+    ⚠️ 批建路径上这两类**本来就该是空的**（`滞留 == 0`、`根覆盖之外 == 0`），
+       所以 `§A5` 在生产上会报**跳过**。那不是「通过」，是「这一层没有东西要记账」
+       —— 它的红路由注入单独验（`test_injections.inj_a5`）。
+    """
+    from ..core.direction import EVENT_OUT_OF_SCOPE
+
+    out: list[tuple[str, str, str]] = []
+    for did in spec.universe:
+        for item in sorted(kernel.stayed_of(kernel.direction(did))):
+            out.append((did, item, "滞留：每个子方向都证明不收它（§10.2 出路 (4)）"))
+    for ev in kernel.ledger:
+        if ev.kind == EVENT_OUT_OF_SCOPE:
+            out.append((ev.did, str(ev.detail.get("item", "")),
+                        "根覆盖之外：按证明落在根的覆盖之外（§10.2 出路 (1)）"))
+    return out
+
+
+def a5_ledger(
+    entries: Sequence[tuple[str, str, str]],
+    vs: ViewSet,
+    warranted: Callable[[str, str], bool],
+    corpus_items: frozenset[str],
+    rep: Report,
+) -> None:
+    """`§A5` —— 账里的每一条都要**指得到**具体方向 + 项，且**成立**。
+
+    `entries` 每条是 `(did, item, 理由)`；`warranted(did, item)` 是**独立重算**的
+    oracle（从成员集现算，不读账本）。理由字符串只用于**报告**，不参与判定 ——
+    判定只认那两件事，因为「理由」是自由文本，判它等于判措辞。
+    """
+    title = "视图账：每条都要指得到具体方向 + 项，且独立重算下成立"
+    if not entries:
+        rep.add("A5", title, Tri.UNEXPANDED,
+                "账为空 ⇒ 判不了，**不是通过**（设计稿 §9）。批建路径上 "
+                "`滞留 == 0`、`根覆盖之外 == 0` ⇒ 账本来就该是空的")
+        return
+    in_views: set[str] = set()
+    for v in vs.views:
+        in_views |= set(v.block)
+    bad: list[str] = []
+    for did, item, _why in entries:
+        if did not in in_views:
+            bad.append(f"{did}/{item}：方向 `{did}` **不在任何视图的块里** ⇒ 指不到视图")
+        elif item not in corpus_items:
+            bad.append(f"{did}/{item}：项 `{item}` **不是语料里的项**")
+        elif not warranted(did, item):
+            bad.append(f"{did}/{item}：独立重算**不成立**（项不在 `members({did})` 里，"
+                       f"或在某个子方向的成员里）")
+    rep.add("A5", title, Tri.NO if bad else Tri.YES,
+            (f"{len(bad)}/{len(entries)} 条指不到：{bad[:2]}") if bad
+            else f"{len(entries)} 条账全部指得到方向与项，且独立重算下条条成立")
+
+
+# --- §A6 落盘-读回 ------------------------------------------------------------
+
+
+def a6_roundtrip(
+    vs: ViewSet, kernel: Any, cover: Callable[[Any], frozenset[str]], plugin: Any,
+    rep: Report, path: Any = None,
+    to_d: Callable[[Any], dict] | None = None,
+    from_d: Callable[..., Any] | None = None,
+) -> None:
+    """`§A6` —— 落盘 → 读回 → **再跑 `§A1`**；而且存档**不许带派生边**。
+
+    三件事各能单独红：
+
+        ① 读回的**权威边**（`spec` / `q` / `block`）必须与原来逐字相同
+        ② 存档**不许带派生边**（`payload` / `concretization` / `covered`）
+           —— 带了就是「各存一份」（`§10.2 D`），而**各存一份正是漂移唯一可能的来源**
+        ③ 读回之后 `§A1` 仍然成立
+
+    ⚠️ ②**不是洁癖**。派生边在盘上 ⇒ 「盘上的值」与「按 `§I2` 现算的值」变成
+       **两个可以不一致的东西**，而它们本可以只有一个。
+       ⇒ 这一条判的就是**「漂移不可能发生」这件事本身**，而不是等漂移了再去抓。
+       与内核那边同形：`core/persist.py` 的 `_to_dict_storing_derived` 是**对照**，
+       不是备选方案。
+
+    ## `to_d` / `from_d` 是给**对照**用的口子，不是配置项
+
+    默认走真实现（`view_persist.to_dict` / `from_dict`）。留这两个参数是为了让
+    「**② 与 ③ 是两个分支**」这件事**能被实测**，而不是靠说 ——
+    见 `a6_branch_split`：四条路各跑一次，逐条看哪个分支亮。
+
+    ⚠️ 没有落盘 ⇒ **跳过**（设计稿 §9）。`run_checks` 会传一个临时路径，
+       所以生产路径上这条**是跑的**；跳过那条路由测试单独验。
+    """
+    title = "视图落盘-读回：权威边逐字相同、存档不带派生边、读回后 §A1 仍成立"
+    if path is None:
+        rep.add("A6", title, Tri.UNEXPANDED,
+                "没有落盘 ⇒ 判不了，**不是通过**（设计稿 §9）")
+        return
+    br = a6_branches(vs, kernel, cover, plugin, path, to_d=to_d, from_d=from_d)
+    bad = br["①"] + br["②"] + br["③"]
+    rep.add("A6", title, Tri.NO if bad else Tri.YES,
+            (f"{len(bad)} 处：{bad[:2]}") if bad
+            else f"{len(vs.views)} 张视图落盘-读回：权威边逐字相同、"
+                 f"存档 {br['条数']} 条**无派生栏**、读回后 `§A1` 仍绿")
+
+
+def a6_branches(
+    vs: ViewSet, kernel: Any, cover: Callable[[Any], frozenset[str]], plugin: Any,
+    path: Any, to_d: Callable[[Any], dict] | None = None,
+    from_d: Callable[..., Any] | None = None,
+) -> dict[str, Any]:
+    """`§A6` 的三个分支**分开**报 —— 返回 `{"①": [...], "②": [...], "③": [...], "条数": n}`。
+
+    ⚠️ 为什么要拆开而不是拼成一句话：`a6_branch_split` 要**逐分支**断言
+       「只上 `to_d` 时 ② 亮而 ③ 不亮」。从**散文**里认分支是靠不住的
+       （改一个措辞就悄悄失效）—— 判据的形状必须是**结构**，不是措辞。
+    """
+    from ..core import view_persist as vp
+
+    to_d = to_d or vp.to_dict
+    from_d = from_d or vp.from_dict
+    path.write_text(json.dumps(to_d(vs), ensure_ascii=False, sort_keys=True, indent=2),
+                    encoding="utf-8")
+    stored = json.loads(path.read_text(encoding="utf-8"))
+    read = from_d(stored, kernel, cover, plugin)
+
+    b1: list[str] = []
+    if read.spec != vs.spec or read.q != vs.q:
+        b1.append("读回的 `spec` / `q` 与原来不同")
+    got = {v.vid: v.block for v in read.views}
+    want = {v.vid: v.block for v in vs.views}
+    if got != want:
+        b1.append(f"读回的块不同：{[k for k in want if got.get(k) != want[k]][:2]}")
+
+    b2: list[str] = []
+    derived = sorted({k for row in stored.get("视图") or ()
+                      for k in row if k in ("payload", "concretization", "covered")})
+    if derived:
+        b2.append(f"存档带了**派生边** {derived} ⇒ 「各存一份」的形态 "
+                  f"（漂移唯一可能的来源，`§10.2 D`）")
+
+    b3: list[str] = []
+    rep_a1 = Report(plugin="(视图·读回)", expects=("A1",))
+    a1_soundness(read, rep_a1)
+    a1_ok = next((a.result for a in rep_a1.assertions if a.code == "A1"), Tri.UNEXPANDED)
+    if a1_ok is not Tri.YES:
+        b3.append(f"读回后 `§A1` 不是绿的（{a1_ok}）—— 盘上的派生值与现算值**漂移了**")
+
+    return {"①": b1, "②": b2, "③": b3, "条数": len(stored.get("视图") or ())}
+
+
 # --- 已知答案的对照组（合成图，三态各一例） ------------------------------------
 
 def known_answer_specs() -> list[dict[str, Any]]:
@@ -491,3 +927,239 @@ def a1_known_answer(dropped: bool) -> Tri:
     rep = Report(plugin="(合成)")
     a1_soundness(ViewSet(spec=spec, q=(frozenset({"d1", "d2"}),), views=(v,)), rep)
     return _result(rep, "A1")
+
+
+# --- `§A4`–`§A6` 的合成对照 --------------------------------------------------
+#
+# ⚠️ 与 `a1_known_answer` 同一条纪律：**不碰内核、不碰语料**。
+#    这里要对照的是「判据会不会红」，不是「真语料上是什么数」——
+#    后者由 `run_tests.test_view_*` 读真语料跑。两件事分开，各自说清。
+#
+# ⚠️ **合成图上的读数必须是手推得出来的**（写在 `want` 旁边）。
+#    「跑一遍看看」不构成对照：它只会把实现现在的行为固化成「期望」。
+
+#: `§A4` 合成对照用的方向 → 数值 / 覆盖。挑这五个数是为了**手推得动**：
+#:
+#:     {a,b,c} = {1,2,5}   和 8   计数 3   最大 5   平均 8/3   中位数 2
+#:     {a,b}   = {1,2}     和 3   计数 2   最大 2   平均 1.5   中位数 1.5
+#:     {c}     = {5}       和 5   计数 1   最大 5   平均 5     中位数 5
+#:
+#: ⇒ `计数` / `最大` / `平均` 三条**手推就该过**；而
+#:   `中位数` 若被标成 `distributive`（`G=取平均`）⇒ `2 ≠ (1.5+5)/2 = 3.25` ⇒ **该红**。
+_A4_VALUES = {"a": 1.0, "b": 2.0, "c": 5.0, "d": 3.0, "e": 4.0}
+_A4_COVERS = {
+    "a": frozenset({"i1"}), "b": frozenset({"i2"}), "c": frozenset({"i2", "i3"}),
+    "d": frozenset({"i3"}), "e": frozenset({"i4"}),
+}
+
+
+def _a4_parts() -> tuple[dict[frozenset[str], tuple[frozenset[str], ...]], ReadingCtx]:
+    ctx = ReadingCtx(value_of=dict(_A4_VALUES), cover_of=dict(_A4_COVERS))
+    block = frozenset({"a", "b", "c"})
+    parts = {block: (frozenset({"a", "b"}), frozenset({"c"}))}
+    return parts, ctx
+
+
+#: `(声明, 手推的答案)` —— `want` 是**手推**出来的，不是跑出来抄的。
+_A4_CASES: list[tuple[dict[str, Any], bool]] = [
+    ({"名": "计数", "类别": "distributive", "G": "取和"}, True),
+    ({"名": "最大", "类别": "distributive", "G": "取最大"}, True),
+    ({"名": "平均", "类别": "algebraic", "摘要": "计数与和", "H": "和除计数"}, True),
+    # ↓ 这两条是**红的对照**：「类别说错了」与「指不到实现」各一例。
+    ({"名": "中位数", "类别": "distributive", "G": "取平均"}, False),
+    ({"名": "不存在的读数", "类别": "distributive", "G": "取和"}, False),
+    # ↓ holistic 的两条路：见证成立 ⇒ 过；见证不成立（A / B 读数相同）⇒ 红。
+    ({"名": "中位数", "类别": "holistic", "摘要": "计数与和",
+      "见证": {"摘要": "计数与和", "A": ["a", "b", "c"], "B": ["a", "d", "e"]}}, True),
+    ({"名": "中位数", "类别": "holistic", "摘要": "计数与和",
+      "见证": {"摘要": "计数与和", "A": ["a", "b", "c"], "B": ["b", "a", "c"]}}, False),
+]
+
+
+def a4_known_answer() -> list[str]:
+    """`§A4` 的合成对照。返回**失败清单**（空 = 全对）。
+
+    手推依据（`_A4_VALUES` 那张表）：`{a,b,c} = {1,2,5}`。
+
+        `计数`+`取和`       3 == 2 + 1                        ⇒ 过
+        `最大`+`取最大`     5 == max(2, 5)                    ⇒ 过
+        `平均`+`和除计数`   8/3 == (3+5)/(2+1)                ⇒ 过
+        `中位数`+`取平均`   2 ≠ (1.5+5)/2 = 3.25              ⇒ 红（类别说错了）
+        `中位数` holistic   见证 `{a,b,c}` vs `{a,d,e}`：
+                            摘要都是 `(3, 8)`，中位数 2 ≠ 3    ⇒ 过
+        同一个见证换成 `{a,b,c}` vs `{b,a,c}`：
+                            摘要相同、读数**也**相同 ⇒ 证明不了什么 ⇒ 红
+    """
+    parts, ctx = _a4_parts()
+    fails: list[str] = []
+    for decl, want in _A4_CASES:
+        got, why = judge_reading(str(decl["名"]), str(decl["类别"]), decl, parts, ctx)
+        if got is not want:
+            fails.append(f"{decl['名']}/{decl['类别']}：期望 {'过' if want else '红'}，"
+                         f"实测 {'过' if got else '红'} —— {why}")
+    # ★ 还有两条**跳过**（设计稿 §9）：没有下层、以及一条读数都没声明。
+    #   跳过**不是过** —— 这里用 `Tri` 直接比，比布尔更严。
+    rep = Report(plugin="(合成)")
+    a4_category({frozenset({"a"}): (frozenset({"a"}),)}, ctx,
+                [d for d, _ in _A4_CASES], rep)
+    if _result(rep, "A4") is not Tri.UNEXPANDED:
+        fails.append(f"全是叶 ⇒ `§A4` 该跳过，实测 {_result(rep, 'A4')}")
+    rep = Report(plugin="(合成)")
+    a4_category(parts, ctx, [], rep)
+    if _result(rep, "A4") is not Tri.UNEXPANDED:
+        fails.append(f"一条读数都没声明 ⇒ `§A4` 该跳过，实测 {_result(rep, 'A4')}")
+    return fails
+
+
+def a5_known_answer(dropped: bool) -> Tri:
+    """`§A5` 的合成对照 —— 一条**手推该成立**的账；`dropped=True` 时方向指不到。
+
+    手推：`members(D1) = {x1, x2}`、`members(D2) = {x1}` ⇒
+        账 `(D1, x2)`：`x2` 在 `members(D1)` 里、**不在任何子方向的**里面 ⇒ 成立
+        账 `(ZZ, x2)`：`ZZ` 不在任何视图的块里 ⇒ 指不到 ⇒ 红
+    """
+    spec = ViewSpec(universe=("D1", "D2"), partition=(frozenset({"D1", "D2"}),),
+                    relation=frozenset({("D1", "D2")}))
+    vs = ViewSet(spec=spec, q=(frozenset({"D1", "D2"}),),
+                 views=(View(vid="V0", block=frozenset({"D1", "D2"})),))
+    members = {"D1": frozenset({"x1", "x2"}), "D2": frozenset({"x1"})}
+
+    def warranted(did: str, item: str) -> bool:
+        kids: set[str] = set()
+        for d, ms in members.items():
+            if d != did:
+                kids |= set(ms)
+        return item in members.get(did, frozenset()) and item not in kids
+
+    entries = [(("ZZ" if dropped else "D1"), "x2", "手推：D2 不收它")]
+    rep = Report(plugin="(合成)")
+    a5_ledger(entries, vs, warranted, frozenset({"x1", "x2", "x3"}), rep)
+    return _result(rep, "A5")
+
+
+# --- `§A6` 合成对照要的两个最小替身 ------------------------------------------
+#
+# ⚠️ 它们**只**提供 `§A6` 真正用到的那几个访问器，不冒充内核。
+#    用真内核要建一棵树、跑一遍语料，而这里要对照的是「落盘-读回这条判据会不会红」。
+#    ⇒ 与 `a1_known_answer` 同一条纪律：**最便宜的那一档**。
+
+class _StubPlugin:
+    """最小插件：`合并` = 把各方向的 payload 并起来（`§I2` 的契约里最弱的一种）。"""
+
+    def merge(self, dirs: Any) -> frozenset[str]:
+        out: set[str] = set()
+        for d in dirs:
+            out |= set(d.payload)
+        return frozenset(out)
+
+
+class _StubKernel:
+    """最小内核：只给 `from_dict` / `§A1` 要的 `direction` / `members_of`。"""
+
+    def __init__(self, dirs: tuple[Any, ...], members: dict[str, frozenset[str]]) -> None:
+        self._d = {d.did: d for d in dirs}
+        self._m = members
+
+    def direction(self, did: str) -> Any:
+        return self._d[did]
+
+    def members_of(self, d: Any) -> frozenset[str]:
+        return self._m[d.did]
+
+    def children_of(self, d: Any) -> tuple[Any, ...]:
+        return ()
+
+
+def _a6_fixture() -> tuple[Any, Any, Any, Any]:
+    """`§A6` 合成对照的**坏** `vs` + 最小替身。返回 `(vs, kernel, cover, plugin)`。
+
+    ⚠️ `vs` 是**故意坏的**：`block = {d1, d2}`、`covered = {i1, i2}`，
+       而 `concretization = {i1}` —— 它自己就违反 `§A1`（`{i1,i2} ⊄ {i1}`）。
+       坏输入是这里的关键：**真实现会把它修好**（读回时按 `§I2` 现算），
+       而「存了派生边又信任它」的那条路会把它**原样搬回来**。
+    """
+    from ..core.direction import ORIGIN_EXOGENOUS, Direction
+
+    d1 = Direction(did="d1", rank=1, payload=frozenset({"i1"}), witness=(),
+                   origin=ORIGIN_EXOGENOUS, parent=None)
+    d2 = Direction(did="d2", rank=2, payload=frozenset({"i2"}), witness=("d1",),
+                   origin="split", parent="d1")
+    kernel = _StubKernel((d1, d2), {"d1": frozenset({"i1", "i2"}),
+                                    "d2": frozenset({"i2"})})
+    spec = ViewSpec(universe=("d1", "d2"), partition=(frozenset({"d1", "d2"}),),
+                    relation=frozenset({("d1", "d2")}))
+    vs = ViewSet(spec=spec, q=(frozenset({"d1", "d2"}),),
+                 views=(View(vid="V0", block=frozenset({"d1", "d2"}),
+                             concretization=frozenset({"i1"}),
+                             covered=frozenset({"i1", "i2"})),))
+    return vs, kernel, (lambda p: frozenset(p)), _StubPlugin()
+
+
+def _a6_br(**kw: Any) -> dict[str, Any]:
+    import tempfile
+
+    vs, kernel, cover, plugin = _a6_fixture()
+    with tempfile.TemporaryDirectory() as td:
+        return a6_branches(vs, kernel, cover, plugin, Path(td) / "views.json", **kw)
+
+
+def a6_known_answer(drifted: bool) -> Tri:
+    """`§A6` 的合成对照 —— 同一个 `vs`，真实现 ⇒ 过，两个对照实现一起上 ⇒ 红。
+
+    手推（`_a6_fixture` 那个坏 `vs`）：
+
+        真实现            盘上**没有** `concretization` ⇒ 读回时按 `§I2` 现算
+                          ⇒ 算出来是 `{i1,i2}` ⇒ `§A1` 绿 ⇒ **过**
+                          （「落盘只存权威边」买到的东西：**盘上的错东西修得回来**）
+        两个对照都上      盘上存了 `{i1}`、读回时信任它 ⇒ 算出来还是 `{i1}`
+                          ⇒ `§A1` 红 ⇒ **红**
+
+    ⚠️ 分支的分工由 `a6_branch_split` 逐条实测 —— 这一条只判**红不红**。
+    """
+    from ..core import view_persist as vp
+
+    kw: dict[str, Any] = ({"to_d": vp._to_dict_storing_derived,
+                           "from_d": vp._from_dict_trusting_derived} if drifted else {})
+    br = _a6_br(**kw)
+    return Tri.NO if (br["①"] + br["②"] + br["③"]) else Tri.YES
+
+
+def a6_branch_split() -> list[str]:
+    """验「② 与 ③ 是**两个**分支」—— 也就是「两个对照缺一不可」这句话本身。
+
+    四条路各跑一次，**逐分支**看谁亮（实测，见下表的注释）：
+
+        真实现          ② 不亮、③ 不亮               ⇒ 过
+        只 `from_d`     ② 不亮、③ 不亮（**空转**）     ⇒ 过
+        只 `to_d`       ② **亮**、③ 不亮              ⇒ 红
+        两个都上        ② **亮**、③ **亮**            ⇒ 红
+
+    ⇒ 「只上 `to_d`」那一行正是要证的东西：**它抓得到 ②，但 ③ 永远不亮**。
+      于是**只用 `to_d` 的注入会让「读回后 `§A1` 仍成立」这一条永远没被验过** ——
+      这就是两个对照都必须上的理由。少了这一条，「③ 会红」有两种解释
+      （漂移真的发生了 / 随便上个对照都会红），分不开就等于没验。
+    """
+    from ..core import view_persist as vp
+
+    rows = [
+        ("真实现", {}, (False, False), True),
+        ("只 `from_d`（空转：盘上没有派生栏，无从信任）",
+         {"from_d": vp._from_dict_trusting_derived}, (False, False), True),
+        ("只 `to_d`（抓得到 ②，但 ③ 不亮）",
+         {"to_d": vp._to_dict_storing_derived}, (True, False), False),
+        ("两个都上", {"to_d": vp._to_dict_storing_derived,
+                      "from_d": vp._from_dict_trusting_derived}, (True, True), False),
+    ]
+    fails: list[str] = []
+    for label, kw, (want2, want3), want_pass in rows:
+        br = _a6_br(**kw)
+        got2, got3 = bool(br["②"]), bool(br["③"])
+        if (got2, got3) != (want2, want3):
+            fails.append(f"{label}：分支期望 ②={want2} ③={want3}，"
+                         f"实测 ②={got2} ③={got3}")
+        if bool(br["①"]):
+            fails.append(f"{label}：分支 ① 不该亮（权威边没被动过），实测亮了")
+        if (not (got2 or got3)) is not want_pass:
+            fails.append(f"{label}：期望{'过' if want_pass else '红'}，"
+                         f"实测{'过' if not (got2 or got3) else '红'}")
+    return fails

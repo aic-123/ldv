@@ -53,6 +53,7 @@
 
 from __future__ import annotations
 
+import itertools
 import sys
 import tempfile
 from dataclasses import replace
@@ -77,12 +78,22 @@ from ldv.checks._fixtures import (  # noqa: E402
 )
 from ldv.checks._framework import Report  # noqa: E402
 from ldv.checks.abstraction import (  # noqa: E402
+    READINGS,
+    SUMMARIES,
+    ReadingCtx,
     ViewSet,
     a1_soundness,
     a2_stable,
     a3_coarsest,
+    a4_category,
+    a5_ledger,
+    a6_roundtrip,
     build_views,
+    reading_ctx,
+    subtree_of,
+    warranted_of,
 )
+from ldv.core.views import view_parts  # noqa: E402
 from ldv.checks.contract import (  # noqa: E402
     b1_no_false_negative,
     b2_merge_covers,
@@ -1096,7 +1107,7 @@ def metric_progress(nodes: Any, edges: Any, injected: bool) -> bool:
     return progress_profile(k, coverage_of("reach", dn, de))["最长没变细连续段"] == 4
 
 
-# ═══ §A1 / §A2 / §A3（流程 E · 抽象层）═════════════════════════════════════════
+# ═══ §A1–§A6（流程 E · 抽象层）════════════════════════════════════════════════
 #
 # 判据本体在 `checks/abstraction.py`，算法在 `core/views.py`。
 # 注入的形态都一样：**在真链路上装出视图集合，然后只动那个视图集合的一处**。
@@ -1106,12 +1117,12 @@ def metric_progress(nodes: Any, edges: Any, injected: bool) -> bool:
 # §K9 / `B14` 禁的是「**系统**替人猜 `P` / `E`」：生产路径只能从
 # `ldv/checks/view_spec.json` 读（见 `run_checks.view_report`，读不到就**跳过**）。
 # **测试就是人的代言**，所以测试里构造 `P` / `E` 不但允许，而且是**必须**的 ——
-# 否则这三条判据的注入就挂在「那个配置文件在不在」上：
+# 否则这六条判据的注入就挂在「那个配置文件在不在」上：
 # 文件一没，基线就塌，注入验证报出来的是**配置缺失**，不是**判据能不能红**。
 #
 # ⇒ 分工写清楚，免得下一个人以为哪边漏了：
 #
-#     注入验证（本段）          「判据能不能红」        —— 自带 `P` / `E`
+#     注入验证（本段）          「判据能不能红」        —— 自带 `P` / `E` / 读数声明 / 账
 #     `run_tests.test_view_spec_file`  「committed 的声明成不成立」—— 读那个文件
 #
 # ## `P` / `E` 取什么
@@ -1147,11 +1158,31 @@ def _view_chain(nodes: Any, edges: Any, head: int | None = None):
     return spec, kernel, plugin, coverage_of("keyset", nodes, edges)
 
 
-def _view_report(vs: ViewSet) -> Report:
+def _view_report(
+    vs: ViewSet, *, kernel: Any = None, cover: Any = None, plugin: Any = None,
+    decls: list[dict[str, Any]] | None = None,
+    entries: list[tuple[str, str, str]] | None = None,
+    a6kw: dict[str, Any] | None = None,
+) -> Report:
+    """跑视图侧的判据。`kernel` / `decls` / `entries` / `a6kw` 不给就**不跑**那一条。
+
+    ⚠️ 不给就**不跑**，而不是「跑成跳过」：注入要验的是**那一条判据**，
+       把别的判据也塞进来会让「谁红的」分不清。驱动只读 `code` 那一条。
+    """
     rep = _rep()
     a1_soundness(vs, rep)
     a2_stable(vs.spec, vs.q, rep)
     a3_coarsest(vs.spec, vs.q, rep)
+    if kernel is not None and decls is not None:
+        a4_category(view_parts(vs.q, lambda d: subtree_of(kernel, d)),
+                    reading_ctx(kernel, vs.spec), decls, rep)
+    if kernel is not None and entries is not None:
+        a5_ledger(entries, vs, lambda did, item: warranted_of(kernel, did, item),
+                  frozenset(kernel.items), rep)
+    if a6kw is not None:
+        with tempfile.TemporaryDirectory() as td:
+            a6_roundtrip(vs, kernel, cover, plugin, rep,
+                         path=Path(td) / "views.json", **a6kw)
     return rep
 
 
@@ -1257,6 +1288,160 @@ def inj_a3_not_coarsest(nodes: Any, edges: Any, injected: bool) -> Report:
     return _view_report(vs)
 
 
+# ═══ §A4 ═════════════════════════════════════════════════════════════════════
+
+def _median_witness(ctx: ReadingCtx) -> tuple[list[str], list[str]]:
+    """从**真数据**里搜一组「定长摘要相同、中位数不同」的方向 —— 见证不许编。
+
+    ⚠️ 编一个见证（照抄别处的方向 id）在真链路上可能**根本不成立**，
+       那时 `§A4` 报红是**对的**，而注入会以为「基线该是绿的」——
+       于是失败被记在判据头上，真正的原因（见证是编的）看不见。
+
+    ⚠️ 只搜**三元素**集合：两个元素的集合只要和相同，中位数必然相同
+       （`(a+b)/2`），永远给不出见证。`C(25,3) = 2300` ⇒ 毫秒级。
+    """
+    f, _ = READINGS["中位数"]
+    sf = SUMMARIES["计数与和"]
+    buckets: dict[Any, list[frozenset[str]]] = {}
+    for combo in itertools.combinations(sorted(ctx.value_of), 3):
+        S = frozenset(combo)
+        buckets.setdefault(sf(S, ctx), []).append(S)
+    for group in buckets.values():
+        for A, B in itertools.combinations(group, 2):
+            if abs(float(f(A, ctx)) - float(f(B, ctx))) > 1e-9:
+                return sorted(A), sorted(B)
+    raise AssertionError("真链路上找不到中位数的见证 ⇒ 这条注入做不出来（报错，不静默跳过）")
+
+
+def inj_a4(nodes: Any, edges: Any, injected: bool) -> Report:
+    """`§A4` 注入：把 `中位数` 从 `holistic` **改标成** `distributive`。
+
+        基线  三类各一条（`计数` distributive / `平均` algebraic /
+              `中位数` holistic + **真数据里搜出来的**见证）  ⇒ **绿**
+        注入  `中位数` 标成 distributive（`G=取平均`）        ⇒ **红**
+
+    设计稿 §9 那张表的 `§A4` 行逐字就是这一条：「把 `Median` 标成 distributive ⇒ 红」。
+
+    ⚠️ 这条注入只改**一条**声明，别的三条一个字没动 ⇒ 红只可能来自那一条
+       （`a4_category` 的 detail 会印出是哪条、实测多少、声称多少）。
+       若把基线整个换掉，就分不清「红」是注入造成的还是基线本来就不行。
+    """
+    spec, kernel, plugin, cover = _view_chain(nodes, edges)
+    vs = build_views(kernel, spec, cover, plugin)
+    ctx = reading_ctx(kernel, spec)
+    A, B = _median_witness(ctx)
+    decls: list[dict[str, Any]] = [
+        {"名": "计数", "类别": "distributive", "G": "取和"},
+        {"名": "平均", "类别": "algebraic", "摘要": "计数与和", "H": "和除计数"},
+        {"名": "中位数", "类别": "holistic", "摘要": "计数与和",
+         "见证": {"摘要": "计数与和", "A": A, "B": B}},
+    ]
+    if injected:
+        decls[-1] = {"名": "中位数", "类别": "distributive", "G": "取平均"}
+    return _view_report(vs, kernel=kernel, decls=decls)
+
+
+# ═══ §A5 ═════════════════════════════════════════════════════════════════════
+
+def _a5_account(kernel: Any, spec: ViewSpec) -> list[tuple[str, str, str]]:
+    """一份**条条成立**的账：每个方向的**结构停留项** = `members(d) \\ ∪ members(子)`。
+
+    ⚠️ **不直接用 `ledger_entries`**：批建路径上账**本来就是空的**
+       （`滞留 == 0`、`根覆盖之外 == 0`）⇒ `§A5` 报**跳过**，而注入验证要求
+       **基线绿**。跳过不是绿。⇒ 由测试（人的代言）给一份非空且条条成立的账。
+
+    ⚠️ 这份账是不是「恰好该有那些条」是 **`B4` 的事**，`§A5` 只判**可指认**。
+       两条判同一件事会让「红」分不清是谁的（设计稿 §9 的 `§A5` 行写了这条边界）。
+    """
+    out: list[tuple[str, str, str]] = []
+    for did in spec.universe:
+        d = kernel.direction(did)
+        kids: set[str] = set()
+        for c in kernel.children_of(d):
+            kids |= set(kernel.members_of(c))
+        for item in sorted(set(kernel.members_of(d)) - kids):
+            out.append((did, item, "结构停留：子方向都不收它"))
+    return out
+
+
+def inj_a5(nodes: Any, edges: Any, injected: bool) -> Report:
+    """`§A5` 注入：账里有一条的**方向指不到任何视图**。
+
+        基线  一份条条成立的账                              ⇒ **绿**
+        注入  把第一条的方向改成 `ZZ`（不在任何视图的块里）   ⇒ **红**
+
+    ⚠️ 判据有三个**互不替代**的红分支，这一条只走 ①；另外两条各有各的注入行
+       （`A5·项不是语料的项` / `A5·独立重算不成立`）。
+       只配一条的话，「账逐条可指认」这句话的另外两个分支**一次都没被验过**。
+    """
+    spec, kernel, plugin, cover = _view_chain(nodes, edges)
+    vs = build_views(kernel, spec, cover, plugin)
+    entries = _a5_account(kernel, spec)
+    if not entries:
+        raise AssertionError("真链路上结构停留项为空 ⇒ 造不出一份非空的账（基线就绿不了）")
+    if injected:
+        entries = [("ZZ", entries[0][1], "编的")] + entries[1:]
+    return _view_report(vs, kernel=kernel, entries=entries)
+
+
+def inj_a5_bad_item(nodes: Any, edges: Any, injected: bool) -> Report:
+    """`§A5` 注入②：账里有一条的**项不是语料里的项**（方向是对的）。"""
+    spec, kernel, plugin, cover = _view_chain(nodes, edges)
+    vs = build_views(kernel, spec, cover, plugin)
+    entries = _a5_account(kernel, spec)
+    if not entries:
+        raise AssertionError("真链路上结构停留项为空 ⇒ 造不出一份非空的账")
+    if injected:
+        entries = [(entries[0][0], "这个项不存在", "编的")] + entries[1:]
+    return _view_report(vs, kernel=kernel, entries=entries)
+
+
+def inj_a5_unwarranted(nodes: Any, edges: Any, injected: bool) -> Report:
+    """`§A5` 注入③：账里有一条**独立重算不成立**（项在语料里，但不在那个方向上）。"""
+    spec, kernel, plugin, cover = _view_chain(nodes, edges)
+    vs = build_views(kernel, spec, cover, plugin)
+    entries = _a5_account(kernel, spec)
+    if not entries:
+        raise AssertionError("真链路上结构停留项为空 ⇒ 造不出一份非空的账")
+    if injected:
+        did = entries[0][0]
+        mine = set(kernel.members_of(kernel.direction(did)))
+        other = sorted(set(kernel.items) - mine)
+        if not other:
+            raise AssertionError(f"`{did}` 的成员集就是整个语料 ⇒ 造不出「不在它上面」的项")
+        entries = [(did, other[0], "编的")] + entries[1:]
+    return _view_report(vs, kernel=kernel, entries=entries)
+
+
+# ═══ §A6 ═════════════════════════════════════════════════════════════════════
+
+def inj_a6(nodes: Any, edges: Any, injected: bool) -> Report:
+    """`§A6` 注入：换成「**存了派生边** + **读回时信任它**」那一对**对照实现**。
+
+        基线  真实现（盘上只有权威边，派生边读回现算）      ⇒ **绿**
+        注入  两个对照都上 ⇒ 盘上带派生栏、读回时信任它     ⇒ **红**
+
+    ⚠️ **必须两个都上**。只上「存派生边」的那一个 ⇒ 读回时照样重算，
+       漂移没了；只上「信任派生边」的那一个 ⇒ 盘上根本没有派生栏，
+       退回重算，漂移也没了。⇒ 单独上任何一个都**造不出漂移**。
+
+    ⚠️ 于是这一条注入里红的是 `§A6` 的**分支②**（存档带了派生边），
+       **不是分支③**（漂移）。分支③ 只有在**盘上的派生值本身就是错的**时候才亮，
+       而那要求基线视图自己就先违反 `§A1` —— 那会让**基线就红**，
+       违反「基线绿 + 注入红」。⇒ 分支③ 由 `run_tests` 的
+       `test_view_a6_branch_split` 在**合成**的坏视图上单独验，两条路各管一段。
+    """
+    from ldv.core import view_persist as vp
+
+    spec, kernel, plugin, cover = _view_chain(nodes, edges)
+    vs = build_views(kernel, spec, cover, plugin)
+    kw: dict[str, Any] = {}
+    if injected:
+        kw = {"to_d": vp._to_dict_storing_derived,
+              "from_d": vp._from_dict_trusting_derived}
+    return _view_report(vs, kernel=kernel, cover=cover, plugin=plugin, a6kw=kw)
+
+
 # ═══ 驱动 ════════════════════════════════════════════════════════════════════
 
 CASES: dict[str, Callable] = {
@@ -1265,6 +1450,7 @@ CASES: dict[str, Callable] = {
     "B11": inj_b11, "B12": inj_b12, "B13": inj_b13, "B14": inj_b14, "B15": inj_b15,
     "B16": inj_b16, "B17": inj_b17, "B18": inj_b18, "B19": inj_b19, "B20": inj_b20,
     "A1": inj_a1, "A2": inj_a2, "A3": inj_a3,
+    "A4": inj_a4, "A5": inj_a5, "A6": inj_a6,
 }
 
 #: 同一条检查的**第二条**判据。键是标签，值是 `(判据编号, 注入函数)`。
@@ -1276,6 +1462,8 @@ EXTRA_CASES: dict[str, tuple[str, Callable]] = {
     "B16·维护路径": ("B16", inj_b16_maintenance),
     "B13·树性": ("B13", inj_b13_two_parents),
     "A3·稳定但更细": ("A3", inj_a3_not_coarsest),
+    "A5·项不是语料的项": ("A5", inj_a5_bad_item),
+    "A5·独立重算不成立": ("A5", inj_a5_unwarranted),
 }
 
 
@@ -1296,13 +1484,13 @@ def _registry_gap() -> tuple[list[str], list[str]]:
         右边  `CASES` 的键 ∪ `EXTRA_CASES` 的值          —— 真被验过的编号
 
     ⚠️ **`VIEW_CODES` 必须一起比进来**，不能只比插件与内核那两批：
-       视图那三条是**另一组**（`Report(plugin="(视图)")`），漏掉它的话
+       视图那六条是**另一组**（`Report(plugin="(视图)")`），漏掉它的话
        「新增一条视图判据、忘了配注入」这件事**照样报全绿** ——
        而这句话对新增的编号一个字节的信息都没有。这正是本节开头那个形状。
 
     ⚠️ 反过来也要比：`VIEW_CODES` **只列已经实现了的**。
-       `§A4` / `§A5` / `§A6` 没实现就**不在**里面 —— 于是「套件全绿」
-       这句话**不覆盖它们**，而且这里是**双向**核对，多写一个编号也会红。
+       少实现一条就**不写进来** —— 于是「套件全绿」这句话**不覆盖它**，
+       而且这里是**双向**核对，多写一个编号也会红。
 
     两个方向都要报，因为它们**症状不同**：
 
