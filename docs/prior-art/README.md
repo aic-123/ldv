@@ -198,13 +198,15 @@ PYTHONIOENCODING=utf-8 PYTHONUTF8=1 "$V" repo/docs/prior-art/verify_quotes.py \
     repo/docs/*.md repo/README.md repo/ldv/MEASUREMENTS.md
 ```
 
-**2026-10-09 实测：引文 255 条｜全覆盖 255｜有缺口 0。**
+**2026-10-09 实测：引文 253 条｜全覆盖 253｜有缺口 0。**
 （**2026-10-08 是 252 条**；那一次改动之前是 208 条 —— 差的 44 条里 43 条全在
 `repo/docs/分层方向视图-多层抽象-前作核验.md` 里，另 1 条是 `repo/ldv/MEASUREMENTS.md`
 结果十九 把 METIS p.365 那条原文又引了一次。逐条对得上。
-**2026-10-09 的 +3 条全部来自新文档 `repo/docs/分层方向视图-检索器层.md`** ——
-同一句 `rewriting the query` 在那份文档里引了 **3 次**（源是 `graphsumm`，**已核**，
-逐字在 `.prior-art/graphsumm.txt:841`），是**重复计入**，**不是** 3 条新引文。）
+**2026-10-09 的 +1 条**来自新文档 `repo/docs/分层方向视图-检索器层.md` ——
+一句 `rewriting the query`（源是 `graphsumm`，**已核**，逐字在
+`.prior-art/graphsumm.txt:841`）。⚠️ 那份文档的**骨架稿**里同一句引过 3 次
+（⇒ 当时是 255），**正文稿收敛成 1 次** ⇒ 253。**重复计入是脚本的既有行为**，
+不是 3 条不同的引文。）
 
 ⚠️ **这句话的范围恰好等于上面那条调用式。** 两处**不在**范围里，写在这里：
 
