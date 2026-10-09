@@ -4400,6 +4400,50 @@ def test_retriever() -> None:
        f"标题不同：{sorted(k for k in set(real) | set(skipped) if real.get(k) != skipped.get(k))}"
        f"；键差：{sorted(set(TITLES) ^ set(RETRIEVER_CODES))}")
 
+    # ── ⑦ 结构画像（`基线§14`）—— 「整体倾向的暗示」落在哪儿 ──────────────
+    ps = r.profiles
+    ok("★★ [T] `Retrieval` 带**块画像**（`§14.1`），且每块的**四档读法**与结构事实相符"
+       "（`§14.3` —— 判据 `T4` 从**读法反推事实**，与 `block_profile` 不同路）",
+       bool(ps) and all(
+           (p.reading == "已细分过"
+            and all(kernel.children_of(kernel.direction(x)) for x in p.block))
+           or (p.reading == "还没钻进去"
+               and all(not kernel.is_expanded(kernel.direction(x)) for x in p.block))
+           or (p.reading == "下界到了"
+               and all(kernel.is_expanded(kernel.direction(x))
+                       and not kernel.children_of(kernel.direction(x)) for x in p.block))
+           or p.reading == "混合"
+           for p in ps),
+       "；".join(f"{sorted(p.block)[:2]}={p.reading}" for p in ps))
+
+    kinds = sorted({p.reading for p in ps})
+    ok("★★ [T] 画像在真语料上**真的分出了档**（不是一律「混合」、也不是只有一档）—— "
+       "★ 这正是「比顺序感更多」那**一维「性质」**：不是「哪一带更好」，是「**你那一带是什么**」"
+       "（`§14.3`：四档都是**结构事实**，不是分）",
+       len(kinds) >= 2, f"分出的档：{kinds}")
+
+    big = [p for p in ps if p.n_members == 13]
+    ok("★★ [T] 那一格**正是 `§K6` 的那一格**：13 个成员**都没有子**，看起来像"
+       "「判空 ⇒ 下界到了」，而真相是**未展开 ⇒ 还不知道** —— 「不知道」与「已经到底了」"
+       "在**只看「有没有子」时长得一模一样**（`§14.2`）。"
+       "⚠️ 所以画像**必须**把三档分开，否则它会**说错话**",
+       bool(big) and all(p.n_unexpanded == p.n_members and p.n_expanded_leaf == 0
+                         and p.reading == "还没钻进去" for p in big),
+       "；".join(f"|块|={p.n_members} 未展开{p.n_unexpanded}/判空{p.n_expanded_leaf}"
+                 f"→{p.reading}" for p in (big or ps)))
+
+    ok("★ [T] 三档**互斥且完备**（`§14.1` 的 ⚠️：这条**按构造恒真** ⇒ 它**不是判据**，"
+       "只是计数方式的自洽性检查 —— 判据 `T4` 判的是**读法与事实相符**）",
+       all(p.n_with_children + p.n_expanded_leaf + p.n_unexpanded == p.n_members
+           for p in ps),
+       f"{[(p.n_with_children, p.n_expanded_leaf, p.n_unexpanded, p.n_members) for p in ps[:3]]}")
+
+    ok("★★ [T] `render_explanation` 把**块的性质**印出来，且**不含遍历顺序**"
+       "（`§3.2`：顺序不许进输出）—— 它说的是「块的定义性质」，与「先看哪个」无关",
+       "还没钻进去" in retriever.render_explanation(r)
+       and "先看" not in retriever.render_explanation(r),
+       retriever.render_explanation(r).splitlines()[-1][:80])
+
     # ── 读数（现算，不进退出码） ──────────────────────────────────────────
     d = r.reading()
     ok("★ [T] 读数是**现算**的（`§T0` 第 5 条：会漂的数不许写死）—— "

@@ -1890,6 +1890,38 @@ def inj_t3(nodes, edges, injected: bool) -> Report:
     return rep
 
 
+def inj_t4(nodes, edges, injected: bool) -> Report:
+    """`T4` —— 注入「**三态混同**」：把「未展开」计入「已展开·无子」（`基线§14.5`）。
+
+    红形态 = 读法变成「**下界到了**」，而事实是「**还没钻进去**」——
+    `§K6` 在本层的形态：**把「不知道」说成「已经到底了」**。
+
+    ⚠️ **用真语料**（`nodes` / `edges`），不用 `_synth`：手造那个小夹具上未必有
+       「未展开」的块，而这一注入正是在**那一档**上才分得开。
+       本语料实测：13 个成员的块**全部未展开**（`基线§14.2`）。
+    """
+    from ldv.checks.abstraction import spec_for
+    from ldv.checks.retrieval import RETRIEVER_CODES, t4_profile
+    from ldv.run_checks import batch_kernel, corpus_fingerprint, load_spec_file
+    from ldv.retriever import as_bar, retrieve
+
+    doc = load_spec_file()
+    which = str(doc.get("方向") or "")
+    spec, _why = spec_for(doc, which, corpus_fingerprint(nodes, edges))
+    kernel, plugin, queries, _mk = batch_kernel(which, nodes, edges)
+    r = retrieve(kernel, plugin, {which: as_bar(queries[0])}, spec=spec)
+    if injected:
+        # 「三态混同」的可观测形态：未展开被并进「已展开·无子」⇒
+        # 读法从「还没钻进去」翻成「下界到了」，而**事实没变**。
+        r = replace(r, profiles=tuple(
+            replace(p, n_expanded_leaf=p.n_expanded_leaf + p.n_unexpanded,
+                    n_unexpanded=0)
+            for p in r.profiles))
+    rep = Report(plugin="(检索)", expects=RETRIEVER_CODES)
+    t4_profile(rep, r, kernel)
+    return rep
+
+
 # ═══ 驱动 ════════════════════════════════════════════════════════════════════
 
 def _cli_report(nodes, edges, *, run_one=None) -> Report:
@@ -1958,8 +1990,9 @@ CASES: dict[str, Callable] = {
     "A4": inj_a4, "A5": inj_a5, "A6": inj_a6, "A7": inj_a7,
     "M0": inj_m0, "M1": inj_m1, "M2": inj_m2, "M3": inj_m3,
     "M4": inj_m4, "M5": inj_m5, "M6": inj_m6,
-    # ★ `(检索)` 那一组：三条**都是守卫** ⇒ 三条注入**全是手造的**（见上面的段落）。
-    "T1": inj_t1, "T2": inj_t2, "T3": inj_t3,
+    # ★ `(检索)` 那一组：四条**都是守卫** ⇒ 四条注入**全是手造的**（见上面的段落）。
+    #   ⚠️ `T4` 的注入用**真语料**（它判的那一档「未展开」在手造小夹具上未必有）。
+    "T1": inj_t1, "T2": inj_t2, "T3": inj_t3, "T4": inj_t4,
     # ★ `(cli)` 那一组：**两条注入覆盖七条**（两个分支互不替代，见各自的 docstring）。
     "CL1": inj_cli_guard_always, "CL2": inj_cli_guard_always,
     "CL6": inj_cli_guard_always, "CL7": inj_cli_guard_always,

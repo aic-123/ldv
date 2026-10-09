@@ -74,6 +74,38 @@
 | `lsmsurvey.pdf` / `.txt` | **Luo & Carey, *LSM-based Storage Techniques: A Survey*, arXiv:1812.07527**（25 页） | 同上 §1.1 / §1.3：★ **层数由「尺寸比」决定**（论文 p.6）：「Let the size ratio of a given LSM-tree be T, and suppose the LSM-tree contains L levels.」+「In practice, for a stable LSM-tree where the volume of inserts equals the volume of deletes, L remains static.」+「Thus, the number of levels for N entries can be approximated as」（`L = ⌈logT(N/(B·P·T/(T+1)))⌉`，抽文里分式压成一行）；★ **层数封顶的「兜底配置」形态**（p.3）：「If level L is already the configured maximum level, then the resulting component remains at level L.」；★ **阈值不是单向的**（p.6）：写代价 `O(T·L/B)`（leveling）对 `O(L/B)`（tiering）⇒ `T` 更大 ⇒ 层数更少但**每层级联更多** |
 | `extract.py` | 抽 PDF 正文（带页码标记） | 见下 |
 
+⚠️ **`sources/` 那一批（第二份语料）里的一篇，本轮首次进仓库文档引用**：
+
+| 文件 | 是什么 | 用来支撑 |
+|---|---|---|
+| `hnsw.pdf` / `.txt` | **Malkov & Yashunin, *Efficient and robust approximate nearest neighbor search using Hierarchical Navigable Small World graphs*, arXiv:1603.09320** | `docs/分层方向视图-检索器层.md` §14.0：★ **`zoom-out` / `zoom-in` 两阶段**（「The routing can be divided into two phases」）· 上层**只有最长的边**、搜索**从上层开始** · 上层**贪心走到 local minimum**、切下层**从那一点重启** ⇒ 「**整体倾向**在成熟系统里是**一个进入点**，不是一份排序」 |
+
+⚠️ **它不在 `.prior-art/`，在 `<工作区根>/sources/`**（那份是「第二份语料」，
+由 `outputs/ldv-成熟答案印证.md` 引用；`verify_quotes` **两份都读**，见下面「第二份语料」一节）。
+URL 取法与本文档其余源同一条纪律：
+
+```bash
+curl -sL -k --max-time 45 -o hnsw.pdf "https://arxiv.org/pdf/1603.09320"
+head -c 5 hnsw.pdf          # 必须是 %PDF-
+python extract.py hnsw.pdf hnsw.txt
+```
+
+⚠️ **`hnsw` 的抽文有排版缺陷**（本轮人工逐字核时发现 —— **`verify_quotes` 看不见它们**）：
+
+    `zoom -in` / `zoom -out`   连字符**前有空格**（原文抽成了 `zoom -in`）
+    `the  elements`            双空格（多处）
+    断词                       行末 `illus-` / `pro-` 之类
+    弯引号                     `“zoom -in”`（U+201C/U+201D），不是直引号
+
+⇒ **处置（同 `hendrickson95` / `mehlhorn05` 的先例）**：引文**只引「压平空白后逐字」的片段**，
+  并**避开**有缺陷的那几处；`docs/分层方向视图-检索器层.md` §14.0 就是这么引的
+  （它在正文里显式声明了这条限制）。
+
+⚠️ **为什么这件事得人工做**：`verify_quotes` 的 `norm()` 会压平空白、剥 markdown 标记、
+   统一引号 ⇒ **上面四类缺陷它一条都报不出来**（本轮实测：带 `**粗体**` 与直引号的引文
+   照样报「全覆盖」）。⇒ **「全覆盖」只说明「归一化后能对上」，不说明「逐字」**。
+   这一条是对脚本能力边界的又一次实测，写在这里免得下一个人把它当成「已逐字核过」。
+
 ## 来源（下载记录）
 
 第二批五篇（2026-10-06 取）的 URL —— 已落盘，**核验时读本地副本，不必再联网**：
@@ -198,7 +230,9 @@ PYTHONIOENCODING=utf-8 PYTHONUTF8=1 "$V" repo/docs/prior-art/verify_quotes.py \
     repo/docs/*.md repo/README.md repo/ldv/MEASUREMENTS.md
 ```
 
-**2026-10-09 实测：引文 253 条｜全覆盖 253｜有缺口 0。**
+**2026-10-09 实测（最近一次）：引文 257 条｜全覆盖 257｜有缺口 0。**
+（同日更早是 253 —— 差的 **4 条**全在 `repo/docs/分层方向视图-检索器层.md` §14.0，
+是本轮首次进仓库文档引用的 **HNSW**（`sources/hnsw.txt`）；见上面那条登记。）
 （**2026-10-08 是 252 条**；那一次改动之前是 208 条 —— 差的 44 条里 43 条全在
 `repo/docs/分层方向视图-多层抽象-前作核验.md` 里，另 1 条是 `repo/ldv/MEASUREMENTS.md`
 结果十九 把 METIS p.365 那条原文又引了一次。逐条对得上。
@@ -212,7 +246,8 @@ PYTHONIOENCODING=utf-8 PYTHONUTF8=1 "$V" repo/docs/prior-art/verify_quotes.py \
 
 | 不在范围里的 | 为什么 | 实测 |
 |---|---|---|
-| `repo/docs/prior-art/README.md`（本文件） | 它含**一条来自无文字层扫描件**的引文（`pagetarjan` 的 `find the coarsest refinement Q of P`）⇒ 机械核验**必然**报缺口。把它塞进调用式就是造一条**常驻的红** —— 而「一条常驻的红等于没人再看红」 | 单独跑：**58 条｜57 全覆盖｜1 缺口**（那 1 条就是 `pagetarjan`） |
+| `repo/docs/prior-art/README.md`（本文件） | 它含**一条来自无文字层扫描件**的引文（`pagetarjan` 的 `find the coarsest refinement Q of P`）⇒ 机械核验**必然**报缺口。把它塞进调用式就是造一条**常驻的红** —— 而「一条常驻的红等于没人再看红」 | 单独跑：**59 条｜58 全覆盖｜1 缺口**（那 1 条就是 `pagetarjan`；
+2026-10-09：本文件新增的 HNSW 登记贡献了 1 条**重复引用** ⇒ 58→59） |
 | `outputs/*.md` | 那是**工作副本**，不是仓库的一部分；旧副本的引文与正本不同步（见上面「⚠️ **正本在 `repo/docs/`，不在 `outputs/`**」） | 不适用 |
 
 ⚠️ **`repo/docs/prior-art/README.md` 不在范围里这件事，是「已知」不是「已核」** ——

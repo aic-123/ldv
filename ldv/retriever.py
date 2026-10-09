@@ -72,15 +72,20 @@ from . import flow
 
 __all__ = [
     "BAR_NAMES",
+    "BlockProfile",
     "DispatchError",
     "as_bar",
     "Reason",
     "Recognition",
     "Retrieval",
+    "block_profile",
     "current_recognition",
     "dispatch",
     "explain",
     "order_blocks",
+    "profile_of",
+    "render_explanation",
+    "render_profile",
     "render_reading",
     "render_reason",
     "retrieve",
@@ -292,6 +297,94 @@ def run_in_order(kernel: Kernel, query: Query,
     return flow.run_query(kernel, query), scanned
 
 
+# ═══ 结构画像（`基线§14`） ══════════════════════════════════════════════════════
+#
+# ★ 它补的是**另一维**：不是「先看哪个」（顺序），是「**这一块是什么**」（性质）。
+#   参照 HNSW 的 `zoom-out`：先拉远看清全貌，再往里钻（`基线§14.0`）。
+#
+# ⚠️ **画像里不许有跨块可比的量**（`E-1` / `E-2`）：它只回答「这一块是什么」，
+#    不回答「这一块更好吗」。任何「重要性 / 命中率 / 访问次数」都不许进来。
+
+
+@dataclass(frozen=True)
+class BlockProfile:
+    """一块的**三态结构画像** —— 五项全是结构事实，**现算**（`基线§14.1`）。
+
+    ## ★ 三档必须分开（`§K6` 在本层的形态）
+
+        `n_with_children`   成员里有**子方向**的个数   ⇒ **可继续往下**
+        `n_expanded_leaf`   成员里**展开过但分不开**的 ⇒ **下界到了**（`§K2` 判空）
+        `n_unexpanded`      成员里**还没展开**的       ⇒ **还不知道**（`§K6`）
+
+    ⚠️ 把「未展开」报成「下界到了」= 把「**不知道**」说成「**已经到底了**」。
+       而这两档在**只看「有没有子」时长得一模一样** —— 实测：本语料那 13 个成员
+       「都没有子」，看起来像判空，**真相是未展开**（`基线§14.2`）。
+       ⇒ 三档分开**不是洁癖**，是防止画像**说错话**。
+    """
+
+    block: frozenset[str]
+    rank_lo: int
+    rank_hi: int
+    n_with_children: int
+    n_expanded_leaf: int
+    n_unexpanded: int
+
+    @property
+    def n_members(self) -> int:
+        return len(self.block)
+
+    @property
+    def reading(self) -> str:
+        """四档读法 —— **可判**（`基线§14.3`；判据 `T4` 从**读法反推事实**来验它）。
+
+        ⚠️ 四档**互斥**；「混合」是**真的混着就报混合**，不许硬归纳成某一档。
+        """
+        t = self.n_members
+        if t and self.n_with_children == t:
+            return "已细分过"
+        if t and self.n_unexpanded == t:
+            return "还没钻进去"
+        if t and self.n_expanded_leaf == t:
+            return "下界到了"
+        return "混合"
+
+
+def block_profile(kernel: Kernel, block: frozenset[str]) -> BlockProfile:
+    """算一块的画像 —— **逐成员查内核**（`children_of` / `is_expanded`），不猜。
+
+    ⚠️ 三档**互斥且完备**：对每个成员恰好落一档 ⇒ `n_with_children + n_expanded_leaf
+       + n_unexpanded == |block|`。⚠️ 这条是**按构造恒真**的 ⇒ 它**不是判据**，
+       只是计数方式的自洽性（判据 `T4` 判的是**读法与事实相符**，见 `checks/retrieval.py`）。
+    """
+    ranks: list[int] = []
+    c = l = u = 0
+    for did in sorted(block, key=_did_order):
+        d = kernel.direction(did)
+        ranks.append(d.rank)
+        if kernel.children_of(d):
+            c += 1
+        elif kernel.is_expanded(d):
+            l += 1
+        else:
+            u += 1
+    return BlockProfile(block=block,
+                        rank_lo=min(ranks) if ranks else 0,
+                        rank_hi=max(ranks) if ranks else 0,
+                        n_with_children=c, n_expanded_leaf=l, n_unexpanded=u)
+
+
+def profile_of(kernel: Kernel, q: Sequence[frozenset[str]]) -> tuple[BlockProfile, ...]:
+    """一个划分的画像 —— 按 `Q` 自己的规范化顺序（不排序子句以外的东西）。"""
+    return tuple(block_profile(kernel, b) for b in q)
+
+
+def render_profile(p: BlockProfile) -> str:
+    """画像的**打印形态** —— 判定与打印**同源**（同 `render_reason` 的纪律）。"""
+    return (f"成员 {p.n_members} 个（rank {p.rank_lo}–{p.rank_hi}）：**{p.reading}**"
+            f"（有子 {p.n_with_children} / 下界到了 {p.n_expanded_leaf}"
+            f" / 未展开 {p.n_unexpanded}）")
+
+
 # ═══ T4 组装 ══════════════════════════════════════════════════════════════════
 
 #: 一条理由 = **(一个候选方向, 一个项)**，且那个项**在该方向的覆盖里**。
@@ -331,8 +424,9 @@ class Retrieval:
     first: tuple[frozenset[str], ...]      # 「先看」的块（**内部调度**，不进输出）
     late: tuple[frozenset[str], ...]       # 「后看」的块
     scanned: tuple[frozenset[str], ...]    # T3 实际跑过的块（`§C1` ① 那条断言守的东西）
-    reasons: tuple[Reason, ...]            # T4 的解释
+    reasons: tuple[Reason, ...]            # T4 的解释（每条指得到一个实际结果）
     recognition: Recognition
+    profiles: tuple[BlockProfile, ...] = ()  # 块层面的**性质**（`基线§14`，进解释）
 
     def reading(self) -> dict[str, int]:
         """**现算**的读数（`§T0` 第 5 条：会漂的数不许写死）。"""
@@ -362,9 +456,11 @@ def render_reading(r: Retrieval) -> str:
     return (f"认识 |Q| = {d['块数']} 块 / {d['方向数']} 个方向；"
             f"「先看」{d['先看的块数']} 块（{d['先看的方向数']} 个方向）、"
             f"「后看」{d['后看的块数']} 块"
-            f"　⚠️ **收益 = 0**（顺序无处可达，基线§4 T3 ②）—— "
+            f"　⚠️ **省搜索的收益 = 0**（顺序无处可达，基线§4 T3 ②）—— "
             f"先看多少块不改变任何东西；「跑过 {d['跑过的块数']}/{d['块数']} 块」"
-            f"是构造性恒真，不是读数")
+            f"是构造性恒真，不是读数。"
+            f"　★ **另一个收益在「块画像」里**（基线§14.6）：不是省搜索，是"
+            f"**判断质量** —— 「你那一带是什么」；两个口径不许合成一个数")
 
 
 def retrieve(kernel: Kernel, plugin: Any, need: Mapping[str, Mapping[str, object]], *,
@@ -391,7 +487,26 @@ def retrieve(kernel: Kernel, plugin: Any, need: Mapping[str, Mapping[str, object
     flow_a, scanned = run_in_order(kernel, query, first + late)
     candidates = frozenset(flow_a.result.yes)
     return Retrieval(query=query, candidates=candidates, first=first, late=late,
-                     scanned=scanned, reasons=explain(candidates, kernel), recognition=rec)
+                     scanned=scanned, reasons=explain(candidates, kernel),
+                     recognition=rec, profiles=profile_of(kernel, rec.q))
+
+
+def render_explanation(r: Retrieval) -> str:
+    """`步骤 T4` 的解释 —— **结果层面的理由 + 块层面的性质**（`基线§14.4`）。
+
+    ⚠️ 它**不是**「内核先看了哪一带」—— 那是**遍历顺序**，`§3.2` 明令不许进输出。
+       块的性质是**块的定义性质**（`rank` / 子 / 展开），与顺序无关。
+    """
+    lines = [f"候选 {len(r.candidates)} 个；解释 {len(r.reasons)} 条（每条 = 方向 + 它覆盖里的一个项）："]
+    for did, item in r.reasons[:3]:
+        lines.append(f"    {render_reason((did, item))}")
+    if len(r.reasons) > 3:
+        lines.append(f"    … 其余 {len(r.reasons) - 3} 条同类")
+    lines.append("  涉及的块（**性质**，与顺序无关）：")
+    for p in r.profiles:
+        touched = "  ← 有候选" if p.block & r.candidates else ""
+        lines.append(f"    {render_profile(p)}{touched}")
+    return "\n".join(lines)
 
 
 def _did_order(did: str) -> tuple[int, str]:

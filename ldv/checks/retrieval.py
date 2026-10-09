@@ -68,6 +68,7 @@ from ..core.views import ViewSpec, coarsest_stable_refinement
 from ..retriever import (
     Retrieval,
     as_bar,
+    render_explanation,
     render_reading,
     render_reason,
     retrieve,
@@ -77,7 +78,7 @@ from ._framework import Report
 
 #: 检索器层的判据编号 —— 与插件侧 / 内核侧 / 视图侧 / CLI 侧**并列**，不是它们的一部分。
 #: ⚠️ **只列**已经实现了的（写进来就等于声称「套件全绿」覆盖了它）。
-RETRIEVER_CODES = ("T1", "T2", "T3")
+RETRIEVER_CODES = ("T1", "T2", "T3", "T4")
 
 #: 三条的**标题** —— **一处定义，两处用**（真跑时 `rep.add`、跳过时 `skip_all`）。
 #:
@@ -88,6 +89,7 @@ TITLES: dict[str, str] = {
     "T1": "等价：候选集(步骤 T3) ≡ 候选集（不用视图、直接按 R0 遍历）",
     "T2": "当前：用到的认识的 `spec` 指纹 == 当前结构的 `spec` 指纹",
     "T3": "解释指得到：`步骤 T4` 的每条理由都指得到实际结果",
+    "T4": "画像不许说错：四档读法（已细分过/还没钻进去/下界到了/混合）与结构事实相符",
 }
 
 
@@ -169,6 +171,60 @@ def t3_reasons(rep: Report, r: Retrieval, kernel: Any) -> None:
                   f"（每条 = 一个候选方向 + 它覆盖里的一个项）"))
 
 
+# --- `T4` ---------------------------------------------------------------------
+
+def t4_profile(rep: Report, r: Retrieval, kernel: Any) -> None:
+    """`T4` —— **画像不许说错**（`基线§14.5`）。
+
+    ## ★ 方向是**反的**：判据从「读法」**反推**它声称的事实，再逐成员去查
+
+        `已细分过`    声称「每个成员**都有子**」    ⇒ 验 `∀d: children_of(d)`
+        `还没钻进去`  声称「每个成员**都未展开**」  ⇒ 验 `∀d: ¬is_expanded(d)`
+        `下界到了`    声称「每个成员**展开过且无子**」⇒ 验 `∀d: is_expanded(d) ∧ ¬children_of(d)`
+        `混合`        声称「上面三条**都不成立**」  ⇒ 验三条都不全真
+
+    ⚠️ 为什么反着来：`block_profile` 是「**从三态计数算读法**」；
+       判据若也那样算，两边**共用同一段条件** ⇒ 同时错时判据照样绿
+       （`false-green` 形状 3「共享盲点」）。反推则两边**不同路**：一边是 if/elif 计数，
+       一边是**逐成员的存在性检查**。
+
+    ⚠️ **注入的形状**：把「未展开」算进「已展开·无子」（**三态混同**）⇒
+       读法变成「下界到了」，而判据去查 `is_expanded` 会看到**未展开** ⇒ **红**。
+       这正是 `§K6` 的形态：**把「不知道」说成「已经到底了」**。
+
+    跳过：没有块 / 块全空（`§C3`）。
+    """
+    ps = [p for p in r.profiles if p.block]
+    if not ps:
+        rep.add("T4", TITLES["T4"], Tri.UNEXPANDED,
+                "没有块（或块全空）⇒ 没有可判的画像（跳过 ≠ 通过）")
+        return
+    bad: list[str] = []
+    for p in ps:
+        members = [kernel.direction(d) for d in sorted(p.block)]
+        all_kids = all(kernel.children_of(d) for d in members)
+        all_leafy = all(kernel.is_expanded(d) and not kernel.children_of(d) for d in members)
+        all_unexp = all(not kernel.is_expanded(d) for d in members)
+        read = p.reading
+        ok = (
+            (read == "已细分过" and all_kids)
+            or (read == "还没钻进去" and all_unexp)
+            or (read == "下界到了" and all_leafy)
+            or (read == "混合" and not (all_kids or all_leafy or all_unexp))
+        )
+        if not ok:
+            bad.append(
+                f"{sorted(p.block)[:3]}… 读法「**{read}**」与事实不符："
+                f"全有子={all_kids}、全未展开={all_unexp}、全判空={all_leafy}"
+                f"（画像计数 有子{p.n_with_children}/判空{p.n_expanded_leaf}"
+                f"/未展开{p.n_unexpanded}，共 {p.n_members}）")
+    rep.add("T4", TITLES["T4"], Tri.NO if bad else Tri.YES,
+            (f"{len(bad)} 块说错：{bad[:2]}"
+             f"（**三态混同**是把「不知道」说成「已经到底了」—— `§K6` 的形态）") if bad
+            else (f"{len(ps)} 块的读法都与结构事实相符"
+                  f"（四档：「{ps[0].reading}」…）"))
+
+
 # --- 跑一遍再判 ----------------------------------------------------------------
 
 def run_retrieval(kernel: Any, plugin: Any,
@@ -183,8 +239,10 @@ def run_retrieval(kernel: Any, plugin: Any,
     t1_equivalence(rep, r, kernel)
     t2_current(rep, r, spec)
     t3_reasons(rep, r, kernel)
+    t4_profile(rep, r, kernel)
     rep.note(f"认识：{r.recognition.source}；指纹 {r.recognition.fingerprint}")
     rep.note(render_reading(r))
+    rep.note(render_explanation(r))
     # ⚠️ 这一句**必须**印（模块开头那段）：不印的话，「收益 0」与「有收益」
     #    在只看数字时长得一模一样 —— 而本层今天的收益**确实是 0**。
     rep.note("⚠️ **本层当前是「预备」的**（`基线§13 13.0`）：`T2` 的顺序**无处可达**"
