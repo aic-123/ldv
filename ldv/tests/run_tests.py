@@ -4267,6 +4267,151 @@ def _raises_valueerror(fn) -> bool:
     return False
 
 
+def test_retriever() -> None:
+    """检索器层（流程 T）的 `T1`–`T3`（`checks/retrieval.py` + `retriever.py`）。
+
+    ## 分六段，每段都要有已知答案
+
+        ① 合成对照   三条各自的「该绿时绿、该红时红」（`known_answer_controls`）
+        ② 真跑一遍   在 committed 规格上跑 ⇒ 三条**全过**、而且**不是跳过**
+        ③ `T1` 的**夹具前提**  真插件上「后看的块」里**不可能**有真命中
+        ④ `§C1` 默认值  **不早停**：跑过的块集合 == `Q` 的全部块
+        ⑤ 分派       `r` 里出现未知栏 ⇒ **抛**（不是跳过、不是红）
+        ⑥ 标题来源   真跑时印的 == 跳过时印的（一处定义、两处用）
+
+    ⚠️ ③ 是一条**实测出来的**限制（写在 `checks/retrieval.py` 开头）：
+       满足 `§I2 覆盖契约` 的插件上，`命中(合并(块)) = 否 ⟹ 每个成员都否`
+       ⇒ 后看的块里**不可能**有「是」的成员 ⇒ `T1` 在真插件上**永远绿**，
+       它的注入夹具只能**手造**（`_LosingMerge`）。
+       这条**必须观察** —— 不观察的话，「`T1` 绿」读起来像「检索器没漏」，
+       而这一趟里**根本不存在漏得掉的余地**：正是本项目最忌的形状
+       （「空转与通过长得一模一样」）。
+
+    ⚠️ ② 里的**盘上认识是现造的**（默认语料上没有 `views.json`）⇒ `T2` 这一趟
+       **只有守卫作用**。它的红形态只能靠注入。
+    """
+    from ldv.checks._framework import Report
+    from ldv.checks.abstraction import build_views, load_spec_file, spec_for
+    from ldv.checks.coverage import corpus_fingerprint
+    from ldv.checks.retrieval import (
+        RETRIEVER_CODES,
+        TITLES,
+        known_answer_controls,
+        run_retrieval,
+        skip_all,
+    )
+    from ldv.core import view_persist
+    from ldv.core.tri import Tri as _Tri
+    from ldv.run_checks import batch_kernel
+    from ldv import retriever
+
+    # ── ① 合成对照 ────────────────────────────────────────────────────────
+    ctl = known_answer_controls()
+    ok("★★ [T] `T1`–`T3` 的**合成对照**：每条都造了一个会红的输入 —— "
+       "「这条判据在判」与「这条判据恒真」长得**一模一样**",
+       not ctl, "；".join(ctl))
+
+    # ── ⑤ 分派（先判这个：它是 ② 的前提） ─────────────────────────────────
+    raised = False
+    try:
+        retriever.dispatch({"__没有这个方向__": {"ideal": frozenset({"x"})}},
+                           known=("keyset",))
+    except retriever.DispatchError:
+        raised = True
+    ok("★★ [T] `步骤 T0`：`r` 里出现**未知栏** ⇒ **抛**（`基线§8` 停止条件 1）—— "
+       "「猜一个交给谁」就是替人做决定；而且它**不是**三态里的任何一档"
+       "（跳过与红都读不出「分派不了」）", raised)
+    raised = False
+    try:
+        retriever.dispatch({"keyset": {"ideal": frozenset({"x"}), "__新字段__": 1}},
+                           known=("keyset",))
+    except retriever.DispatchError:
+        raised = True
+    ok("★ [T] `步骤 T0`：栏里出现**本层不认识的字段** ⇒ 也抛 —— 静默丢掉一个约束"
+       "与「它被考虑了」长得一模一样（`基线§2`：本层**不解释语义**）", raised)
+    empty_bar = retriever.dispatch({"keyset": {}}, known=("keyset",))
+    ok("★ [T] 栏**存在但为空** ⇒ 得到一个默认 `Query`，**交给插件自己判** —— "
+       "不是跳过、不是红（`§C5` 缺口 4）",
+       empty_bar["keyset"].ideal == frozenset()
+       and empty_bar["keyset"].require == frozenset(),
+       f"{empty_bar['keyset']!r}")
+
+    loaded = load()
+    if loaded is None:
+        return
+    nodes, edges, _ = loaded
+    doc = load_spec_file()
+    if not doc:
+        return
+    which = str(doc.get("方向") or "")
+    spec, _why = spec_for(doc, which, corpus_fingerprint(nodes, edges))
+    if spec is None:
+        return
+
+    kernel, plugin, queries, _mk = batch_kernel(which, nodes, edges)
+    if not queries:
+        return
+    cover = coverage_of(which, nodes, edges)
+    disk = view_persist.to_dict(build_views(kernel, spec, cover, plugin))
+    recognition = view_persist.from_dict(disk, kernel, cover, plugin)
+
+    # ── ② 真跑一遍 ────────────────────────────────────────────────────────
+    query = queries[0]
+    rep = Report(plugin="(检索)", expects=RETRIEVER_CODES)
+    r = run_retrieval(kernel, plugin, {which: retriever.as_bar(query)}, spec, rep,
+                      recognition=recognition)
+    ok("★★ [T] committed 规格上 `T1`–`T3` **一条红的都没有**（基线绿 —— "
+       "「基线就红的判据过不了注入验证」）",
+       not rep.red, "；".join(a.line() for a in rep.red))
+    ok("★★ [T] 三条**都跑了**（不是跳过）—— 「全绿」的范围必须与声明的范围恰好相等",
+       all(a.result is _Tri.YES for a in rep.assertions)
+       and len(rep.assertions) == len(RETRIEVER_CODES),
+       f"{[(a.code, str(a.result)) for a in rep.assertions]}")
+
+    # ── ③ `T1` 的夹具前提（真插件上后看的块里不可能有真命中） ──────────────
+    seen_late = frozenset().union(*r.late) if r.late else frozenset()
+    hits_in_late = sorted(r.candidates & seen_late)
+    ok("★★ [T] `T1` 的**夹具前提**：真插件上「后看」的块里**一个真命中都没有**"
+       "（`§I2` 契约的推论）—— ⇒ `T1` 在真插件上**永远绿**，注入夹具只能**手造**。"
+       "⚠️ 这条如果哪天红了，说明 `§I2` 被破坏了（那是 `B2` 的事）",
+       not hits_in_late,
+       f"后看的块 {len(r.late)} 个、里面的候选 {len(hits_in_late)} 个"
+       f"（{hits_in_late[:3]}）")
+
+    # ── ④ `§C1` 默认值：**不早停** ────────────────────────────────────────
+    ran = set(map(frozenset, r.scanned))
+    all_blocks = set(map(frozenset, r.first + r.late))
+    ok("★★ [T] `步骤 T3` **不自立终止依据**（`基线§4 T3 ①`）—— ⚠️ 这一条本身是"
+       "**构造性恒真**（`scanned` 由 `order` 构造 ⇒ `ran == all_blocks` 必然）⇒ "
+       "它**不是守卫**，只是钉住「将来别往循环体里偷塞早停」；"
+       "★ 本层**当前收益 = 0**（顺序无处可达 —— `基线§4 T3 ②`，`§13 13.0`）",
+       ran == all_blocks and ran == set(map(frozenset, r.recognition.q)),
+       f"跑过 {len(ran)} / 块 {len(all_blocks)} / |Q| {len(r.recognition.q)}")
+
+    # ── ⑥ 标题只有一个来源：真跑时印的 == 跳过时印的 ──────────────────────
+    skip_rep = Report(plugin="(检索)", expects=RETRIEVER_CODES)
+    skip_all(skip_rep, "对照：只为取标题")
+    real = {a.code: a.title for a in rep.assertions}
+    skipped = {a.code: a.title for a in skip_rep.assertions}
+    ok("★★ [T] 「真跑时印的标题」与「跳过时印的标题」**逐字相同**，且 `TITLES` 的键"
+       "**恰好**是 `RETRIEVER_CODES`（一处定义、两处用 —— 两边都只是字符串，"
+       "漂移了没有任何东西看得出来）",
+       real == skipped and set(TITLES) == set(RETRIEVER_CODES),
+       f"标题不同：{sorted(k for k in set(real) | set(skipped) if real.get(k) != skipped.get(k))}"
+       f"；键差：{sorted(set(TITLES) ^ set(RETRIEVER_CODES))}")
+
+    # ── 读数（现算，不进退出码） ──────────────────────────────────────────
+    d = r.reading()
+    ok("★ [T] 读数是**现算**的（`§T0` 第 5 条：会漂的数不许写死）—— "
+       "三个数都从 `Retrieval` 上算出来，与块本身对得上",
+       d["方向数"] == len(spec.universe) and d["块数"] == len(r.recognition.q)
+       and d["跑过的块数"] == len(r.scanned),
+       f"{d}")
+    print("    · 检索器读数：" + retriever.render_reading(r))
+    print(f"      `T3` 的解释共 {len(r.reasons)} 条，"
+          f"例：{retriever.render_reason(r.reasons[0]) if r.reasons else '（无）'}")
+
+
 def test_cli_paths() -> None:
     """`(cli)` 那一组（`checks/cli_paths.py`）—— 四条入口 + 两个非默认参数。
 
@@ -4345,7 +4490,8 @@ def main() -> int:
                test_b3_reduction_premise, test_reach_cache_premise,
                test_reach_cache_transparency, test_tree_premise,
                test_deletion_path, test_persistence, test_lock_scope,
-               test_query_hit_items, test_views, test_multilevel, test_cli_paths):
+               test_query_hit_items, test_views, test_multilevel, test_retriever,
+               test_cli_paths):
         fn()
     total = len(PASS) + len(FAIL)
     for f in FAIL:

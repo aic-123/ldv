@@ -1811,6 +1811,85 @@ def inj_m6(nodes, edges, injected: bool) -> Report:
     return rep
 
 
+# ═══ T1–T3（检索器层）═════════════════════════════════════════════════════════
+#
+# 三条**都是守卫**（`§C3`）：正确实现下恒绿 ⇒ 基线只能是**手造**的绿，
+# 注入也只能是**手造**的红 —— 生产语料上题面造不出来（见 `checks/retrieval.py`
+# 开头那条证明：满足 `§I2 契约`的插件上，「后看的块里有真命中」不可能存在）。
+# ⇒ 三条照 `inj_m3` 的体裁写：**在判据最靠近的地方造输入**，直接调判据。
+
+
+def _retrieve_on_synth(*, losing: bool = True):
+    """手造的内核 / 插件 / 查询 + 一次真检索（`_synth` 在本仓库里只此一处）。"""
+    from ldv.checks.retrieval import _synth, _synth_spec
+    from ldv.retriever import as_bar, retrieve
+
+    kernel, plugin, q = _synth(with_losing_merge=losing)
+    spec = _synth_spec(kernel)
+    return kernel, plugin, retrieve(kernel, plugin, {"keyset": as_bar(q)}, spec=spec), spec
+
+
+def inj_t1(nodes, edges, injected: bool) -> Report:
+    """`T1` —— 注入「**先看的块跑完就收工**」（`§C1` 那处默认值的反例）。
+
+    ⚠️ 夹具是**手造**的（`_LosingMerge`：合并会丢成员）—— 因为满足 `§I2`
+       的插件上「后看的块里有真命中」**造不出来**，真插件上这条判据**永远绿**。
+       见 `checks/retrieval.py` 开头。`known_answer_controls()` 里那条保护会
+       在夹具不成立时**大声报**，不会静默变成空转。
+    """
+    from ldv.checks.retrieval import RETRIEVER_CODES, _early_stop, t1_equivalence
+
+    kernel, _plugin, full, _spec = _retrieve_on_synth()
+    rep = Report(plugin="(检索)", expects=RETRIEVER_CODES)
+    t1_equivalence(rep, _early_stop(full) if injected else full, kernel)
+    return rep
+
+
+def inj_t2(nodes, edges, injected: bool) -> Report:
+    """`T2` —— 注入「**不比对指纹、直接用盘上那份**」（`基线§6`）。
+
+    红形态 = 陈旧的 `spec` 指纹。⚠️ 它**不是**「盘上没有认识」——那一档是**跳过**，
+       与红**不是一回事**（`§C3`），`known_answer_controls` 里两条对照分开验。
+    """
+    from ldv.checks.abstraction import ViewSet
+    from ldv.checks.retrieval import RETRIEVER_CODES, t2_current
+    from ldv.core.views import coarsest_stable_refinement
+    from ldv.retriever import as_bar, retrieve, spec_fingerprint
+
+    from ldv.checks.retrieval import _synth, _synth_spec
+
+    kernel, plugin, q = _synth(with_losing_merge=False)
+    spec = _synth_spec(kernel)
+    on_disk = ViewSet(spec=spec, q=coarsest_stable_refinement(spec), views=())
+    r = retrieve(kernel, plugin, {"keyset": as_bar(q)}, spec=spec, recognition=on_disk)
+    if injected:
+        # 「直接用盘上那份」的可观测形态：结构已经动了，指纹还是旧的那个。
+        other = ViewSpec(universe=spec.universe,
+                         partition=tuple(frozenset({d}) for d in spec.universe),
+                         relation=spec.relation)
+        r = replace(r, recognition=replace(r.recognition,
+                                           fingerprint=spec_fingerprint(other),
+                                           source="盘上（直接用）"))
+    rep = Report(plugin="(检索)", expects=RETRIEVER_CODES)
+    t2_current(rep, r, spec)
+    return rep
+
+
+def inj_t3(nodes, edges, injected: bool) -> Report:
+    """`T3` —— 注入「解释**写死成一句固定的**」（`§C3`）。
+
+    写死的那条**指不到**任何候选方向的覆盖 ⇒ 红。
+    ⚠️ 它判的**不是**「解释暴露了遍历顺序」（那样反而错，`基线§3.2`）。
+    """
+    from ldv.checks.retrieval import RETRIEVER_CODES, t3_reasons
+
+    kernel, _plugin, full, _spec = _retrieve_on_synth()
+    rep = Report(plugin="(检索)", expects=RETRIEVER_CODES)
+    t3_reasons(rep, replace(full, reasons=(("__写死__", "__写死__"),)) if injected else full,
+               kernel)
+    return rep
+
+
 # ═══ 驱动 ════════════════════════════════════════════════════════════════════
 
 def _cli_report(nodes, edges, *, run_one=None) -> Report:
@@ -1879,6 +1958,8 @@ CASES: dict[str, Callable] = {
     "A4": inj_a4, "A5": inj_a5, "A6": inj_a6, "A7": inj_a7,
     "M0": inj_m0, "M1": inj_m1, "M2": inj_m2, "M3": inj_m3,
     "M4": inj_m4, "M5": inj_m5, "M6": inj_m6,
+    # ★ `(检索)` 那一组：三条**都是守卫** ⇒ 三条注入**全是手造的**（见上面的段落）。
+    "T1": inj_t1, "T2": inj_t2, "T3": inj_t3,
     # ★ `(cli)` 那一组：**两条注入覆盖七条**（两个分支互不替代，见各自的 docstring）。
     "CL1": inj_cli_guard_always, "CL2": inj_cli_guard_always,
     "CL6": inj_cli_guard_always, "CL7": inj_cli_guard_always,
@@ -1916,15 +1997,18 @@ def _registry_gap() -> tuple[list[str], list[str]]:
     比的两个集合都**外生给定**，不看任何一边的自我声明：
 
     左边  `run_checks.PLUGIN_CODES | KERNEL_CODES | abstraction.VIEW_CODES
-           | multilevel.MULTILEVEL_CODES`
+           | multilevel.MULTILEVEL_CODES | cli_paths.CLI_PATH_CODES
+           | retrieval.RETRIEVER_CODES`
               —— 声明要跑的编号
     右边  `CASES` 的键 ∪ `EXTRA_CASES` 的值          —— 真被验过的编号
 
-    ⚠️ **`VIEW_CODES` 与 `MULTILEVEL_CODES` 必须一起比进来**，不能只比插件与内核那两批：
-       视图那七条与这一组的七条各是**另一组**（`Report(plugin="(视图)")` /
-       `(L0)`），漏掉任一组的话「新增一条判据、忘了配注入」这件事**照样报全绿** ——
+    ⚠️ **每一组必须一起比进来**，不能只比插件与内核那两批：
+       视图那七条 / 层叠那七条 / CLI 那七条 / 检索那三条**各是另一组**
+       （`Report(plugin="(视图)")` / `(L0)` / `(cli)` / `(检索)`），
+       漏掉任一组的话「新增一条判据、忘了配注入」这件事**照样报全绿** ——
        而这句话对新增的编号一个字节的信息都没有。这正是本节开头那个形状。
-       （`MULTILEVEL_CODES` 是 2026-10-08 补进来的 —— 补之前那一组**没有任何东西守**。）
+       （`MULTILEVEL_CODES` 是 2026-10-08 补进来的 —— 补之前那一组**没有任何东西守**；
+         `RETRIEVER_CODES` 是本轮补的，与 `(检索)` 那三条注入**必须同时做**。）
 
     ⚠️ 反过来也要比：`VIEW_CODES` **只列已经实现了的**。
        少实现一条就**不写进来** —— 于是「套件全绿」这句话**不覆盖它**，
@@ -1944,10 +2028,12 @@ def _registry_gap() -> tuple[list[str], list[str]]:
     from ldv.checks.abstraction import VIEW_CODES
     from ldv.checks.cli_paths import CLI_PATH_CODES
     from ldv.checks.multilevel import MULTILEVEL_CODES
+    from ldv.checks.retrieval import RETRIEVER_CODES
     from ldv.run_checks import KERNEL_CODES, PLUGIN_CODES
 
     declared = (set(PLUGIN_CODES) | set(KERNEL_CODES) | set(VIEW_CODES)
-                | set(MULTILEVEL_CODES) | set(CLI_PATH_CODES))
+                | set(MULTILEVEL_CODES) | set(CLI_PATH_CODES)
+                | set(RETRIEVER_CODES))
     covered = set(CASES) | {code for code, _ in EXTRA_CASES.values()}
     return sorted(declared - covered), sorted(covered - declared)
 

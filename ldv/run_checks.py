@@ -121,6 +121,13 @@ from .checks.abstraction import (
     warranted_of,
 )
 from .core.views import coarsest_stable_refinement, restrict_spec, view_parts
+from .core import view_persist
+from . import retriever
+from .checks.retrieval import (
+    RETRIEVER_CODES,
+    run_retrieval,
+    skip_all as skip_retrieval,
+)
 from .checks.coverage import (
     b16_members_covered,
     b18_cover_leak_baseline,
@@ -653,6 +660,82 @@ def cli_report(loaded, targets: list[str]) -> Report:
     return rep
 
 
+def retrieval_report(loaded, targets: list[str]) -> Report:
+    """`T1`–`T3` —— **检索器层（流程 T）**，**又一组**。
+
+    ## 为什么单列一组（而不是并进 `(视图)` / `(L0)`）
+
+    它问的**不是**「这一层成不成立」（那是 `(视图)` 问的），也不是
+    「折叠这条支线的承诺守不守得住」（那是 `(L0)` 问的），而是
+
+        **拿那份认识去检索** —— 会不会**漏**、会不会用到**陈旧的**、解释**指不指得到**。
+
+    并成一组的话，「视图七条全过」会顺手覆盖这三条 —— 而它们对**检索的顺序**
+    一个字节的信息都没有。
+
+    ## 外生输入：两份，来源不同
+
+        `view_spec.json`   `P` / `E` —— 与 `(视图)` **同一份** ⇒ 三种「跳过」的话也一样
+        `views.json`       **盘上的认识** —— 默认语料上**没有**这份落盘件
+
+    ⚠️ 后者本趟是**现造的**（`view_persist.to_dict`，拿当前结构当场写一份）。
+       所以 `T2` 这一趟**只有守卫作用**：结构没动、认识没陈旧 ⇒ 它恒绿。
+       它的红形态（**结构动了、认识没跟着变**）只能靠**注入**（`§C3`）——
+       那条对照在 `run_tests.test_retriever`。
+
+    ⚠️ 「现造」这件事**必须印出来**：不印的话，「`T2` 绿」读起来像
+       「陈旧的识别被挡住了」，而实际上根本**没有陈旧的可能**。
+
+    ## ★★ 本组今天守的是「**不许漏**」，不是「顺序对不对」（2026-10-09 实测）
+
+    `T2` 的顺序**无处可达**（`kernel.query` 只收 `q`、从 `root` 遍历整棵树，
+    而视图块横跨树）⇒ `T3` 是个空转循环 ⇒ **本层收益 = 0**。
+    ⇒ 这一组今天**不是**在验「模糊掌握有没有用」，是在验
+      「**拿那份认识去检索，不会因为它而漏东西**」—— 而后者成立得很彻底
+      （顺序根本不影响任何东西）。**收益 = 0 这件事由 note 印出来**，
+      不要让读者从绿推断出「有收益」。见 `基线§13 13.0`。
+    """
+    nodes, edges, _ = loaded
+    corpus = corpus_fingerprint(nodes, edges)
+    rep = Report(plugin="(检索)", expects=RETRIEVER_CODES)
+    doc = load_spec_file()
+
+    if not doc:
+        skip_retrieval(rep, "外生项**未声明**（`view_spec.json` 不在）—— "
+                            "`P` / `E` 必须**外生**（设计稿 §3 / §K9），"
+                            "猜一个就是替人做决定（§10 停止条件 1）。**跳过 ≠ 通过**。")
+        return rep
+
+    which = str(doc.get("方向") or "")
+    if which not in targets:
+        skip_retrieval(rep, f"外生声明写的是 `{which}`，而本趟跑的是 {targets} "
+                            f"⇒ 本方向**判不了**（跳过 ≠ 通过）")
+        return rep
+
+    spec, why = spec_for(doc, which, corpus)
+    if spec is None:
+        skip_retrieval(rep, why + " —— 判不了，**不是通过**")
+        return rep
+
+    kernel, plugin, queries, _mk = batch_kernel(which, nodes, edges)
+    if not queries:
+        skip_retrieval(rep, "这一条方向**没有查询集** ⇒ 没有需求可分派（跳过 ≠ 通过）")
+        return rep
+
+    cover = coverage_of(which, nodes, edges)
+    disk = view_persist.to_dict(build_views(kernel, spec, cover, plugin))
+    recognition = view_persist.from_dict(disk, kernel, cover, plugin)
+    query = queries[0]
+    run_retrieval(kernel, plugin, {which: retriever.as_bar(query)}, spec, rep,
+                  recognition=recognition)
+    rep.note(f"{why}；方向 `{which}`；需求取自第 1 条查询（`{query.label}`）")
+    rep.note("⚠️ 本趟的**盘上认识**是**现造的**（默认语料上没有 `views.json`）——"
+             "它拿的就是**当前结构** ⇒ `T2` 这一趟**只有守卫作用**"
+             "（结构没动、认识没陈旧）。它的红形态只能靠**注入**（§C3），"
+             "对照在 `run_tests.test_retriever`。")
+    return rep
+
+
 def main(argv: list[str]) -> int:
     # ⚠️ `--cap 400` 里的 `400` **不是**方向名 —— 所以先摘掉带值的选项再取位置参数。
     cap = 0
@@ -720,8 +803,11 @@ def main(argv: list[str]) -> int:
         print()
 
     # B12 / B14 是**内核侧**的，与插件无关 —— 只跑一次
+    # ★ `B12` 的扫描范围**挂上本层**（`§C2` 的默认值，Q5 拍「E-1 延伸到本层」）：
+    #   不挂的话，`retriever.py` 里加一个全局评分**没有任何东西会红** ⇒
+    #   「E-1 延伸到本层」在系统层面就是一句空话。`extra_sources` 的签名本来就有。
     kernel_rep = Report(plugin="(内核)", expects=KERNEL_CODES)
-    b12_no_global_scalar(kernel_rep)
+    b12_no_global_scalar(kernel_rep, extra_sources=[Path(retriever.__file__)])
     b14_exogenous_boundary(kernel_rep)
     reps.append(kernel_rep)
     print(kernel_rep.render())
@@ -751,6 +837,14 @@ def main(argv: list[str]) -> int:
     cli_rep = cli_report(loaded, targets)
     reps.append(cli_rep)
     print(cli_rep.render())
+    print()
+
+    # ★ `T1`–`T3` —— **检索器层（流程 T）**，与插件 / 内核 / 视图都无关，只跑一次。
+    #   它问的不是「这一层成不成立」，是「**拿那份认识去检索**会不会漏 / 会不会用陈旧的 /
+    #   解释指不指得到」。见 `retrieval_report` 的 docstring。
+    rt_rep = retrieval_report(loaded, targets)
+    reps.append(rt_rep)
+    print(rt_rep.render())
     print()
 
     total_red = sum(len(r.red) for r in reps)
