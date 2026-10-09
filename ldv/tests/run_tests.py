@@ -4429,20 +4429,20 @@ def test_retriever() -> None:
        len(kinds) >= 2, f"分出的档：{kinds}")
 
     big = [p for p in ps if p.n_members == 13]
-    ok("★★ [T] 那一格**正是 `§K6` 的那一格**：13 个成员**都没有子**，看起来像"
-       "「判空 ⇒ 下界到了」，而真相是**未展开 ⇒ 还不知道** —— 「不知道」与「已经到底了」"
-       "在**只看「有没有子」时长得一模一样**（`§14.2`）。"
-       "⚠️ 所以画像**必须**把三档分开，否则它会**说错话**",
-       bool(big) and all(p.n_unexpanded == p.n_members and p.n_expanded_leaf == 0
-                         and p.reading == "还没钻进去" for p in big),
-       "；".join(f"|块|={p.n_members} 未展开{p.n_unexpanded}/判空{p.n_expanded_leaf}"
-                 f"→{p.reading}" for p in (big or ps)))
+    ok("★★ [T] 那一格**正是本仓库那条中心纪律**：13 个成员**都没有子**，"
+       "而它们**不是同一回事** —— 实测 **6 个只有 1 个项**（`§K2` 情形①："
+       "**结构上永远分不开**）、**7 个成员 ≥2**（值得试）。"
+       "⚠️ 只看「有没有子」时这两类**长得一模一样** ⇒ 画像**必须**分档，否则会说错话",
+       bool(big) and all(p.n_singleton == 6 and p.n_unexpanded == 7
+                         and p.n_with_children == 0 and p.reading == "混合" for p in big),
+       "；".join(f"|块|={p.n_members} 有子{p.n_with_children}/分不开{p.n_singleton}"
+                 f"/还没长出来{p.n_unexpanded}→{p.reading}" for p in (big or ps)))
 
     ok("★ [T] 三档**互斥且完备**（`§14.1` 的 ⚠️：这条**按构造恒真** ⇒ 它**不是判据**，"
        "只是计数方式的自洽性检查 —— 判据 `T4` 判的是**读法与事实相符**）",
-       all(p.n_with_children + p.n_expanded_leaf + p.n_unexpanded == p.n_members
+       all(p.n_with_children + p.n_singleton + p.n_unexpanded == p.n_members
            for p in ps),
-       f"{[(p.n_with_children, p.n_expanded_leaf, p.n_unexpanded, p.n_members) for p in ps[:3]]}")
+       f"{[(p.n_with_children, p.n_singleton, p.n_unexpanded, p.n_members) for p in ps[:3]]}")
 
     # ⚠️ 断言要判的是「**块按 Q 的规范化顺序列出**，不是按遍历顺序」——
     #    「解释里没有『先看』这两个字」是错的判据（`§14.7` 那行本来就要说这件事）。
@@ -4451,7 +4451,7 @@ def test_retriever() -> None:
     ok("★★ [T] `render_explanation` 把**块的性质**印出来，且块的排列用 **Q 的规范化顺序**，"
        "**不是**遍历顺序（`§3.2`：顺序不许进输出）—— "
        "★ 而 `步骤 T2` 现在**真的会重排**（按使用细调）⇒ 两者不同才有意义",
-       "还没钻进去" in expl and pos == sorted(pos) and -1 not in pos,
+       "还没长出来" in expl and pos == sorted(pos) and -1 not in pos,
        f"块在解释里的出现位置 {pos}（应与 Q 同序）")
 
     # ── ⑧ 「按使用细调」（`§14.7`）—— 最初那两份文档的核心主张 ──────────────

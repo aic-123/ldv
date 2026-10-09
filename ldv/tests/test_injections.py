@@ -1913,9 +1913,10 @@ def inj_t4(nodes, edges, injected: bool) -> Report:
     if injected:
         # 「三态混同」的可观测形态：未展开被并进「已展开·无子」⇒
         # 读法从「还没钻进去」翻成「下界到了」，而**事实没变**。
+        # 「三态混同」的可观测形态：**「还没长出来」被并进「分不开」**
+        #   ⇒ 读法从「还没长出来」/「混合」翻成「分不开」，而**事实没变**。
         r = replace(r, profiles=tuple(
-            replace(p, n_expanded_leaf=p.n_expanded_leaf + p.n_unexpanded,
-                    n_unexpanded=0)
+            replace(p, n_singleton=p.n_singleton + p.n_unexpanded, n_unexpanded=0)
             for p in r.profiles))
     rep = Report(plugin="(检索)", expects=RETRIEVER_CODES)
     t4_profile(rep, r, kernel)
@@ -1993,6 +1994,41 @@ def inj_t6(nodes, edges, injected: bool) -> Report:
     return rep
 
 
+def inj_t7(nodes, edges, injected: bool) -> Report:
+    """`T7` —— 注入「**深化改变了结论**」（`基线§14.9`）。
+
+    红形态 = 深化之后**候选集变小**了 —— 也就是「展开把某个候选弄丢了」。
+    ⚠️ 那正是 `§K8` **禁止**的那一侧（假阴），而 `§K4`（只分叉不覆盖）保证它不会发生
+       ⇒ 这条判据守的是**那个保证**，不是「这一份实现」。
+
+    ★ 注入形态（手造）：把 `deepen` 前的候选集**人为置多一点**（比真实的多），
+       于是「深化后 ⊇ 深化前」**不成立** ⇒ 红。
+       ⚠️ 不能靠真跑造出来（真跑下它恒真）—— 同 `T1`/`T4`/`T6` 的处境。
+    """
+    from ldv.checks.abstraction import spec_for
+    from ldv.checks.retrieval import RETRIEVER_CODES, t7_deepening
+    from ldv.core import selfopt
+    from ldv.run_checks import batch_kernel, corpus_fingerprint, load_spec_file
+    from ldv.retriever import as_bar, deepen, retrieve
+    from ldv import flow
+
+    doc = load_spec_file()
+    which = str(doc.get("方向") or "")
+    spec, _why = spec_for(doc, which, corpus_fingerprint(nodes, edges))
+    kernel, plugin, queries, _mk = batch_kernel(which, nodes, edges)
+    for q0 in queries[:3]:
+        flow.run_query(kernel, q0)
+    r = retrieve(kernel, plugin, {which: as_bar(queries[0])}, spec=spec,
+                 tendency=selfopt.tendency_by_direction(kernel))
+    deep = deepen(kernel, plugin, r)
+    if injected:
+        # 「深化把候选弄丢了」的可观测形态：**深化前**那份被塞进一个不存在的候选。
+        r = replace(r, candidates=r.candidates | {"__幽灵__"})
+    rep = Report(plugin="(检索)", expects=RETRIEVER_CODES)
+    t7_deepening(rep, r, deep, kernel, plugin)
+    return rep
+
+
 # ═══ 驱动 ════════════════════════════════════════════════════════════════════
 
 def _cli_report(nodes, edges, *, run_one=None) -> Report:
@@ -2064,7 +2100,7 @@ CASES: dict[str, Callable] = {
     # ★ `(检索)` 那一组：四条**都是守卫** ⇒ 四条注入**全是手造的**（见上面的段落）。
     #   ⚠️ `T4` 的注入用**真语料**（它判的那一档「未展开」在手造小夹具上未必有）。
     "T1": inj_t1, "T2": inj_t2, "T3": inj_t3, "T4": inj_t4, "T5": inj_t5,
-    "T6": inj_t6,
+    "T6": inj_t6, "T7": inj_t7,
     # ★ `(cli)` 那一组：**两条注入覆盖七条**（两个分支互不替代，见各自的 docstring）。
     "CL1": inj_cli_guard_always, "CL2": inj_cli_guard_always,
     "CL6": inj_cli_guard_always, "CL7": inj_cli_guard_always,

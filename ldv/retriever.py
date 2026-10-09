@@ -80,6 +80,7 @@ __all__ = [
     "Retrieval",
     "block_profile",
     "current_recognition",
+    "deepen",
     "dispatch",
     "explain",
     "order_blocks",
@@ -330,9 +331,9 @@ def run_in_order(kernel: Kernel, query: Query,
 #: 读法 → **下一步**（`基线§14.8`）—— **一处定义**，判据 `T6` 从它反查。
 #: ⚠️ 它是 `reading` 的**函数**（不是独立判断）：改这里就等于改两条判据的口径。
 ADVICE: dict[str, str] = {
-    "还没钻进去": "值得往下",
     "已细分过": "往下有现成通道",
-    "下界到了": "不必往下",
+    "还没长出来": "值得往下",
+    "分不开": "不必往下（分不开）",
     "混合": "看具体方向",
 }
 
@@ -343,9 +344,31 @@ class BlockProfile:
 
     ## ★ 三档必须分开（`§K6` 在本层的形态）
 
-        `n_with_children`   成员里有**子方向**的个数   ⇒ **可继续往下**
-        `n_expanded_leaf`   成员里**展开过但分不开**的 ⇒ **下界到了**（`§K2` 判空）
-        `n_unexpanded`      成员里**还没展开**的       ⇒ **还不知道**（`§K6`）
+        `n_with_children`  成员里有**子方向**的个数   ⇒ **可继续往下**（已细分过）
+        `n_singleton`      成员里**只有 1 个项**的     ⇒ **结构上永远分不开**（`§K2` 情形①）
+        `n_unexpanded`     其余（无子、成员 ≥ 2）      ⇒ **还没长出来**（含「试过也分不开」）
+
+    ## ★★ 一档**被删掉了**：原来还有「已展开·无子 ⇒ 下界到了」，那是**用错字段**
+
+        原来算的是 `is_expanded(d) and not children_of(d)` —— **恒假**：
+        内核里 `_expanded.add(did)` **只在「长出子方向」那条分支**写
+        （`kernel.py`：`self._children[d.did] = …` 的下一行），
+        而**判空记在 `_tried`**（`stats()['§K2 判空'] = len(_tried)`）。
+        ⇒ 实测：`is_expanded ∧ ¬children` 的方向数 = **0**，而 `_tried` 有 **7** 条。
+
+    ## ⚠️ 于是有一档**用公开信息看不到**：「**试过、但分不开**」
+
+        `_tried` 是**私有**的，内核**没有**公开访问器 ⇒
+        「试过也分不开」与「还没试过」在**只看公开信息时长得一模一样**。
+        ⇒ 本层**如实**把它们并成一档（`还没长出来`），**不假装分得开**。
+        ⇒ 后果（**已量**）：「值得往下」那一带会被**重复试**，但**幂等** ——
+          第二次 `expand` 命中 `_tried` 立刻返回 `()`（一次 dict 比较），
+          方向数与候选数**都不变**（判据 `T7` 的第二半守这条）。
+
+    ★★ **`n_singleton` 这一档是量出来的**（2026-10-09）：`_expand_inner` 在
+       `len(items) < 2` 时**直接 `return ()`**（`§K2` 情形①：单项分不开）⇒
+       这类方向**永远不会有子**。实测：本语料那一块的 13 个方向里，
+       **6 个只有 1 个成员**（结构上永远分不开）、**7 个成员 ≥2**（值得试）。
 
     ⚠️ 把「未展开」报成「下界到了」= 把「**不知道**」说成「**已经到底了**」。
        而这两档在**只看「有没有子」时长得一模一样** —— 实测：本语料那 13 个成员
@@ -357,7 +380,7 @@ class BlockProfile:
     rank_lo: int
     rank_hi: int
     n_with_children: int
-    n_expanded_leaf: int
+    n_singleton: int
     n_unexpanded: int
 
     @property
@@ -373,10 +396,10 @@ class BlockProfile:
         t = self.n_members
         if t and self.n_with_children == t:
             return "已细分过"
+        if t and self.n_singleton == t:
+            return "分不开"          # ★ 它与 `is_expanded` 无关 ⇒ 先判
         if t and self.n_unexpanded == t:
-            return "还没钻进去"
-        if t and self.n_expanded_leaf == t:
-            return "下界到了"
+            return "还没长出来"
         return "混合"
 
     @property
@@ -392,25 +415,25 @@ class BlockProfile:
 def block_profile(kernel: Kernel, block: frozenset[str]) -> BlockProfile:
     """算一块的画像 —— **逐成员查内核**（`children_of` / `is_expanded`），不猜。
 
-    ⚠️ 三档**互斥且完备**：对每个成员恰好落一档 ⇒ `n_with_children + n_expanded_leaf
+    ⚠️ 三档**互斥且完备**：对每个成员恰好落一档 ⇒ `n_with_children + n_singleton
        + n_unexpanded == |block|`。⚠️ 这条是**按构造恒真**的 ⇒ 它**不是判据**，
        只是计数方式的自洽性（判据 `T4` 判的是**读法与事实相符**，见 `checks/retrieval.py`）。
     """
     ranks: list[int] = []
-    c = l = u = 0
+    c = u = one = 0
     for did in sorted(block, key=_did_order):
         d = kernel.direction(did)
         ranks.append(d.rank)
         if kernel.children_of(d):
-            c += 1
-        elif kernel.is_expanded(d):
-            l += 1
+            c += 1                       # 有子 ⇒ 已细分过
+        elif len(kernel.members_of(d)) < 2:
+            one += 1                     # ★ 单项 ⇒ **结构上永远分不开**（`§K2` 情形①）
         else:
-            u += 1
+            u += 1                       # 无子、成员≥2 ⇒ **还没长出来**（含「试过也分不开」）
     return BlockProfile(block=block,
                         rank_lo=min(ranks) if ranks else 0,
                         rank_hi=max(ranks) if ranks else 0,
-                        n_with_children=c, n_expanded_leaf=l, n_unexpanded=u)
+                        n_with_children=c, n_singleton=one, n_unexpanded=u)
 
 
 def profile_of(kernel: Kernel, q: Sequence[frozenset[str]]) -> tuple[BlockProfile, ...]:
@@ -427,8 +450,8 @@ def render_profile(p: BlockProfile) -> str:
     ids = sorted(p.block, key=_did_order)
     shown = ", ".join(ids[:3]) + ("…" if len(ids) > 3 else "")
     return (f"块 [{shown}]：成员 {p.n_members} 个（rank {p.rank_lo}–{p.rank_hi}）"
-            f"：**{p.reading}**（有子 {p.n_with_children} / 下界到了 {p.n_expanded_leaf}"
-            f" / 未展开 {p.n_unexpanded}）")
+            f"：**{p.reading}**（有子 {p.n_with_children} / 分不开 {p.n_singleton}"
+            f" / 还没长出来 {p.n_unexpanded}）")
 
 
 # ═══ T4 组装 ══════════════════════════════════════════════════════════════════
@@ -482,6 +505,12 @@ class Retrieval:
     #:    因为一条建议被拿去对**别的块**检查）。
     #: ⚠️ 它是**判据 `T6` 的输入**；不是日志（写错就是红）。
     advice: tuple[tuple[frozenset[str], str], ...] = ()
+    #: ★ `R3a` 的接线（`基线§14.9`）—— **深化**：被按需 `expand` 的方向（按 `Q` 序）。
+    #: 空 = 没有做深化（没调 `deepen`，或没有任何「值得往下」的块）。
+    #: ⚠️ 它是**判据 `T7` 的输入**（深化只许增、不许减）。
+    deepened: tuple[str, ...] = ()
+    #: 深化**之后**的候选数 —— 与 `len(candidates)`（深化前）比，就是 `T7` 判的东西。
+    candidates_after_deepening: int = -1
 
     @property
     def advice_span(self) -> int:
@@ -585,6 +614,60 @@ def retrieve(kernel: Kernel, plugin: Any, need: Mapping[str, Mapping[str, object
                      advice=advice_of(candidates, profs))
 
 
+def deepen(kernel: Kernel, plugin: Any, r: Retrieval) -> Retrieval:
+    """`R3a` 的**接线**（`基线§14.9`）—— 对「值得往下」那一带**按需展开**，再跑一次。
+
+    ## 它接的是流程 A `R3a` 那个决定点
+
+        流程 A：`R3a`「需要更清晰的方向吗？」⇒ 需要就展开下一层、回到 `R1`
+        ⚠️ 而流程 A **自己不会**展开「未展开」的方向 —— `R3b` 把「需展开」交给
+           **维护侧**（工作流程 §1 逐字：「不是叫查询继续钻」）
+        ⇒ **本函数做的就是那件流程 A 不做的事**：替检索器**按需**展开候选方向
+
+    ## ★★ 安全契约：**候选集只增不减**（判据 `T7`）
+
+        展开**只建新的子方向**（`§K4` 只分叉不覆盖）⇒ 旧方向仍在 ⇒ 旧候选不会消失
+        ⇒ `候选集(后) ⊇ 候选集(前)` —— 这是本函数**唯一**的正确性要求，
+          也是它**敢**改结构的原因：它偏的是 `§K8` **允许**的那一侧（假阳 / 多找）
+
+    ## 为什么只展开「值得往下」那一带
+
+        那一块的成员**全部未展开且成员数 ≥ 2** ⇒ 展开它**可能**长出东西。
+        ⚠️ 而「分不开」那一档（成员 < 2）**结构上永远长不出** ⇒ **不试**（`§K2` 情形①）。
+
+    ⚠️ **它改结构**（`expand` 建方向）。⇒ `§1` 表的「只读」要**精确化** ——
+       这不是绕开边界，是发现 `§1` 表与 `R3a`（「展开下一层」）**本来就矛盾**（`基线§14.9`）。
+    """
+    if not r.advice:
+        return r
+    # 「去哪看」由**建议**定：`值得往下`（全块值得试）与`看具体方向`（**块内**有值得试的）。
+    # ⚠️ 其余两档**不可能**含「无子且成员 ≥ 2」的方向：
+    #    `往下有现成通道` 全有子、`不必往下（分不开）` 全成员<2
+    #    ⇒ 用建议筛块**不会漏**。
+    # ⇒ 块内再**逐方向**筛：`值得试` = 无子 **且** 成员 ≥ 2（成员<2 的永远分不开 ⇒ 不试）。
+    worth = {ADVICE["还没长出来"], ADVICE["混合"]}
+    todo: list[str] = []
+    for block, a in r.advice:
+        if a not in worth:
+            continue
+        for d in sorted(block & frozenset(r.candidates), key=_did_order):
+            dirn = kernel.direction(d)
+            if not kernel.children_of(dirn) and len(kernel.members_of(dirn)) >= 2:
+                todo.append(d)
+    if not todo:
+        return r
+    for d in todo:
+        kernel.expand(kernel.direction(d))      # 唯一写动作；返回 () 也算「试过了」
+    after = frozenset(kernel.query(r.query).yes)
+    # ⚠️ **只增不减**要在这里成立才敢返回（判据 `T7` 在测试里独立再验一遍）
+    assert after >= r.candidates, (
+        "深化让候选集**变小**了 —— 违反 `§K4`（只分叉不覆盖）或 `§K8`（假阴禁止）")
+    profs = profile_of(kernel, r.recognition.q)
+    return replace(r, candidates=after, reasons=explain(after, kernel),
+                   profiles=profs, advice=advice_of(after, profs),
+                   deepened=tuple(todo), candidates_after_deepening=len(after))
+
+
 def render_explanation(r: Retrieval) -> str:
     """`步骤 T4` 的解释 —— **结果层面的理由 + 块层面的性质**（`基线§14.4`）。
 
@@ -596,6 +679,11 @@ def render_explanation(r: Retrieval) -> str:
         lines.append(f"    {render_reason((did, item))}")
     if len(r.reasons) > 3:
         lines.append(f"    … 其余 {len(r.reasons) - 3} 条同类")
+    if r.deepened:
+        lines.append(f"  **加深**（`R3a` 的接线）：按需展开 **{len(r.deepened)}** 个方向"
+                     f"（只展开「值得往下」那一带）；候选 "
+                     f"{len(r.candidates)} → **{r.candidates_after_deepening}**"
+                     f"（**只增不减** —— `§K4` 只分叉不覆盖）")
     lines.append("  涉及的块（**性质**，与顺序无关）：")
     # ⚠️ 编号 + 按 `Q` 的规范化顺序（**不是**遍历顺序）—— `§3.2`：
     #    「先看哪一带」是**调度**，不许进输出；这里给的是**块的定义性质**。

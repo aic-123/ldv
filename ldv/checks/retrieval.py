@@ -68,6 +68,7 @@ from ..core.views import ViewSpec, coarsest_stable_refinement
 from ..retriever import (
     Retrieval,
     as_bar,
+    deepen,
     render_explanation,
     render_reading,
     render_reason,
@@ -78,7 +79,7 @@ from ._framework import Report
 
 #: 检索器层的判据编号 —— 与插件侧 / 内核侧 / 视图侧 / CLI 侧**并列**，不是它们的一部分。
 #: ⚠️ **只列**已经实现了的（写进来就等于声称「套件全绿」覆盖了它）。
-RETRIEVER_CODES = ("T1", "T2", "T3", "T4", "T5", "T6")
+RETRIEVER_CODES = ("T1", "T2", "T3", "T4", "T5", "T6", "T7")
 
 #: 三条的**标题** —— **一处定义，两处用**（真跑时 `rep.add`、跳过时 `skip_all`）。
 #:
@@ -89,9 +90,10 @@ TITLES: dict[str, str] = {
     "T1": "等价：候选集(步骤 T3) ≡ 候选集（不用视图、直接按 R0 遍历）",
     "T2": "当前：用到的认识的 `spec` 指纹 == 当前结构的 `spec` 指纹",
     "T3": "解释指得到：`步骤 T4` 的每条理由都指得到实际结果",
-    "T4": "画像不许说错：四档读法（已细分过/还没钻进去/下界到了/混合）与结构事实相符",
+    "T4": "画像不许说错：三档读法（已细分过/分不开/还没长出来）+混合 与结构事实相符",
     "T5": "按使用细调真的进了顺序（有记录的块按倾向降序、排在「不知道」之前）",
     "T6": "下一步建议（答 `R3a` 的依据）与结构事实相符 —— 块级判断，不是逐方向",
+    "T7": "深化（`R3a` 的接线）**只增不减** —— 展开不许动结论（`§K4` / `§K8`）",
 }
 
 
@@ -205,21 +207,25 @@ def t4_profile(rep: Report, r: Retrieval, kernel: Any) -> None:
     for p in ps:
         members = [kernel.direction(d) for d in sorted(p.block)]
         all_kids = all(kernel.children_of(d) for d in members)
-        all_leafy = all(kernel.is_expanded(d) and not kernel.children_of(d) for d in members)
-        all_unexp = all(not kernel.is_expanded(d) for d in members)
+        # ★ 「分不开」：成员 < 2 ⇒ `§K2` 情形①（`_expand_inner` 直接 return ()）
+        all_one = all(len(kernel.members_of(d)) < 2 for d in members)
+        # ★ 「还没长出来」：无子 **且** 成员 ≥ 2（⚠️ 内含「试过也分不开」——
+        #    那一档公开信息看不到，`_tried` 是私有的。如实并档，不假装分得开）
+        all_stub = all(not kernel.children_of(d) and len(kernel.members_of(d)) >= 2
+                       for d in members)
         read = p.reading
         ok = (
             (read == "已细分过" and all_kids)
-            or (read == "还没钻进去" and all_unexp)
-            or (read == "下界到了" and all_leafy)
-            or (read == "混合" and not (all_kids or all_leafy or all_unexp))
+            or (read == "分不开" and all_one)
+            or (read == "还没长出来" and all_stub)
+            or (read == "混合" and not (all_kids or all_one or all_stub))
         )
         if not ok:
             bad.append(
                 f"{sorted(p.block)[:3]}… 读法「**{read}**」与事实不符："
-                f"全有子={all_kids}、全未展开={all_unexp}、全判空={all_leafy}"
-                f"（画像计数 有子{p.n_with_children}/判空{p.n_expanded_leaf}"
-                f"/未展开{p.n_unexpanded}，共 {p.n_members}）")
+                f"全有子={all_kids}、全单项={all_one}、全无子且成员≥2={all_stub}"
+                f"（画像计数 有子{p.n_with_children}/分不开{p.n_singleton}"
+                f"/还没长出来{p.n_unexpanded}，共 {p.n_members}）")
     rep.add("T4", TITLES["T4"], Tri.NO if bad else Tri.YES,
             (f"{len(bad)} 块说错：{bad[:2]}"
              f"（**三态混同**是把「不知道」说成「已经到底了」—— `§K6` 的形态）") if bad
@@ -291,9 +297,9 @@ def t5_usage_finetune(rep: Report, r: Retrieval, kernel: Any) -> None:
 #: ⚠️ **不要**拿它跟 `ADVICE[reading]` 比 —— 那是**同一条推导**，比了等于没比
 #:    （`false-green` 形状 3「共享盲点」）。这里走的是**独立的一遍逐成员检查**。
 _ADVICE_FACT: dict[str, str] = {
-    "值得往下": "全未展开",
     "往下有现成通道": "全有子",
-    "不必往下": "全判空",
+    "值得往下": "全无子且成员≥2",
+    "不必往下（分不开）": "全单项",     # ← 成员 < 2：**结构上永远分不开**（`§K2` 情形①）
     "看具体方向": "无",
 }
 
@@ -336,19 +342,19 @@ def t6_advice(rep: Report, r: Retrieval, kernel: Any) -> None:
         # ★ **只对这一条建议的**那块**检查** —— 建议是块级的，跨块比对是**另一回事**
         #   （实测踩到：合并去重后再跨块检查 ⇒ 一条建议被拿去对别的块 ⇒ 假红）。
         all_kids = all(kernel.children_of(kernel.direction(x)) for x in block)
-        all_unexp = all(not kernel.is_expanded(kernel.direction(x)) for x in block)
-        all_leafy = all(kernel.is_expanded(kernel.direction(x))
-                        and not kernel.children_of(kernel.direction(x)) for x in block)
+        all_one = all(len(kernel.members_of(kernel.direction(x))) < 2 for x in block)
+        all_stub = all(not kernel.children_of(kernel.direction(x))
+                       and len(kernel.members_of(kernel.direction(x))) >= 2 for x in block)
         ok = (
-            (claim == "全未展开" and all_unexp)
-            or (claim == "全有子" and all_kids)
-            or (claim == "全判空" and all_leafy)
-            or (claim == "无" and not (all_unexp or all_kids or all_leafy))
+            (claim == "全有子" and all_kids)
+            or (claim == "全单项" and all_one)
+            or (claim == "全无子且成员≥2" and all_stub)
+            or (claim == "无" and not (all_kids or all_one or all_stub))
         )
         if not ok:
             bad.append(f"块 {sorted(block)[:3]}… 的建议「**{a}**」（声称 {claim}）"
-                       f"与**该块**事实不符：全未展开={all_unexp}、"
-                       f"全有子={all_kids}、全判空={all_leafy}")
+                       f"与**该块**事实不符：全有子={all_kids}、全单项={all_one}、"
+                       f"全无子且成员≥2={all_stub}")
     rep.add("T6", TITLES["T6"], Tri.NO if bad else Tri.YES,
             (f"{len(bad)} 条建议说错：{bad[:2]}"
              f"（★ 它骗的是 `R3a` —— 那一步本来没有依据）") if bad
@@ -356,16 +362,64 @@ def t6_advice(rep: Report, r: Retrieval, kernel: Any) -> None:
                   f"覆盖 {r.advice_span}/{len(r.candidates)} 个候选方向"))
 
 
+# --- `T7` ---------------------------------------------------------------------
+
+def t7_deepening(rep: Report, before: Retrieval, after: Retrieval | None,
+                 kernel: Any, plugin: Any) -> None:
+    """`T7` —— **深化只增不减**（`基线§14.9`）。`R3a` 接线的**安全契约**。
+
+    ## 它守的是「改结构」这一动作的唯一正确性要求
+
+        深化 = `expand` 若干候选方向 + 重跑一次查询
+        展开**只建新的子方向**（`§K4` 只分叉不覆盖）⇒ 旧候选不会消失
+        ⇒ `候选集(后) ⊇ 候选集(前)` —— 而这正是 `§K8` **允许**的那一侧
+          （假阳 / 多找 ⇒ 只损失性能；**假阴禁止**）
+
+    ⚠️ **它是本层唯一一个「会改变世界」的动作的判据** —— 其余六条都只读。
+       所以它必须**独立**验：`deepen` 里那条 `assert` 是**同一条**推导，
+       判据不能靠它（`false-green` 形状 3「共享盲点」）⇒ 这里**自己再算一遍**。
+
+    跳过：没有做深化（`deepened` 空）⇒ 没有可判的东西（**跳过 ≠ 通过**）。
+    """
+    if not after or not after.deepened:
+        rep.add("T7", TITLES["T7"], Tri.UNEXPANDED,
+                "本趟**没有做深化**（没有任何「值得往下」的块）⇒ 无可判（跳过 ≠ 通过）")
+        return
+    grew = after.candidates >= before.candidates
+    n_before, n_after = len(before.candidates), len(after.candidates)
+    lost = sorted(before.candidates - after.candidates)
+    # ★ **幂等**：再深化一次**不新增方向、不改候选**
+    #   （「试过也分不开」那批会被**重复选中** —— 公开信息看不到 `_tried` ——
+    #    但第二次 `expand` 命中 `_tried` 立刻返回 `()` ⇒ 幂等）
+    n_dirs_before = len(kernel.all_directions())
+    again = deepen(kernel, plugin, after)
+    idem = (len(kernel.all_directions()) == n_dirs_before
+            and again.candidates == after.candidates)
+    bad = (not grew) or bool(lost) or (not idem)
+    rep.add("T7", TITLES["T7"], Tri.NO if bad else Tri.YES,
+            (f"深化**改变了结论**：候选 {n_before}→{n_after}，丢 {lost[:3]}；"
+             f"幂等={idem}（违反 `§K4` 只分叉不覆盖 / `§K8` 假阴禁止）") if bad
+            else (f"展开 {len(after.deepened)} 个方向 ⇒ 候选 {n_before}→{n_after}"
+                  f"（**只增不减**）；**再深化一次不新增**（幂等 —— "
+                  f"「试过也分不开」那批会被重复选中，但 `_tried` 立刻返回）"))
+
+
 # --- 跑一遍再判 ----------------------------------------------------------------
 
 def run_retrieval(kernel: Any, plugin: Any,
                   need: Mapping[str, Mapping[str, object]], spec: ViewSpec,
                   rep: Report, *, recognition: Any = None,
-                  tendency: Mapping[str, float] | None = None) -> Retrieval:
-    """走一遍流程 T（`T0`–`T4`）再逐条判 `T1`–`T5`。
+                  tendency: Mapping[str, float] | None = None,
+                  deepen_rounds: int = 1) -> Retrieval:
+    """走一遍流程 T（`T0`–`T4`）+ 按建议**深化**（`R3a` 的接线），再逐条判 `T1`–`T7`。
 
     ⚠️ **判据读的是同一份 `Retrieval`**（`T1` 读候选集、`T2` 读认识的指纹、`T3` 读解释、
-       `T4` 读画像、`T5` 读顺序）—— 五条不各自跑一遍，否则「红」会分不清是谁造成的。
+       `T4` 读画像、`T5` 读顺序、`T6` 读建议）—— 六条不各自跑一遍，
+       否则「红」会分不清是谁造成的。
+
+    ★ **`T7` 是唯一读「另一份 `Retrieval`」的**（深化前 `before` / 深化后 `after`）——
+       因为它判的就是**两版之间的差**（只增不减）。`T1`–`T6` 一律读**深化前**那版，
+       这样「顺序 / 认识 / 画像」判的还是**同一份结构**上的同一件事。
     """
     r = retrieve(kernel, plugin, need, spec=spec, recognition=recognition,
                  tendency=tendency)
@@ -377,7 +431,23 @@ def run_retrieval(kernel: Any, plugin: Any,
     t6_advice(rep, r, kernel)
     rep.note(f"认识：{r.recognition.source}；指纹 {r.recognition.fingerprint}")
     rep.note(render_reading(r))
+    # ★ `R3a` 的接线（`基线§14.9`）：按建议**深化**，再判 `T7`（只增不减）。
+    deep = deepen(kernel, plugin, r) if deepen_rounds > 0 else r
+    t7_deepening(rep, r, deep, kernel, plugin)
     rep.note(render_explanation(r))
+    if deep.deepened:
+        # ⚠️ 这一句只报**实测到的**：展开之后**读法可能一个都没变**
+        #    （本语料：展开 7 个 ⇒ 全部判空 ⇒ 那一块仍是「混合」）。
+        #    原来这里写死了「变成了已细分过或下界到了」—— 那是**假话**，已删。
+        before_reads = {p.reading for p in r.profiles}
+        after_reads = {p.reading for p in deep.profiles}
+        rep.note(f"★ 深化后：三档读法 {sorted(before_reads)} → {sorted(after_reads)}"
+                 + ("（⚠️ **一个都没变** —— 展开的那批**判空了**："
+                    "「值得往下」试出来的答案是「**这里没有更多**」，"
+                    "而那**也是知识**（`_tried` 记着，代价是下次重试一次 dict 查询））"
+                    if before_reads == after_reads else
+                    "（变了 —— 展开**确实**长出了东西）"))
+    return deep
     # ⚠️ 这一句**必须**印（模块开头那段）：不印的话，「收益 0」与「有收益」
     #    在只看数字时长得一模一样 —— 而本层今天的收益**确实是 0**。
     rep.note("⚠️ **本层当前是「预备」的**（`基线§13 13.0`）：`T2` 的顺序**无处可达**"
