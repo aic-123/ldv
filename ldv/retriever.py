@@ -61,7 +61,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Any, Iterable, Mapping
 
 from .cli import DIRECTIONS as BAR_NAMES
@@ -237,18 +237,26 @@ def _carrier(kernel: Kernel, block: frozenset[str], plugin: Any) -> Any:
 
 
 def order_blocks(kernel: Kernel, plugin: Any, q: tuple[frozenset[str], ...],
-                 query: Query) -> tuple[tuple[frozenset[str], ...], tuple[frozenset[str], ...]]:
+                 query: Query, *,
+                 tendency: Mapping[str, float] | None = None,
+                 ) -> tuple[tuple[frozenset[str], ...], tuple[frozenset[str], ...]]:
     """`步骤 T2` —— 把块排成「**先看** / **后看**」（`基线§4` T2）。
 
-        是   ⇒ 先看
-        未展开 ⇒ 先看      ← `§K6`：不知道**不许**当没有
-        否   ⇒ 后看
+    ★★ **两层排序**（`基线§14.7`，按最初那两份文档的想法）：
 
-    ⚠️ **`否` 只是「排在后面」，不是「不跑」** —— 见 `§3.1`：按块终止要依赖 `§A1` 绿，
-       本层**不依赖**它。
+        ① **先由我们设定**（结构）：`hit(块) = 否` ⇒ 后看；`是` / `未展开` ⇒ 先看
+        ② **按使用细调**（局部）：先看档内部，**有使用记录**的块按倾向**降序**排前面
 
-    ⇒ 返回 `(先看, 后看)`。块**内部**的顺序 = `Q` 自己的规范化顺序
-      （`views.partition_of`：按最小元素排，`§C5` 缺口 2）—— **不是**任何度量顺序。
+    ⚠️ **② 是分层排序，不是加权求和** —— 合成一个数需要定一个系数（λ），
+       而 λ 是**拍的**。分层则两个键各自独立、各自可解释。
+
+    ⚠️ **「没有记录」不等于「倾向 0」**（`§K6` 同源）：没有记录 = **不知道**，
+       所以它们**不参与**比较，只按 `Q` 自己的规范化顺序排在**有记录的之后**。
+       把它们当 0 去比 = 把「没看见」当成「不好」。
+
+    ⚠️ **`否` 只是「排在后面」，不是「不跑」** —— 见 `§3.1`。
+
+    ⇒ 返回 `(先看, 后看)`。块**内部**顺序 = `Q` 的规范化顺序（`views.partition_of`）。
     """
     first: list[frozenset[str]] = []
     late: list[frozenset[str]] = []
@@ -257,6 +265,19 @@ def order_blocks(kernel: Kernel, plugin: Any, q: tuple[frozenset[str], ...],
             late.append(block)
         else:
             first.append(block)
+
+    if tendency:
+        # ★ 只有**有记录**的块参与这一步；没有的留在原地（规范化序）在后面。
+        known = [b for b in first if any(d in tendency for d in b)]
+        unknown = [b for b in first if not any(d in tendency for d in b)]
+
+        def weight(b: frozenset[str]) -> float:
+            return sum(tendency.get(d, 0.0) for d in sorted(b, key=_did_order))
+
+        # 降序；同权时按规范化序（`min` 元素）⇒ 可复现
+        known.sort(key=lambda b: (-weight(b), min(b)))
+        first = known + unknown      # ⚠️ `unknown` 保持 `Q` 原序 —— 「不知道」不参与比较
+
     return tuple(first), tuple(late)
 
 
@@ -379,9 +400,15 @@ def profile_of(kernel: Kernel, q: Sequence[frozenset[str]]) -> tuple[BlockProfil
 
 
 def render_profile(p: BlockProfile) -> str:
-    """画像的**打印形态** —— 判定与打印**同源**（同 `render_reason` 的纪律）。"""
-    return (f"成员 {p.n_members} 个（rank {p.rank_lo}–{p.rank_hi}）：**{p.reading}**"
-            f"（有子 {p.n_with_children} / 下界到了 {p.n_expanded_leaf}"
+    """画像的**打印形态** —— 判定与打印**同源**（同 `render_reason` 的纪律）。
+
+    ★ **必须印出「是哪一块」**：只说「成员 13 个」的话，读者不知道在说哪一块 ——
+      而且判据也没法按块定位（`render_explanation` 的块顺序断言就用这个）。
+    """
+    ids = sorted(p.block, key=_did_order)
+    shown = ", ".join(ids[:3]) + ("…" if len(ids) > 3 else "")
+    return (f"块 [{shown}]：成员 {p.n_members} 个（rank {p.rank_lo}–{p.rank_hi}）"
+            f"：**{p.reading}**（有子 {p.n_with_children} / 下界到了 {p.n_expanded_leaf}"
             f" / 未展开 {p.n_unexpanded}）")
 
 
@@ -427,6 +454,14 @@ class Retrieval:
     reasons: tuple[Reason, ...]            # T4 的解释（每条指得到一个实际结果）
     recognition: Recognition
     profiles: tuple[BlockProfile, ...] = ()  # 块层面的**性质**（`基线§14`，进解释）
+    #: `步骤 T2` ② **真正用到**的倾向（`基线§14.7`）。空 = 没有任何记录 ⇒ 退化到纯结构序。
+    #: ⚠️ 它是**判据 `T5` 的输入**（「按使用细调」有没有真的进顺序），不是日志。
+    tendency: Mapping[str, float] = field(default_factory=dict)
+
+    @property
+    def n_blocks_with_tendency(self) -> int:
+        """「先看」档里**有使用记录**的块数 —— 读数（进输出，不进退出码）。"""
+        return sum(1 for b in self.first if any(d in self.tendency for d in b))
 
     def reading(self) -> dict[str, int]:
         """**现算**的读数（`§T0` 第 5 条：会漂的数不许写死）。"""
@@ -465,12 +500,18 @@ def render_reading(r: Retrieval) -> str:
 
 def retrieve(kernel: Kernel, plugin: Any, need: Mapping[str, Mapping[str, object]], *,
              spec: ViewSpec, recognition: Any = None,
+             tendency: Mapping[str, float] | None = None,
              known: Iterable[str] = BAR_NAMES) -> Retrieval:
     """`步骤 T0`–`步骤 T4` 走一遍。`T5`（展示 + 记录）由 `flow.run_query` 一并完成。
 
         `need`         `r` —— 按插件分栏的约束集合（外层键 = 插件名）
         `spec`         **当前**结构的外生声明（`U` / `P` / `E`）
         `recognition`  盘上那份认识（`view_persist.from_dict` 读回来的）；`None` = 没有
+        `tendency`     每个方向的**倾向加权值**（`core/selfopt.tendency_by_direction`）；
+                       `None` / 空 = **没有任何使用记录** ⇒ `步骤 T2` **退化到纯结构序**
+
+    ⚠️ `tendency` 由**调用方**给，不由本模块自己算 —— 它的一处定义在 `core/selfopt.py`
+       （`F2` 与这里**共用**那个函数；两处各写一份会漂移，且两边都是浮点数 ⇒ 看不出来）。
 
     本次调用只跑**一个内核**（一个插件）⇒ T2/T3 用的 `q = r[plugin.name]`；
     其余栏**只做分派校验**（这正是 `步骤 T0` 的产物「一组 `q`」）。
@@ -483,12 +524,14 @@ def retrieve(kernel: Kernel, plugin: Any, need: Mapping[str, Mapping[str, object
     query = dispatched[plugin.name]
 
     rec = current_recognition(spec, recognition)
-    first, late = order_blocks(kernel, plugin, rec.q, query)
+    tend = dict(tendency or {})
+    first, late = order_blocks(kernel, plugin, rec.q, query, tendency=tend)
     flow_a, scanned = run_in_order(kernel, query, first + late)
     candidates = frozenset(flow_a.result.yes)
     return Retrieval(query=query, candidates=candidates, first=first, late=late,
                      scanned=scanned, reasons=explain(candidates, kernel),
-                     recognition=rec, profiles=profile_of(kernel, rec.q))
+                     recognition=rec, profiles=profile_of(kernel, rec.q),
+                     tendency=tend)
 
 
 def render_explanation(r: Retrieval) -> str:
@@ -503,9 +546,19 @@ def render_explanation(r: Retrieval) -> str:
     if len(r.reasons) > 3:
         lines.append(f"    … 其余 {len(r.reasons) - 3} 条同类")
     lines.append("  涉及的块（**性质**，与顺序无关）：")
-    for p in r.profiles:
+    # ⚠️ 编号 + 按 `Q` 的规范化顺序（**不是**遍历顺序）—— `§3.2`：
+    #    「先看哪一带」是**调度**，不许进输出；这里给的是**块的定义性质**。
+    for i, p in enumerate(r.profiles, 1):
         touched = "  ← 有候选" if p.block & r.candidates else ""
-        lines.append(f"    {render_profile(p)}{touched}")
+        lines.append(f"    {i}/{len(r.profiles)} {render_profile(p)}{touched}")
+    # ★ 「按使用细调」的**证据**（`§14.7`）：不印的话，「用了记录」与「没用」长得一样。
+    if r.tendency:
+        lines.append(f"  按使用细调：{len(r.tendency)} 个方向有带权记录；"
+                     f"「先看」档里 **{r.n_blocks_with_tendency}/{len(r.first)}** 块有记录"
+                     f"（没有记录的**不参与**比较 —— 「不知道」不等于「不好」）")
+    else:
+        lines.append("  按使用细调：**没有任何使用记录** ⇒ 顺序**退化到纯结构序**"
+                     "（「不用一开始就创建最完美的规则」—— 增量，不要求一开始就对）")
     return "\n".join(lines)
 
 

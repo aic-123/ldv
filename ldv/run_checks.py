@@ -122,6 +122,8 @@ from .checks.abstraction import (
 )
 from .core.views import coarsest_stable_refinement, restrict_spec, view_parts
 from .core import view_persist
+from .core import selfopt
+from . import flow
 from . import retriever
 from .checks.retrieval import (
     RETRIEVER_CODES,
@@ -725,9 +727,18 @@ def retrieval_report(loaded, targets: list[str]) -> Report:
     cover = coverage_of(which, nodes, edges)
     disk = view_persist.to_dict(build_views(kernel, spec, cover, plugin))
     recognition = view_persist.from_dict(disk, kernel, cover, plugin)
+
+    # ★ 「按使用细调」（`基线§14.7`）要**使用记录**才有内容 —— 而流程 A 本来就会记
+    #   （`R5a` 展示 + `R5b` 逐条 `record_usage`）。⇒ 先跑几条查询攒记录，
+    #   否则 `T5` 在真装配上**永远跳过** ⇒ 那条判据等于没有。
+    #   ⚠️ 这是**流程 A 的正常动作**，不是为判据造数据（`§T0` 第 5 条：数要现算）。
+    for q0 in queries[:3]:
+        flow.run_query(kernel, q0)
+    tendency = selfopt.tendency_by_direction(kernel)
+
     query = queries[0]
     run_retrieval(kernel, plugin, {which: retriever.as_bar(query)}, spec, rep,
-                  recognition=recognition)
+                  recognition=recognition, tendency=tendency)
     rep.note(f"{why}；方向 `{which}`；需求取自第 1 条查询（`{query.label}`）")
     rep.note("⚠️ 本趟的**盘上认识**是**现造的**（默认语料上没有 `views.json`）——"
              "它拿的就是**当前结构** ⇒ `T2` 这一趟**只有守卫作用**"

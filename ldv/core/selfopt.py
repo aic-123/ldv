@@ -117,6 +117,32 @@ def collect(kernel: Any) -> tuple[list[Any], int]:
     return ok, blocked
 
 
+def tendency_by_direction(kernel: Any) -> dict[str, float]:
+    """每个方向的**倾向加权均値** —— `Σ (outcome / propensity) / 条数`。
+
+    ## ★ 一处定义、两处用（`expand_priority` 与检索器层的「按使用细调」）
+
+    `optimize`（F2）用它更新 `expand_priority.{did}`；
+    `retriever` 用它给视图块排序（`docs/分层方向视图-检索器层.md` §14.7）。
+    ⚠️ **两处各写一份会漂移** —— 而漂移了没有任何东西看得出来（都是浮点数）。
+
+    ## ⚠️ 为什么这是**局部**量、不违 `E-1`
+
+        它**按方向分别算**（键是 `did`），**不跨方向求平均** ——
+        跨方向求平均就是全局评分（`§B12` / `§4.3`）。
+        ⇒ 与 `§I3 代价` 同一种形状：**局部方法**，不是全局标量。
+
+    只收**倾向权重合法**的记录（`§K7` / `B11`）：`None` / `0` / `>1` 一律**不收**
+    （「缺权重」与「权重为 0」不是一回事，见 `collect`）。没有任何合法记录的方向
+    **不出现**在这个字典里 —— 调用方**不许**把「没有」当成 0 去比较（`§K6` 同源）。
+    """
+    recs, _blocked = collect(kernel)
+    per: dict[str, list[float]] = {}
+    for r in recs:
+        per.setdefault(r.did, []).append(r.outcome / r.propensity)
+    return {did: sum(vals) / len(vals) for did, vals in sorted(per.items())}
+
+
 def optimize(kernel: Any, params: Params) -> tuple[Params, dict[str, Any]]:
     """F1–F4。**只动内生量**，并自带两条断言。"""
     before_exo = params.fingerprint_exogenous()
@@ -125,12 +151,9 @@ def optimize(kernel: Any, params: Params) -> tuple[Params, dict[str, Any]]:
     # --- F2：更新内生量 -------------------------------------------------
     # 倾向加权的平均结果 —— **按方向分别更新**，不是算一个全局分。
     # 「按方向分别更新」是这里唯一允许的形状：跨方向求平均就是全局评分（§B12）。
-    per_direction: dict[str, list[float]] = {}
-    for r in recs:
-        per_direction.setdefault(r.did, []).append(r.outcome / r.propensity)
     endogenous = dict(params.endogenous)
-    for did, vals in sorted(per_direction.items()):
-        endogenous[f"expand_priority.{did}"] = sum(vals) / len(vals)
+    for did, val in tendency_by_direction(kernel).items():
+        endogenous[f"expand_priority.{did}"] = val
     endogenous["penalty_scale"] = float(len(recs))
 
     after = Params(exogenous=dict(params.exogenous), endogenous=endogenous)
@@ -149,6 +172,6 @@ def optimize(kernel: Any, params: Params) -> tuple[Params, dict[str, Any]]:
     return after, {
         "带权记录": len(recs),
         "被拦下（缺倾向）": blocked,
-        "更新到的方向数": len(per_direction),
+        "更新到的方向数": len(tendency_by_direction(kernel)),
         "外生项指纹": before_exo,
     }

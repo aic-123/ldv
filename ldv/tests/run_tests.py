@@ -4304,6 +4304,7 @@ def test_retriever() -> None:
     from ldv.core.tri import Tri as _Tri
     from ldv.run_checks import batch_kernel
     from ldv import retriever
+    from ldv import flow as _flow
 
     # ── ① 合成对照 ────────────────────────────────────────────────────────
     ctl = known_answer_controls()
@@ -4356,14 +4357,19 @@ def test_retriever() -> None:
     recognition = view_persist.from_dict(disk, kernel, cover, plugin)
 
     # ── ② 真跑一遍 ────────────────────────────────────────────────────────
+    # ★ 「按使用细调」（`§14.7`）要**使用记录**才有内容 —— 流程 A 本来就记
+    #   （`R5a` 展示 + `R5b`）。先跑几条攒记录，否则 `T5` **永远跳过**。
     query = queries[0]
+    for _q0 in queries[:3]:
+        _flow.run_query(kernel, _q0)
+    tendency = selfopt.tendency_by_direction(kernel)
     rep = Report(plugin="(检索)", expects=RETRIEVER_CODES)
     r = run_retrieval(kernel, plugin, {which: retriever.as_bar(query)}, spec, rep,
-                      recognition=recognition)
+                      recognition=recognition, tendency=tendency)
     ok("★★ [T] committed 规格上 `T1`–`T3` **一条红的都没有**（基线绿 —— "
        "「基线就红的判据过不了注入验证」）",
        not rep.red, "；".join(a.line() for a in rep.red))
-    ok("★★ [T] 三条**都跑了**（不是跳过）—— 「全绿」的范围必须与声明的范围恰好相等",
+    ok("★★ [T] **五条都跑了**（不是跳过）—— 「全绿」的范围必须与声明的范围恰好相等",
        all(a.result is _Tri.YES for a in rep.assertions)
        and len(rep.assertions) == len(RETRIEVER_CODES),
        f"{[(a.code, str(a.result)) for a in rep.assertions]}")
@@ -4438,11 +4444,49 @@ def test_retriever() -> None:
            for p in ps),
        f"{[(p.n_with_children, p.n_expanded_leaf, p.n_unexpanded, p.n_members) for p in ps[:3]]}")
 
-    ok("★★ [T] `render_explanation` 把**块的性质**印出来，且**不含遍历顺序**"
-       "（`§3.2`：顺序不许进输出）—— 它说的是「块的定义性质」，与「先看哪个」无关",
-       "还没钻进去" in retriever.render_explanation(r)
-       and "先看" not in retriever.render_explanation(r),
-       retriever.render_explanation(r).splitlines()[-1][:80])
+    # ⚠️ 断言要判的是「**块按 Q 的规范化顺序列出**，不是按遍历顺序」——
+    #    「解释里没有『先看』这两个字」是错的判据（`§14.7` 那行本来就要说这件事）。
+    expl = retriever.render_explanation(r)
+    pos = [expl.find(f"{i}/{len(r.profiles)} ") for i in range(1, len(r.profiles) + 1)]
+    ok("★★ [T] `render_explanation` 把**块的性质**印出来，且块的排列用 **Q 的规范化顺序**，"
+       "**不是**遍历顺序（`§3.2`：顺序不许进输出）—— "
+       "★ 而 `步骤 T2` 现在**真的会重排**（按使用细调）⇒ 两者不同才有意义",
+       "还没钻进去" in expl and pos == sorted(pos) and -1 not in pos,
+       f"块在解释里的出现位置 {pos}（应与 Q 同序）")
+
+    # ── ⑧ 「按使用细调」（`§14.7`）—— 最初那两份文档的核心主张 ──────────────
+    ok("★★ [T] `步骤 T2` 是**两层**排序（`§14.7`）：① 先由结构设定（`hit` 说否 ⇒ 后看）"
+       "② **按使用细调**（有记录的块按倾向降序）—— 这正是 `参考文献地图 §〇` 第 2 行"
+       "「搭建上层视图的规则**根据使用自我优化**」与 `§六.2`「收益（用得多）− 维护开销」"
+       "的落点，而它**从未进过设计文档**（本次补上）",
+       hasattr(r, "tendency") and r.n_blocks_with_tendency == len(r.first),
+       f"有记录的方向 {len(r.tendency)} 个；「先看」档 {r.n_blocks_with_tendency}/{len(r.first)} 块有记录")
+
+    if r.tendency and len(r.first) > 1:
+        def _w(b):
+            return sum(r.tendency.get(d, 0.0) for d in sorted(b))
+        ws = [_w(b) for b in r.first if any(d in r.tendency for d in b)]
+        canon = [_w(b) for b in sorted(r.first, key=min)
+                 if any(d in r.tendency for d in b)]
+        ok("★★ [T] 「先看」档里**有记录的块按倾向降序**（`§14.7` ②）—— "
+           "⚠️ 这条**只在有记录时才可判**（无记录时自动退化 = 「不用一开始就创建最完美的规则」）；"
+           "**夹具前提**：按倾向排 **≠** 按规范序排（否则「按权排」与「原序」重合 ⇒ 判据恒真）。"
+           "⚠️ 前提**不是**「倾斜值互不相同」—— 实测真语料上**有重复**（`1.000` 出现两次），"
+           "要求互不相同会造出一条**假红**",
+           ws == sorted(ws, reverse=True) and ws != canon,
+           f"倾斜值 {['%.3f' % x for x in ws]}（规范序下 {['%.3f' % x for x in canon]}）")
+
+        ok("★★ [T] 「没有记录」**不参与比较**（`§K6` 同源）—— 没有被当 0 插进有记录的块之间。"
+           "★ 这一条是本层最容易被写错的地方：把「没看见」当成「不好」就会静默改变顺序",
+           all(r.first.index(b) < len([x for x in r.first if any(d in r.tendency for d in x)])
+               for b in r.first if any(d in r.tendency for d in b)) or not r.tendency,
+           f"{r.n_blocks_with_tendency} 有记录 / {len(r.first) - r.n_blocks_with_tendency} 无记录")
+
+    ok("★ [T] 倾向的一处定义在 `core/selfopt.py::tendency_by_direction`（`F2` 与检索器层**共用**）"
+       "—— ⚠️ 两处各写一份会漂移，而两边都是浮点数 ⇒ **漂移了看不出来**",
+       selfopt.tendency_by_direction(kernel).keys()
+       >= {d for b in r.first for d in b if d in r.tendency},
+       f"{len(selfopt.tendency_by_direction(kernel))} 个方向")
 
     # ── 读数（现算，不进退出码） ──────────────────────────────────────────
     d = r.reading()

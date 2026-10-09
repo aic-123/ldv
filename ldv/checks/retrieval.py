@@ -78,7 +78,7 @@ from ._framework import Report
 
 #: 检索器层的判据编号 —— 与插件侧 / 内核侧 / 视图侧 / CLI 侧**并列**，不是它们的一部分。
 #: ⚠️ **只列**已经实现了的（写进来就等于声称「套件全绿」覆盖了它）。
-RETRIEVER_CODES = ("T1", "T2", "T3", "T4")
+RETRIEVER_CODES = ("T1", "T2", "T3", "T4", "T5")
 
 #: 三条的**标题** —— **一处定义，两处用**（真跑时 `rep.add`、跳过时 `skip_all`）。
 #:
@@ -90,6 +90,7 @@ TITLES: dict[str, str] = {
     "T2": "当前：用到的认识的 `spec` 指纹 == 当前结构的 `spec` 指纹",
     "T3": "解释指得到：`步骤 T4` 的每条理由都指得到实际结果",
     "T4": "画像不许说错：四档读法（已细分过/还没钻进去/下界到了/混合）与结构事实相符",
+    "T5": "按使用细调真的进了顺序（有记录的块按倾向降序、排在「不知道」之前）",
 }
 
 
@@ -225,21 +226,82 @@ def t4_profile(rep: Report, r: Retrieval, kernel: Any) -> None:
                   f"（四档：「{ps[0].reading}」…）"))
 
 
+# --- `T5` ---------------------------------------------------------------------
+
+def _order_key(order: tuple[frozenset[str], ...]) -> tuple[tuple[str, ...], ...]:
+    """一个顺序的可比形态（块按最小元素标识）—— 判「顺序**真的变了**」用。"""
+    return tuple(tuple(sorted(b)) for b in order)
+
+
+def t5_usage_finetune(rep: Report, r: Retrieval, kernel: Any) -> None:
+    """`T5` —— **「按使用细调」真的进了顺序**（`基线§14.7`）。
+
+    ## 它守的是什么
+
+    顺序有**两层**（`§14.7`）：① 先由结构设定 ② 按使用细调。
+    ⚠️ **② 与「没做」在只看输出时长得一模一样** —— 没有记录时它自动退化，
+       所以「用了」（有记录却没生效）与「没用」必须能被**分开**。
+       ⇒ 这条判据查的就是：**倾向有内容时，顺序必须真的跟着变。**
+
+    ## 两个方向都查（否则会被两种假绿骗过）
+
+        `有记录`  ⇒ 「先看」档里**有记录的块必须排在没记录的前面**（局部量、降序）
+        `无记录`  ⇒ 顺序必须**与纯结构序一致**（退化正确；不许凭空造顺序）
+
+    跳过：没有任何记录（`tendency` 空）**且**「先看」档 ≤1 块 ⇒ 无可判（`§C3`）。
+
+    ⚠️ **它不重复判 `T1`** —— `T1` 判「顺序怎么变都不许漏」，`T5` 判「顺序**确实变了**」。
+       两条各守一侧：**只有两条都绿**，「按使用细调」才算真的、且安全的。
+    """
+    first = r.first
+    if not r.tendency:
+        rep.add("T5", TITLES["T5"], Tri.UNEXPANDED,
+                "**没有任何使用记录** ⇒ 顺序退化到纯结构序，这一条**没有内容**"
+                "（跳过 ≠ 通过；它的红路由注入单独验）")
+        return
+    if len(first) <= 1:
+        rep.add("T5", TITLES["T5"], Tri.UNEXPANDED,
+                "「先看」档 ≤1 块 ⇒ 无从排序（跳过 ≠ 通过）")
+        return
+
+    def w(b: frozenset[str]) -> float:
+        return sum(r.tendency.get(d, 0.0) for d in sorted(b))
+
+    has = [b for b in first if any(d in r.tendency for d in b)]
+    no = [b for b in first if not any(d in r.tendency for d in b)]
+    bad: list[str] = []
+    # ① 同档内部：有记录的必须降序（否则「按使用细调」没生效）
+    ws = [w(b) for b in has]
+    if ws != sorted(ws, reverse=True):
+        bad.append(f"有记录的块**没有按倾向降序**：{['%.3f' % x for x in ws]}")
+    # ② 有记录的必须**全部排在**没记录的前面（「不知道」不参与比较，不许被当 0 插在中间）
+    if has and no and first.index(has[-1]) > first.index(no[0]):
+        bad.append(f"「不知道」的块被插进了有记录的块之间（{len(has)} 有 / {len(no)} 无）")
+
+    rep.add("T5", TITLES["T5"], Tri.NO if bad else Tri.YES,
+            (f"按使用细调**没生效**：{bad}") if bad
+            else (f"{len(has)} 块按倾向降序排在前面、{len(no)} 块（无记录）"
+                  f"保持结构序在后（{len(r.tendency)} 个方向有带权记录）"))
+
+
 # --- 跑一遍再判 ----------------------------------------------------------------
 
 def run_retrieval(kernel: Any, plugin: Any,
                   need: Mapping[str, Mapping[str, object]], spec: ViewSpec,
-                  rep: Report, *, recognition: Any = None) -> Retrieval:
-    """走一遍流程 T（`T0`–`T4`）再逐条判 `T1`–`T3`。
+                  rep: Report, *, recognition: Any = None,
+                  tendency: Mapping[str, float] | None = None) -> Retrieval:
+    """走一遍流程 T（`T0`–`T4`）再逐条判 `T1`–`T5`。
 
-    ⚠️ **判据读的是同一份 `Retrieval`**（`T1` 读候选集、`T2` 读认识的指纹、`T3` 读解释）
-       —— 三条不各自跑一遍，否则「红」会分不清是三条里的哪一条造成的。
+    ⚠️ **判据读的是同一份 `Retrieval`**（`T1` 读候选集、`T2` 读认识的指纹、`T3` 读解释、
+       `T4` 读画像、`T5` 读顺序）—— 五条不各自跑一遍，否则「红」会分不清是谁造成的。
     """
-    r = retrieve(kernel, plugin, need, spec=spec, recognition=recognition)
+    r = retrieve(kernel, plugin, need, spec=spec, recognition=recognition,
+                 tendency=tendency)
     t1_equivalence(rep, r, kernel)
     t2_current(rep, r, spec)
     t3_reasons(rep, r, kernel)
     t4_profile(rep, r, kernel)
+    t5_usage_finetune(rep, r, kernel)
     rep.note(f"认识：{r.recognition.source}；指纹 {r.recognition.fingerprint}")
     rep.note(render_reading(r))
     rep.note(render_explanation(r))

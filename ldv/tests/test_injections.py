@@ -1922,6 +1922,47 @@ def inj_t4(nodes, edges, injected: bool) -> Report:
     return rep
 
 
+def inj_t5(nodes, edges, injected: bool) -> Report:
+    """`T5` —— 注入「**顺序没按使用细调排**」（`基线§14.7`）。
+
+    红形态 = 倾向**还在**（判据不会跳过），但顺序**不是**按它降序的 ——
+    也就是「记录收着、却没用上」。⚠️ 这正是「**用了**」与「**没用**」唯一分得开的地方：
+    没有记录时它会自动退化 ⇒ 只看输出看不出「退化得对」还是「根本没做」。
+
+    ⚠️ 用**真语料**（同 `inj_t4`）—— 它要**真的使用记录**才有内容，
+       而手造小夹具上不一定跑了查询。
+
+    夹具前提：**倾斜值必须互不相同**（否则「按权重排序」与「原序」可能重合 ⇒ 注入无效）。
+    这一条由 `known_answer_controls` 里的保护**大声报**，不静默变成空转。
+    """
+    from ldv.checks.abstraction import spec_for
+    from ldv.checks.retrieval import RETRIEVER_CODES, t5_usage_finetune
+    from ldv.core import selfopt
+    from ldv.run_checks import batch_kernel, corpus_fingerprint, load_spec_file
+    from ldv.retriever import as_bar, retrieve
+    from ldv import flow
+
+    doc = load_spec_file()
+    which = str(doc.get("方向") or "")
+    spec, _why = spec_for(doc, which, corpus_fingerprint(nodes, edges))
+    kernel, plugin, queries, _mk = batch_kernel(which, nodes, edges)
+    for q0 in queries[:3]:                      # ★ 先攒记录（流程 A 本来就记）
+        flow.run_query(kernel, q0)
+    tendency = selfopt.tendency_by_direction(kernel)
+    r = retrieve(kernel, plugin, {which: as_bar(queries[0])}, spec=spec,
+                 tendency=tendency)
+    if injected and len(r.first) > 1:
+        # 「没用上」的可观测形态：**权重最小**的那块被挪到最前（倾向仍在 ⇒ 判据不跳过）。
+        def w(b):
+            return sum(tendency.get(d, 0.0) for d in sorted(b))
+        fs = list(r.first)
+        lo = min(fs, key=w)
+        r = replace(r, first=tuple([lo] + [b for b in fs if b is not lo]))
+    rep = Report(plugin="(检索)", expects=RETRIEVER_CODES)
+    t5_usage_finetune(rep, r, kernel)
+    return rep
+
+
 # ═══ 驱动 ════════════════════════════════════════════════════════════════════
 
 def _cli_report(nodes, edges, *, run_one=None) -> Report:
@@ -1992,7 +2033,7 @@ CASES: dict[str, Callable] = {
     "M4": inj_m4, "M5": inj_m5, "M6": inj_m6,
     # ★ `(检索)` 那一组：四条**都是守卫** ⇒ 四条注入**全是手造的**（见上面的段落）。
     #   ⚠️ `T4` 的注入用**真语料**（它判的那一档「未展开」在手造小夹具上未必有）。
-    "T1": inj_t1, "T2": inj_t2, "T3": inj_t3, "T4": inj_t4,
+    "T1": inj_t1, "T2": inj_t2, "T3": inj_t3, "T4": inj_t4, "T5": inj_t5,
     # ★ `(cli)` 那一组：**两条注入覆盖七条**（两个分支互不替代，见各自的 docstring）。
     "CL1": inj_cli_guard_always, "CL2": inj_cli_guard_always,
     "CL6": inj_cli_guard_always, "CL7": inj_cli_guard_always,

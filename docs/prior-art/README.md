@@ -230,9 +230,14 @@ PYTHONIOENCODING=utf-8 PYTHONUTF8=1 "$V" repo/docs/prior-art/verify_quotes.py \
     repo/docs/*.md repo/README.md repo/ldv/MEASUREMENTS.md
 ```
 
-**2026-10-09 实测（最近一次）：引文 257 条｜全覆盖 257｜有缺口 0。**
-（同日更早是 253 —— 差的 **4 条**全在 `repo/docs/分层方向视图-检索器层.md` §14.0，
-是本轮首次进仓库文档引用的 **HNSW**（`sources/hnsw.txt`）；见上面那条登记。）
+**2026-10-09 实测（最近一次）：引文 265 条｜全覆盖 265｜有缺口 0。**
+（同日三次累加，每一档都逐条可追：
+ 253 → **257**：+4 全在 `repo/docs/分层方向视图-检索器层.md` §14.0，
+ 是本轮首次进仓库文档引用的 **HNSW**（`sources/hnsw.txt`）；
+ 257 → **265**：+8 全在该文档 §14.7 的「文献印证」表 ——
+ `mvselect2026` ×2 ／ `kraska2018` ×1 ／ `unbiased_ltr` ×2 ／ `degenloop` ×2 ／
+ `gist1995` ×1（那一条也印证了 `模块化边界 §三` 的「插件允许不准」）。
+ ⚠️ 这 8 条**每一句都人工逐字核过**（`norm()` 压平后 `in` 判定），不是只看「全覆盖」。）
 （**2026-10-08 是 252 条**；那一次改动之前是 208 条 —— 差的 44 条里 43 条全在
 `repo/docs/分层方向视图-多层抽象-前作核验.md` 里，另 1 条是 `repo/ldv/MEASUREMENTS.md`
 结果十九 把 METIS p.365 那条原文又引了一次。逐条对得上。
