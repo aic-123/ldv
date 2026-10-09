@@ -699,8 +699,10 @@ def render_explanation(r: Retrieval) -> str:
             ids = sorted(b, key=_did_order)
             shown = ", ".join(ids[:3]) + ("…" if len(ids) > 3 else "")
             lines.append(f"    [{shown}]（{len(b)} 个成员）⇒ **{a}**")
-        lines.append("    ⚠️ 它是**判断**不是**动作**：本层**只读**（`基线§1`），"
-                     "不代检索器调 `expand`；`R3a` 拿它当依据，动作仍在流程 A 那一侧。")
+        lines.append("    ⚠️ 它是**判断**：`R3a` 拿它当依据。★ 而 `§14.9` 之后本层"
+                     "**也会做事** —— `deepen` 会对「值得往下」那一带按需 `expand`"
+                     "（`§1` 表已精确化为「**只允许按需 `expand`**」；"
+                     "安全契约：**只增不减 + 幂等**，判据 `T7` 守）。")
     # ★ 「按使用细调」的**证据**（`§14.7`）：不印的话，「用了记录」与「没用」长得一样。
     if r.tendency:
         lines.append(f"  按使用细调：{len(r.tendency)} 个方向有带权记录；"
