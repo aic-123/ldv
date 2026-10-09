@@ -4488,6 +4488,49 @@ def test_retriever() -> None:
        >= {d for b in r.first for d in b if d in r.tendency},
        f"{len(selfopt.tendency_by_direction(kernel))} 个方向")
 
+    # ── ⑨ ★★ 「整体倾向」的**影响**：可执行证明（`§14.8`） ──────────────────
+    ok("★★ [T] `Retrieval` 带**块级的下一步建议**（`§14.8`）—— 它答的是流程 A `R3a`"
+       "那个**一直空着的依据**（「需要更清晰的方向吗？」；工作流程里那行红条件写的是「无」）",
+       bool(r.advice) and all(isinstance(b, frozenset) and a for b, a in r.advice),
+       f"{len(r.advice)} 条：" + "／".join(f"{len(b)}成员⇒{a}" for b, a in r.advice[:4]))
+
+    ok("★★ [T] 建议**连着它的块**（不跨块合并）—— ★ 这条是**实测逼出来的**："
+       "先写成「去重后的建议列表」，判据 `T6` 立刻红（一条建议被拿去对**别的块**检查）。"
+       "语义上：**「哪一带」正是「整体倾向」的全部内容**，去掉块就等于把它丢了",
+       all(any(b == p.block for p in r.profiles) for b, _a in r.advice),
+       f"{len(r.advice)} 条的块都来自 `Q`")
+
+    # ★★ **影响的证明**：把认识换成**离散划分**（= 不用视图），再跑一遍同样的检索。
+    #    ⇒ 候选集**不变**（`T1` 的定理），但「整体倾向」**退化成逐方向**
+    #      ⇒ 这就是「有认识 / 没认识」的**可机检差异**。
+    _disc = retriever.Recognition(
+        spec=spec, q=tuple(frozenset({d}) for d in spec.universe),
+        source="对照：离散划分（= 不用视图）",
+        fingerprint=retriever.spec_fingerprint(spec), on_disk=True)
+    _cr = retriever.current_recognition
+    retriever.current_recognition = lambda s, r=None: _disc
+    try:
+        rd = retriever.retrieve(kernel, plugin, {which: retriever.as_bar(query)}, spec=spec)
+    finally:
+        retriever.current_recognition = _cr
+    ok("★★ [T] **影响的证明**（`§14.8.1`）：换成**离散划分**（= 不用视图）后，"
+       "**候选集不变**（`§3` 定理 —— 「不改变结论」这一半）"
+       "**而「整体倾向」退化成逐方向** ⇒ 这就是「有认识 / 没认识」的可机检差异",
+       rd.candidates == r.candidates
+       and len(rd.advice) == len(rd.candidates)          # 25 条（每条 1 个方向）
+       and len(r.advice) < len(r.candidates)             # 8 条覆盖 25（有认识）
+       and rd.advice_span == len(rd.candidates),
+       f"有认识：{len(r.advice)} 条覆盖 {r.advice_span}/{len(r.candidates)}｜"
+       f"离散：{len(rd.advice)} 条覆盖 {rd.advice_span}/{len(rd.candidates)}"
+       f"｜候选集相同={rd.candidates == r.candidates}")
+
+    ok("★★ [T] 而**判断的粒度**正是「整体」二字的量：有认识时每条建议平均覆盖 "
+       f"**{r.advice_span / max(1, len(r.advice)):.1f}** 个方向，离散时 **1.0** —— "
+       "★ 所以「整体倾向」不是**更多信息**，是**更粗的一种判断**"
+       "（同一份结构，换粒度就说得出 / 说不出「这一带」）",
+       r.advice_span / max(1, len(r.advice)) > 1.0,
+       f"{len(r.advice)} 条 / 覆盖 {r.advice_span} 个方向")
+
     # ── 读数（现算，不进退出码） ──────────────────────────────────────────
     d = r.reading()
     ok("★ [T] 读数是**现算**的（`§T0` 第 5 条：会漂的数不许写死）—— "

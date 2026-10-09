@@ -78,7 +78,7 @@ from ._framework import Report
 
 #: 检索器层的判据编号 —— 与插件侧 / 内核侧 / 视图侧 / CLI 侧**并列**，不是它们的一部分。
 #: ⚠️ **只列**已经实现了的（写进来就等于声称「套件全绿」覆盖了它）。
-RETRIEVER_CODES = ("T1", "T2", "T3", "T4", "T5")
+RETRIEVER_CODES = ("T1", "T2", "T3", "T4", "T5", "T6")
 
 #: 三条的**标题** —— **一处定义，两处用**（真跑时 `rep.add`、跳过时 `skip_all`）。
 #:
@@ -91,6 +91,7 @@ TITLES: dict[str, str] = {
     "T3": "解释指得到：`步骤 T4` 的每条理由都指得到实际结果",
     "T4": "画像不许说错：四档读法（已细分过/还没钻进去/下界到了/混合）与结构事实相符",
     "T5": "按使用细调真的进了顺序（有记录的块按倾向降序、排在「不知道」之前）",
+    "T6": "下一步建议（答 `R3a` 的依据）与结构事实相符 —— 块级判断，不是逐方向",
 }
 
 
@@ -284,6 +285,77 @@ def t5_usage_finetune(rep: Report, r: Retrieval, kernel: Any) -> None:
                   f"保持结构序在后（{len(r.tendency)} 个方向有带权记录）"))
 
 
+# --- `T6` ---------------------------------------------------------------------
+
+#: 建议 → 它**声称**的结构事实（`基线§14.8.2`）。判据从**建议反推**它，再逐成员去查。
+#: ⚠️ **不要**拿它跟 `ADVICE[reading]` 比 —— 那是**同一条推导**，比了等于没比
+#:    （`false-green` 形状 3「共享盲点」）。这里走的是**独立的一遍逐成员检查**。
+_ADVICE_FACT: dict[str, str] = {
+    "值得往下": "全未展开",
+    "往下有现成通道": "全有子",
+    "不必往下": "全判空",
+    "看具体方向": "无",
+}
+
+
+def t6_advice(rep: Report, r: Retrieval, kernel: Any) -> None:
+    """`T6` —— **下一步建议必须与结构事实相符**（`基线§14.8`）。
+
+    ## 它守的是什么（与 `T4` 的分工）
+
+        `T4` 判「**读法**（现状）与事实相符」
+        `T6` 判「**建议**（下一步）与事实相符」—— ★ 且它是**块级**的：
+             一条建议覆盖**整块**，不是逐方向列 25 条
+
+    ★ **它填的是一处一直空着的依据**：流程 A 的 `R3a`（「需要更清晰的方向吗？」）
+      在工作流程里只有决定点、没有依据（那一行的红条件是「无」）。
+      ⇒ 建议就是那个依据，所以它**不许说错**：说错就是**让 `R3a` 照着错的判**。
+
+    ## 反推（与 `block_profile` 不同路）
+
+        「值得往下」    声称命中块**全部未展开**（`¬is_expanded`）
+        「往下有现成通道」声称命中块**全部有子**
+        「不必往下」    声称命中块**全部展开过且无子**（`§K2` 判空）
+        「看具体方向」  声称**上面三条都不成立**
+
+    跳过：没有建议（没有候选 / 候选都不在任何块里）⇒ 无可判（`§C3`）。
+
+    ⚠️ **它不重复判 `T1`/`T4`**：`T1` 判「候选集没漏」，`T4` 判「读法没说错」，
+       `T6` 判「**下一步建议**没说错」—— 三条各守一侧。
+    """
+    if not r.advice:
+        rep.add("T6", TITLES["T6"], Tri.UNEXPANDED,
+                "没有任何建议（没有候选 / 候选不在任何块里）⇒ 没有可判的东西（跳过 ≠ 通过）")
+        return
+    bad: list[str] = []
+    for block, a in r.advice:
+        claim = _ADVICE_FACT.get(a)
+        if claim is None:
+            bad.append(f"建议 {a!r} **不在注册表里**（`retriever.ADVICE`）")
+            continue
+        # ★ **只对这一条建议的**那块**检查** —— 建议是块级的，跨块比对是**另一回事**
+        #   （实测踩到：合并去重后再跨块检查 ⇒ 一条建议被拿去对别的块 ⇒ 假红）。
+        all_kids = all(kernel.children_of(kernel.direction(x)) for x in block)
+        all_unexp = all(not kernel.is_expanded(kernel.direction(x)) for x in block)
+        all_leafy = all(kernel.is_expanded(kernel.direction(x))
+                        and not kernel.children_of(kernel.direction(x)) for x in block)
+        ok = (
+            (claim == "全未展开" and all_unexp)
+            or (claim == "全有子" and all_kids)
+            or (claim == "全判空" and all_leafy)
+            or (claim == "无" and not (all_unexp or all_kids or all_leafy))
+        )
+        if not ok:
+            bad.append(f"块 {sorted(block)[:3]}… 的建议「**{a}**」（声称 {claim}）"
+                       f"与**该块**事实不符：全未展开={all_unexp}、"
+                       f"全有子={all_kids}、全判空={all_leafy}")
+    rep.add("T6", TITLES["T6"], Tri.NO if bad else Tri.YES,
+            (f"{len(bad)} 条建议说错：{bad[:2]}"
+             f"（★ 它骗的是 `R3a` —— 那一步本来没有依据）") if bad
+            else (f"{len(r.advice)} 条块级建议都与**各自那一块**的结构事实相符，"
+                  f"覆盖 {r.advice_span}/{len(r.candidates)} 个候选方向"))
+
+
 # --- 跑一遍再判 ----------------------------------------------------------------
 
 def run_retrieval(kernel: Any, plugin: Any,
@@ -302,6 +374,7 @@ def run_retrieval(kernel: Any, plugin: Any,
     t3_reasons(rep, r, kernel)
     t4_profile(rep, r, kernel)
     t5_usage_finetune(rep, r, kernel)
+    t6_advice(rep, r, kernel)
     rep.note(f"认识：{r.recognition.source}；指纹 {r.recognition.fingerprint}")
     rep.note(render_reading(r))
     rep.note(render_explanation(r))

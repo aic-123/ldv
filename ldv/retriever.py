@@ -327,6 +327,16 @@ def run_in_order(kernel: Kernel, query: Query,
 #    不回答「这一块更好吗」。任何「重要性 / 命中率 / 访问次数」都不许进来。
 
 
+#: 读法 → **下一步**（`基线§14.8`）—— **一处定义**，判据 `T6` 从它反查。
+#: ⚠️ 它是 `reading` 的**函数**（不是独立判断）：改这里就等于改两条判据的口径。
+ADVICE: dict[str, str] = {
+    "还没钻进去": "值得往下",
+    "已细分过": "往下有现成通道",
+    "下界到了": "不必往下",
+    "混合": "看具体方向",
+}
+
+
 @dataclass(frozen=True)
 class BlockProfile:
     """一块的**三态结构画像** —— 五项全是结构事实，**现算**（`基线§14.1`）。
@@ -368,6 +378,15 @@ class BlockProfile:
         if t and self.n_expanded_leaf == t:
             return "下界到了"
         return "混合"
+
+    @property
+    def advice(self) -> str:
+        """`步骤 T4` 的**下一步建议** —— 读法 → 建议（`基线§14.8`，`ADVICE` 一处定义）。
+
+        ★ 它答的是流程 A `R3a` 那个**一直空着的依据**（「需要更清晰的方向吗？」）。
+        ⚠️ 它是**判断**不是**动作**：本层只读（`§1` 表），不代检索器调 `expand`。
+        """
+        return ADVICE[self.reading]
 
 
 def block_profile(kernel: Kernel, block: frozenset[str]) -> BlockProfile:
@@ -457,6 +476,21 @@ class Retrieval:
     #: `步骤 T2` ② **真正用到**的倾向（`基线§14.7`）。空 = 没有任何记录 ⇒ 退化到纯结构序。
     #: ⚠️ 它是**判据 `T5` 的输入**（「按使用细调」有没有真的进顺序），不是日志。
     tendency: Mapping[str, float] = field(default_factory=dict)
+    #: **块级的下一步建议**（`基线§14.8`）—— `((块, 建议), …)`，按 `Q` 序。
+    #: ⚠️ **不跨块去重/合并** —— 去重会把「**哪一带**」丢掉，
+    #:    而「哪一带」正是「整体倾向」的全部内容（实测踩到：合并后判据 `T6` 立刻红，
+    #:    因为一条建议被拿去对**别的块**检查）。
+    #: ⚠️ 它是**判据 `T6` 的输入**；不是日志（写错就是红）。
+    advice: tuple[tuple[frozenset[str], str], ...] = ()
+
+    @property
+    def advice_span(self) -> int:
+        """建议**覆盖的方向数** —— 读数（进输出，不进退出码）。
+
+        ★ 它就是「整体性」的量：离散划分下它会退化成「每个方向一条」，
+          而认识下它是「13 个成员那一带」⇒ **判断的粒度不同**（`基线§14.8.4`）。
+        """
+        return sum(len(b) for b, _a in self.advice)
 
     @property
     def n_blocks_with_tendency(self) -> int:
@@ -498,6 +532,22 @@ def render_reading(r: Retrieval) -> str:
             f"**判断质量** —— 「你那一带是什么」；两个口径不许合成一个数")
 
 
+def advice_of(candidates: Iterable[str],
+              profiles: Sequence[BlockProfile]) -> tuple[tuple[frozenset[str], str], ...]:
+    """`步骤 T4` 的**下一步建议** —— `((块, 建议), …)`，按 `Q` 序（`基线§14.8`）。
+
+    ⚠️ **每块一条，不跨块合并**（实测踩到：合并后判据 `T6` 立刻红 ——
+       一条建议被拿去对**别的块**检查）。★ 理由不是「判据不好写」，是**语义**：
+       「整体倾向」的全部内容就是「**哪一带** + 那一带什么性质」；
+       把块去掉的「建议列表」**恰好把「哪一带」丢了**。
+
+    ⚠️ **只取「命中」的块** —— 没命中的块再「值得往下」也与本次结果无关。
+    ⚠️ 顺序按 `Q` 的规范化序 —— **可复现**，且**不是**遍历顺序（`§3.2`）。
+    """
+    hit = frozenset(candidates)
+    return tuple((p.block, p.advice) for p in profiles if p.block & hit)
+
+
 def retrieve(kernel: Kernel, plugin: Any, need: Mapping[str, Mapping[str, object]], *,
              spec: ViewSpec, recognition: Any = None,
              tendency: Mapping[str, float] | None = None,
@@ -528,10 +578,11 @@ def retrieve(kernel: Kernel, plugin: Any, need: Mapping[str, Mapping[str, object
     first, late = order_blocks(kernel, plugin, rec.q, query, tendency=tend)
     flow_a, scanned = run_in_order(kernel, query, first + late)
     candidates = frozenset(flow_a.result.yes)
+    profs = profile_of(kernel, rec.q)
     return Retrieval(query=query, candidates=candidates, first=first, late=late,
                      scanned=scanned, reasons=explain(candidates, kernel),
-                     recognition=rec, profiles=profile_of(kernel, rec.q),
-                     tendency=tend)
+                     recognition=rec, profiles=profs, tendency=tend,
+                     advice=advice_of(candidates, profs))
 
 
 def render_explanation(r: Retrieval) -> str:
@@ -551,6 +602,17 @@ def render_explanation(r: Retrieval) -> str:
     for i, p in enumerate(r.profiles, 1):
         touched = "  ← 有候选" if p.block & r.candidates else ""
         lines.append(f"    {i}/{len(r.profiles)} {render_profile(p)}{touched}")
+    # ★★ **下一步建议**（`基线§14.8`）—— 这是「整体倾向」的落点：
+    #    它答的是流程 A `R3a` 那个一直空着的依据（「需要更清晰的方向吗？」）。
+    if r.advice:
+        lines.append(f"  **下一步建议**（答 `R3a` 的依据；覆盖 "
+                     f"{r.advice_span}/{len(r.candidates)} 个候选方向 —— **块级判断**）：")
+        for b, a in r.advice:
+            ids = sorted(b, key=_did_order)
+            shown = ", ".join(ids[:3]) + ("…" if len(ids) > 3 else "")
+            lines.append(f"    [{shown}]（{len(b)} 个成员）⇒ **{a}**")
+        lines.append("    ⚠️ 它是**判断**不是**动作**：本层**只读**（`基线§1`），"
+                     "不代检索器调 `expand`；`R3a` 拿它当依据，动作仍在流程 A 那一侧。")
     # ★ 「按使用细调」的**证据**（`§14.7`）：不印的话，「用了记录」与「没用」长得一样。
     if r.tendency:
         lines.append(f"  按使用细调：{len(r.tendency)} 个方向有带权记录；"

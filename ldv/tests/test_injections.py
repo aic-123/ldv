@@ -1963,6 +1963,36 @@ def inj_t5(nodes, edges, injected: bool) -> Report:
     return rep
 
 
+def inj_t6(nodes, edges, injected: bool) -> Report:
+    """`T6` —— 注入「**建议与该块的事实不符**」（`基线§14.8`）。
+
+    红形态 = 建议**还在**（判据不跳过），但它与**那一块**的结构事实相反 ——
+    也就是「说的和事实不一样」。★ 它骗的是流程 A 的 `R3a`：那一步**本来没有依据**，
+    拿一条错的建议去判「要不要继续往下」，就是**照着错的判**。
+
+    ⚠️ 用**真语料**（同 `inj_t4` / `inj_t5`）—— 它要**真的块**（含那个 13 成员的
+       「还没钻进去」块）才有内容。
+    """
+    from ldv.checks.abstraction import spec_for
+    from ldv.checks.retrieval import RETRIEVER_CODES, t6_advice
+    from ldv.run_checks import batch_kernel, corpus_fingerprint, load_spec_file
+    from ldv.retriever import as_bar, retrieve
+
+    doc = load_spec_file()
+    which = str(doc.get("方向") or "")
+    spec, _why = spec_for(doc, which, corpus_fingerprint(nodes, edges))
+    kernel, plugin, queries, _mk = batch_kernel(which, nodes, edges)
+    r = retrieve(kernel, plugin, {which: as_bar(queries[0])}, spec=spec)
+    if injected:
+        # 「说的和事实不一样」的可观测形态：每条建议都翻成**另一档**（与事实相反）。
+        flip = {"值得往下": "不必往下", "不必往下": "值得往下",
+                "往下有现成通道": "不必往下", "看具体方向": "值得往下"}
+        r = replace(r, advice=tuple((b, flip[a]) for b, a in r.advice))
+    rep = Report(plugin="(检索)", expects=RETRIEVER_CODES)
+    t6_advice(rep, r, kernel)
+    return rep
+
+
 # ═══ 驱动 ════════════════════════════════════════════════════════════════════
 
 def _cli_report(nodes, edges, *, run_one=None) -> Report:
@@ -2034,6 +2064,7 @@ CASES: dict[str, Callable] = {
     # ★ `(检索)` 那一组：四条**都是守卫** ⇒ 四条注入**全是手造的**（见上面的段落）。
     #   ⚠️ `T4` 的注入用**真语料**（它判的那一档「未展开」在手造小夹具上未必有）。
     "T1": inj_t1, "T2": inj_t2, "T3": inj_t3, "T4": inj_t4, "T5": inj_t5,
+    "T6": inj_t6,
     # ★ `(cli)` 那一组：**两条注入覆盖七条**（两个分支互不替代，见各自的 docstring）。
     "CL1": inj_cli_guard_always, "CL2": inj_cli_guard_always,
     "CL6": inj_cli_guard_always, "CL7": inj_cli_guard_always,
