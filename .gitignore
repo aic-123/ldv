@@ -20,3 +20,18 @@ _data/*
 _data/openalex-citations/*
 !_data/openalex-citations/view_spec.json
 !_data/openalex-citations/views.json
+
+# ★ 同上（2026-10-10）：SNAP 的三份语料（形状互补，用来压系统不同路径）。
+#   取法与丢弃明细见 `ldv/tools/intake_snap.py`。同样是「语料不进、声明与认识进」。
+!_data/snap-email-eu/
+_data/snap-email-eu/*
+!_data/snap-email-eu/view_spec.json
+!_data/snap-email-eu/views.json
+!_data/snap-hepth/
+_data/snap-hepth/*
+!_data/snap-hepth/view_spec.json
+!_data/snap-hepth/views.json
+!_data/snap-hepth-dag/
+_data/snap-hepth-dag/*
+!_data/snap-hepth-dag/view_spec.json
+!_data/snap-hepth-dag/views.json
