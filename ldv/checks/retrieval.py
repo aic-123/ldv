@@ -66,6 +66,7 @@ from typing import Any, Callable, Mapping, Sequence
 from ..core.tri import Tri
 from ..core.views import ViewSpec, coarsest_stable_refinement
 from ..retriever import (
+    _DISK_UNSET,
     Retrieval,
     as_bar,
     deepen,
@@ -443,6 +444,7 @@ def run_retrieval(kernel: Any, plugin: Any,
                   need: Mapping[str, Mapping[str, object]], spec: ViewSpec,
                   rep: Report, *, recognition: Any = None,
                   tendency: Mapping[str, float] | None = None,
+                  disk_fingerprint: Any = _DISK_UNSET,
                   disk_unreadable: bool = False,
                   deepen_rounds: int = 1) -> Retrieval:
     """走一遍流程 T（`T0`–`T4`）+ 按建议**深化**（`R3a` 的接线），再逐条判 `T1`–`T7`。
@@ -456,7 +458,8 @@ def run_retrieval(kernel: Any, plugin: Any,
        这样「顺序 / 认识 / 画像」判的还是**同一份结构**上的同一件事。
     """
     r = retrieve(kernel, plugin, need, spec=spec, recognition=recognition,
-                 tendency=tendency, disk_unreadable=disk_unreadable)
+                 tendency=tendency, disk_fingerprint=disk_fingerprint,
+                 disk_unreadable=disk_unreadable)
     t1_equivalence(rep, r, kernel)
     t2_current(rep, r, spec)
     t3_reasons(rep, r, kernel)

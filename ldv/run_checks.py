@@ -782,9 +782,17 @@ def retrieval_report(loaded, targets: list[str]) -> Report:
     except Exception as exc:  # noqa: BLE001 —— 坏档要**报出来**，不是崩
         recognition, bad_disk = None, True
         bad_why = f"{type(exc).__name__}: {exc}"
+    # ★★ **盘上那份自己的指纹** —— 显式算出来（`None` = 盘上**没有**那份）。
+    #    不显式给的话，`current_recognition` 只能从**传进去的对象**推断，
+    #    而「读盘」与「现造」传的是同一类型的对象 ⇒ 它分不出来 ⇒
+    #    实测：盘上没有 `views.json`，而 `T2` 报「盘上那份的指纹 … == 当前（来源：盘上）」
+    #    —— **判据编造了一个来源**，且比「跳过」更坏（跳过是「没得比」，假绿是「比过了、而且对」）。
+    disk_fp = (retriever.spec_fingerprint(recognition.spec)
+               if (from_disk and recognition is not None) else None)
     if recognition is None:
         disk = view_persist.to_dict(build_views(kernel, spec, cover, plugin))
         recognition = view_persist.from_dict(disk, kernel, cover, plugin)
+        disk_fp = disk_fp if bad_disk else None
 
     # ★ 「按使用细调」（`基线§14.7`）要**使用记录**才有内容 —— 而流程 A 本来就会记
     #   （`R5a` 展示 + `R5b` 逐条 `record_usage`）。⇒ 先跑几条查询攒记录，
@@ -800,7 +808,7 @@ def retrieval_report(loaded, targets: list[str]) -> Report:
     #   前者带「盘上那份的指纹/读得回来吗」，后者只描述视图本身。
     r = run_retrieval(kernel, plugin, {which: retriever.as_bar(query)}, spec, rep,
                       recognition=recognition, tendency=tendency,
-                      disk_unreadable=bad_disk)
+                      disk_fingerprint=disk_fp, disk_unreadable=bad_disk)
     rec = r.recognition
     rep.note(f"{why}；方向 `{which}`；需求取自第 1 条查询（`{query.label}`）")
     # ⚠️ **四种状态各印一行，不许共用**（`§K6` 的同一条纪律）：
