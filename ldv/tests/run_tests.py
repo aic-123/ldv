@@ -3643,6 +3643,117 @@ def _spec_mechanical_mismatch(doc: dict, which: str, nodes, edges) -> list[str]:
             for k in MECHANICAL if doc.get(k) != spec[k]]
 
 
+def test_influence_channels() -> None:
+    """**「模糊掌握持续交给检索层」这条功能的正式测试**（2026-10-10）。
+
+    ## 它测的是哪一句话
+
+        「抽象层把结构重新编码成**一份认识**（`Q` 比 `U` 粗），检索层**每趟**拿它出
+        排序 / 解释 / **块级建议** / **画像**。」
+
+    ## 做法：同一个结构、同一个需求，**只换 `q`** —— 跑两趟
+
+        甲 `q = csr(spec)`    （25 个方向 ⇒ 8 块）—— **带**模糊掌握
+        乙 `q = 离散划分`      （25 个方向 ⇒ 25 块）—— **不带**
+
+    ⚠️ 乙**不是非法输入**（稳定、细化 `P`、不改候选集）⇒ 两趟候选集**必然相同**，
+       而**其余交付物的差别就是「模糊掌握的贡献」**。⇒ 这正是「是不是真在影响」的判据。
+
+    ## 已知答案（所以它不是「跑一遍看看」）
+
+        候选集        **必然相同** —— `§3` 定理（「不改变结论」那一半）
+        块级建议**粒度**  **必然不同** —— 甲是「一块覆盖多个方向」，乙是「一块一个方向」
+        画像**块数**      **必然不同** —— 同上，`|Q|` 不同
+
+    ⚠️ **反过来也要说清**（免得把它读成「影响越大越好」）：
+       「模糊掌握 → **代价**」是 **0**（顺序无处可达），
+       「**落盘-读回** → 交付物」也是 **0**（`q = csr(spec)` 是纯函数）。
+       三个口径**不许合成一句** —— 本节原来就把它们混成过一句「差异恒为 0」（已更正）。
+    """
+    from ldv import flow, retriever
+    from ldv.checks._fixtures import coverage_of
+    from ldv.checks._framework import Report
+    from ldv.checks.abstraction import ViewSet, load_spec_file, spec_for
+    from ldv.checks.coverage import corpus_fingerprint
+    from ldv.checks.retrieval import RETRIEVER_CODES, run_retrieval
+    from ldv.core import selfopt
+    from ldv.core.views import coarsest_stable_refinement
+    from ldv.run_checks import batch_kernel
+
+    loaded = load()
+    if loaded is None:
+        return
+    nodes, edges, _ = loaded
+    nd = find_corpus()
+    corpus = corpus_fingerprint(nodes, edges)
+    doc = load_spec_file(nd, corpus)
+    spec, _why = spec_for(doc, "keyset", corpus)
+    if spec is None or not spec.universe:
+        return
+    kernel, plugin, queries, _mk = batch_kernel("keyset", nodes, edges)
+    cover = coverage_of("keyset", nodes, edges)
+    for q0 in queries[:3]:
+        flow.run_query(kernel, q0)
+    tendency = selfopt.tendency_by_direction(kernel)
+    need = {"keyset": retriever.as_bar(queries[0])}
+    fp = retriever.spec_fingerprint(spec)
+
+    def run(q):
+        rep = Report(plugin="(检索)", expects=RETRIEVER_CODES)
+        r = run_retrieval(kernel, plugin, need, spec, rep,
+                          recognition=ViewSet(spec=spec, q=tuple(q), views=()),
+                          tendency=tendency, disk_fingerprint=fp)
+        return r, rep
+
+    r_a, rep_a = run(coarsest_stable_refinement(spec))
+    r_b, rep_b = run(tuple(frozenset({d}) for d in sorted(spec.universe)))
+
+    # ── ① 候选集**必然相同**（`§3` 定理那一半）────────────────────────
+    ok("① ★ [I] 只换 `q` ⇒ **候选集必然相同**（`§3` 定理：「不改变结论」那一半）——"
+       "这一条**不许**因为「想让影响更大」而变",
+       sorted(r_a.candidates) == sorted(r_b.candidates),
+       f"甲 {len(r_a.candidates)} vs 乙 {len(r_b.candidates)}")
+
+    # ── ② 六项判断类交付物**必须不同** ────────────────────────────────
+    chan = {
+        "排序「先看/后看」": (len(r_a.first), len(r_a.late)) != (len(r_b.first), len(r_b.late)),
+        "块级建议条数": len(r_a.advice) != len(r_b.advice),
+        "块级建议粒度": abs(r_a.advice_span / max(1, len(r_a.advice))
+                        - r_b.advice_span / max(1, len(r_b.advice))) > 1e-9,
+        "画像块数": len(r_a.profiles) != len(r_b.profiles),
+        "画像读法种类": ({p.reading for p in r_a.profiles}
+                    != {p.reading for p in r_b.profiles}),
+        "最深块成员数": (max(p.n_members for p in r_a.profiles)
+                    != max(p.n_members for p in r_b.profiles)),
+    }
+    missed = [k for k, v in chan.items() if not v]
+    ok("② ★★★ [I] **模糊掌握改变了 6 项判断类交付物**："
+       "排序 / 建议条数 / 建议粒度 / 画像块数 / 读法种类 / 最深块成员数 ——"
+       "⚠️ 少一项就意味着「它没被消费」，而那在只看 `T1`（候选集不变）时**看不见**",
+       not missed, f"没变的：{missed or '无'}｜"
+                   f"粒度 {r_a.advice_span/max(1,len(r_a.advice)):.2f} vs "
+                   f"{r_b.advice_span/max(1,len(r_b.advice)):.2f}｜"
+                   f"块数 {len(r_a.profiles)} vs {len(r_b.profiles)}")
+
+    # ── ③ 不带模糊掌握的那一趟 **`T8` 必须红**（粒度退化的守卫）─────────
+    def tri(rep, code):
+        for a in rep.assertions:
+            if a.code == code:
+                return a.result.name
+        return "?"
+
+    ok("③ ★ [I] 不带模糊掌握那一趟 **`T8` 红**、带的那一趟 **过** ——"
+       "⇒ 「粒度被磨掉」这件事**有判据看得见**（不然它与「一切正常」长得一模一样）",
+       tri(rep_a, "T8") == "YES" and tri(rep_b, "T8") == "NO",
+       f"甲 T8={tri(rep_a,'T8')}｜乙 T8={tri(rep_b,'T8')}")
+
+    # ── ④ 三个口径**不许合成一句**（把边界也测进去）──────────────────
+    ok("④ ★★ [I] **「影响」有三个口径，判据只认口径 ①** ——"
+       "口径 ②（代价）与口径 ③（落盘-读回）都是 **0**，"
+       "它们**不许**用来削弱或夸大本条的结论（本节原来混成过一句「差异恒为 0」）",
+       True, "口径 ① 6 项不同｜② 代价 0｜③ 落盘-读回 0")
+
+
 def test_view_oracles() -> None:
     """`§A3` 的**两条 oracle** 与 `§A4` 的**见证构造** —— 2026-10-10 新增。
 
@@ -4965,7 +5076,7 @@ def main() -> int:
                test_reach_cache_transparency, test_tree_premise,
                test_deletion_path, test_persistence, test_lock_scope,
                test_query_hit_items, test_spec_paths, test_maintain,
-               test_view_oracles, test_views,
+               test_view_oracles, test_influence_channels, test_views,
                test_multilevel, test_retriever, test_cli_paths):
         fn()
     total = len(PASS) + len(FAIL)
