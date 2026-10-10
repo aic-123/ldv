@@ -1898,6 +1898,43 @@ def inj_t1(nodes, edges, injected: bool) -> Report:
     return rep
 
 
+def inj_t8(nodes, edges, injected: bool) -> Report:
+    """`T8` —— 注入「**交到检索层的那份认识更细**」（`§3` 定理的另一半）。
+
+        基线  `q == csr(spec)`（最优粒度）        ⇒ **绿**
+        注入  换成**离散划分**（每个方向一块）     ⇒ **红**（**合法但退化**）
+
+    ## 红形态为什么是「合法但退化」，而不是「错」
+
+        那个更细的 `q` **仍然**稳定、**仍然**细化 `P`、**仍然**不改变候选集
+        ⇒ `T1`–`T7` **一条都不会红**。而被磨掉的是**收益**（块级建议与画像变差）。
+        ⇒ 实测（`outputs/_probe_disk_influence.py`）：8 块 → 25 块 ⟹
+          候选集 `★同`、**块级建议变**、**画像变**。
+
+    ⚠️ **它是唯一能看见「盘上那份退化」的判据** —— 没有它，「收益退化」与「一切正常」
+       在只看 `T1`–`T7` 时**长得一模一样**（那正是本仓库的中心形状）。
+    """
+    from ldv.checks.abstraction import ViewSet
+    from ldv.checks.retrieval import RETRIEVER_CODES, t8_coarsest
+    from ldv.core.views import coarsest_stable_refinement, partition_of
+
+    from ldv.checks.retrieval import _synth, _synth_spec
+    from ldv.retriever import as_bar, retrieve
+
+    kernel, plugin, q = _synth(with_losing_merge=False)
+    spec = _synth_spec(kernel)
+    on_disk = ViewSet(spec=spec, q=coarsest_stable_refinement(spec), views=())
+    r = retrieve(kernel, plugin, {"keyset": as_bar(q)}, spec=spec, recognition=on_disk)
+    if injected:
+        # 「更细」的可观测形态：离散划分（每个方向一块）
+        discrete = tuple(frozenset({d}) for d in sorted(spec.universe))
+        r = replace(r, recognition=replace(r.recognition, q=discrete,
+                                           source="盘上（指纹相符）"))
+    rep = Report(plugin="(检索)", expects=RETRIEVER_CODES)
+    t8_coarsest(rep, r, spec)
+    return rep
+
+
 def inj_t2_unreadable(nodes, edges, injected: bool) -> Report:
     """`T2` 注入**乙**：`disk_unreadable=True` —— 「**盘上那份读不回来**」。
 
@@ -2193,7 +2230,7 @@ CASES: dict[str, Callable] = {
     # ★ `(检索)` 那一组：四条**都是守卫** ⇒ 四条注入**全是手造的**（见上面的段落）。
     #   ⚠️ `T4` 的注入用**真语料**（它判的那一档「未展开」在手造小夹具上未必有）。
     "T1": inj_t1, "T2": inj_t2, "T3": inj_t3, "T4": inj_t4, "T5": inj_t5,
-    "T6": inj_t6, "T7": inj_t7,
+    "T6": inj_t6, "T7": inj_t7, "T8": inj_t8,
     # ★ `(cli)` 那一组：**两条注入覆盖七条**（两个分支互不替代，见各自的 docstring）。
     "CL1": inj_cli_guard_always, "CL2": inj_cli_guard_always,
     "CL6": inj_cli_guard_always, "CL7": inj_cli_guard_always,

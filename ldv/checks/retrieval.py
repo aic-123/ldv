@@ -64,7 +64,7 @@ from dataclasses import replace
 from typing import Any, Callable, Mapping, Sequence
 
 from ..core.tri import Tri
-from ..core.views import ViewSpec, coarsest_stable_refinement
+from ..core.views import ViewSpec, coarsest_stable_refinement, partition_of
 from ..retriever import (
     _DISK_UNSET,
     Retrieval,
@@ -80,7 +80,7 @@ from ._framework import Report
 
 #: 检索器层的判据编号 —— 与插件侧 / 内核侧 / 视图侧 / CLI 侧**并列**，不是它们的一部分。
 #: ⚠️ **只列**已经实现了的（写进来就等于声称「套件全绿」覆盖了它）。
-RETRIEVER_CODES = ("T1", "T2", "T3", "T4", "T5", "T6", "T7")
+RETRIEVER_CODES = ("T1", "T2", "T3", "T4", "T5", "T6", "T7", "T8")
 
 #: 三条的**标题** —— **一处定义，两处用**（真跑时 `rep.add`、跳过时 `skip_all`）。
 #:
@@ -95,6 +95,7 @@ TITLES: dict[str, str] = {
     "T5": "按使用细调真的进了顺序（有记录的块按倾向降序、排在「不知道」之前）",
     "T6": "下一步建议（答 `R3a` 的依据）与结构事实相符 —— 块级判断，不是逐方向",
     "T7": "深化（`R3a` 的接线）**只增不减** —— 展开不许动结论（`§K4` / `§K8`）",
+    "T8": "交到检索层的认识**最粗**（`q` 逐块等于 `csr(spec)`）—— 更细是**退化**，不是错",
 }
 
 
@@ -438,6 +439,56 @@ def t7_deepening(rep: Report, before: Retrieval, after: Retrieval | None,
                   f"「试过也分不开」那批会被重复选中，但 `_tried` 立刻返回）"))
 
 
+# --- `T8` ---------------------------------------------------------------------
+
+def t8_coarsest(rep: Report, r: Retrieval, spec: ViewSpec) -> None:
+    """`T8` —— **交到检索层的那份认识必须最粗**（`q` 逐块等于 `csr(spec)`）。
+
+    ## 为什么要有它（2026-10-10 实测补的缺口）
+
+    一个**更细**的 `q` 是**完全合法**的：它仍稳定、仍细化 `P`、
+    仍不改变候选集（`§3` 定理）⇒ **`T1`–`T7` 一条都不会红**。
+    但它是**退化**的 —— 块被切小 ⇒ 块级建议与画像跟着变差
+    ⇒ 「模糊掌握」被磨掉，而**没有任何判据看得见**。
+
+    ⚠️ **实测**（`outputs/_probe_disk_influence.py`）：盘上那份从 8 块换成 25 块
+       ⇒ 候选集 `★同`、**块级建议变**、**画像变**。⇒ 退化是**可观测的**，
+       只是此前**没人看**。
+
+    ## 它与 `§A3` 的分工（**不许重复判同一件事**）
+
+        `§A3`  判「**算出来的** `q`（生产路径 `build_views`）是不是最粗」—— 守 `_refine` 的**实现**
+        `T8`   判「**交到检索层的**那份认识是不是最粗」—— 守**交接**这一步
+
+    判**对象**不同（一个是当场算的，一个可以来自盘）、红的**原因**不同
+    （`§A3` 红 = 有没有更粗的稳定划分；`T8` 红 = 这份不用是最粗的却更细）
+    ⇒ 不是重复。★ 而 `T8` 是**唯一**能看见「盘上那份退化」的判据。
+
+    ⚠️ **深化的结果是更细的** —— 这**不**与 `T8` 冲突：`T8` 判的是**取到的那份认识**
+       （`步骤 T1` 的产物），`deepen` 之后换的是 `candidates` / `profiles`，**不换 `recognition.q`**。
+    """
+    title = TITLES["T8"]
+    if not spec.universe:
+        rep.add("T8", title, Tri.UNEXPANDED,
+                "`universe` 为空 ⇒ 「最粗」没有内容（跳过 ≠ 通过）")
+        return
+    q_now = partition_of(r.recognition.q)
+    q_csr = partition_of(coarsest_stable_refinement(spec))
+    if q_now == q_csr:
+        rep.add("T8", title, Tri.YES,
+                f"{len(q_now)} 块，逐块等于 `csr(spec)`（来源：{r.recognition.source}）")
+        return
+    # 红：更细 ⇒ 粗粒度被磨掉。⚠️ 措辞必须说清「合法但退化」，否则读者会以为它是**错**的
+    finer = len(q_now) > len(q_csr)
+    rep.add("T8", title, Tri.NO,
+            (f"交到检索层的那份认识**比 `csr` 细**（{len(q_now)} 块 vs 最粗 {len(q_csr)} 块）"
+             f"⇒ **合法但退化**：候选集不受影响（`§3` 定理），而**块级建议与画像已经变差**"
+             f"　修法：`python -m ldv.recognize`（它交付的恒为 `csr`）") if finer
+            else (f"交到检索层的那份认识**不是 `csr`**（{len(q_now)} 块 vs 最粗 {len(q_csr)} 块）"
+                  f"⇒ 它既不等于最粗，也不比它细 —— 只可能是**不细化 `P`** 或**不稳定**"
+                  f"（那两件分别归 `§A3` 与 `§A2`，但**代价已经发生在这里**：检索层拿它用了）"))
+
+
 # --- 跑一遍再判 ----------------------------------------------------------------
 
 def run_retrieval(kernel: Any, plugin: Any,
@@ -471,6 +522,7 @@ def run_retrieval(kernel: Any, plugin: Any,
     # ★ `R3a` 的接线（`基线§14.9`）：按建议**深化**，再判 `T7`（只增不减）。
     deep = deepen(kernel, plugin, r) if deepen_rounds > 0 else r
     t7_deepening(rep, r, deep, kernel, plugin)
+    t8_coarsest(rep, r, spec)
     rep.note(render_explanation(r))
     if deep.deepened:
         # ⚠️ 这一句只报**实测到的**：展开之后**读法可能一个都没变**
@@ -653,6 +705,27 @@ def known_answer_controls() -> list[str]:
     none_r = retrieve(kernel, plugin, need, spec=spec, recognition=None)
     if judge(lambda rep: t2_current(rep, none_r, spec)) is not Tri.UNEXPANDED:
         fails.append("§T2 盘上没有任何认识时没被判「跳过」（跳过 ≠ 通过）")
+
+    # ── `T8`：**三态** —— 最粗 ⇒ 过；更细 ⇒ 红；比 `P` 还粗 ⇒ 红 ────────
+    #    ★ 第二条是**生产可达的退化**（盘上那份更细）；第三条是「它既不等于 `csr`
+    #      也不比它细」那一档（只可能是不细化 `P` 或不稳定）。
+    csr_q = coarsest_stable_refinement(spec)
+    r_csr = retrieve(kernel, plugin, need, spec=spec,
+                     recognition=ViewSet(spec=spec, q=csr_q, views=()))
+    if judge(lambda rep: t8_coarsest(rep, r_csr, spec)) is not Tri.YES:
+        fails.append("§T8 最粗的那份被判红")
+    discrete = tuple(frozenset({d}) for d in sorted(spec.universe))
+    r_fine = replace(r_csr, recognition=replace(r_csr.recognition, q=discrete))
+    if judge(lambda rep: t8_coarsest(rep, r_fine, spec)) is not Tri.NO:
+        fails.append("§T8 **更细**的那份没被抓住（那是「合法但退化」，只有本判据看得见）")
+    r_coarse = replace(r_csr, recognition=replace(
+        r_csr.recognition, q=(frozenset(spec.universe),)))
+    if judge(lambda rep: t8_coarsest(rep, r_coarse, spec)) is not Tri.NO:
+        fails.append("§T8 比 `P` 还粗的那份没被抓住")
+    # 空 `universe` ⇒ **跳过**（「最粗」没有内容；跳过 ≠ 通过）
+    if judge(lambda rep: t8_coarsest(rep, r_csr, ViewSpec(
+            universe=(), partition=(), relation=frozenset()))) is not Tri.UNEXPANDED:
+        fails.append("§T8 空 `universe` 没被判「跳过」")
 
     # ── `T3`：真实现的解释 ⇒ 绿；写死成一句固定的 ⇒ 红 ───────────────────
     if not full.reasons:
