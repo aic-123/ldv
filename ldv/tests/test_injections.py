@@ -89,14 +89,20 @@ from ldv.checks.abstraction import (  # noqa: E402
     a5_ledger,
     a6_roundtrip,
     a7_propagate,
+    a8_maintenance,
     build_views,
     reading_ctx,
     subtree_of,
     warranted_of,
 )
 from ldv.core.views import (  # noqa: E402
+    Maintenance,
+    MIN_SHRINK_RATIO,
     coarsest_stable_refinement,
+    maintain,
+    propagate,
     propagate_naive,
+    shrink_ratio,
     restrict_spec,
     view_parts,
 )
@@ -1257,6 +1263,7 @@ def _view_report(
     entries: list[tuple[str, str, str]] | None = None,
     a6kw: dict[str, Any] | None = None,
     a7: dict[str, Any] | None = None,
+    a8: dict[str, Any] | None = None,
 ) -> Report:
     """跑视图侧的判据。`kernel` / `decls` / `entries` / `a6kw` / `a7` 不给就**不跑**那一条。
 
@@ -1279,6 +1286,8 @@ def _view_report(
                          path=Path(td) / "views.json", **a6kw)
     if a7 is not None:
         a7_propagate(a7["old_q"], vs.spec, rep, new_q=a7.get("new_q"))
+    if a8 is not None:
+        a8_maintenance(a8["fixtures"], vs.spec, rep, overrides=a8.get("overrides"))
     return rep
 
 
@@ -1549,6 +1558,78 @@ def _a7_old_q(spec: ViewSpec) -> tuple[frozenset[str], ...]:
     """
     return coarsest_stable_refinement(
         restrict_spec(spec, frozenset({spec.universe[-1]})))
+
+
+def _a8_fixtures(spec: ViewSpec) -> list[tuple[str, Any]]:
+    """`§A8` 要的**两个**种子 —— 与 `run_checks.view_report` **同一条挑法**。
+
+    ⚠️ 与生产路径分开写会漂移（本仓库记过的形状：`reach` 的根口径分岔过一次）。
+       这里**逐字照抄**那份挑法，并由驱动里那条「基线=是」顺带守住 ——
+       两边若漂到「夹具不再触发它该触发的东西」，注入的**红**就会消失（而不是报错）。
+    """
+    return [
+        ("甲·传播在预算内", coarsest_stable_refinement(
+            restrict_spec(spec, frozenset(spec.universe[-2:])))),
+        ("乙·传播严重退化", coarsest_stable_refinement(
+            restrict_spec(spec, frozenset(spec.universe[-13:])))),
+    ]
+
+
+def inj_a8_deliver_propagated(nodes: Any, edges: Any, injected: bool) -> Report:
+    """`§A8` 注入**甲**：**把传播结果当交付**（省了重建，代价是把 `§A3` 弄瞎）。
+
+        基线  交付 `csr`                                  ⇒ **绿**
+        注入  交付 `propagate(seed, spec)`（更细的划分）     ⇒ **① 红**
+
+    ## 红的机理 —— 这是本判据存在的**全部理由**（而且是**量出来的**）
+
+        `§A3` 要枚举**更粗的**候选划分，候选数随块数**组合爆炸**：
+
+            `csr`  8 块 ⇒ 候选 **4140**    ⇒ `§A3` **判得了**（枚举完）
+            传播  12 块 ⇒ 候选 **4213597** ⇒ `§A3` **判不了**（超上限）⇒ **跳过**
+
+        ⚠️ 而本仓库的规矩是 **「跳过 ≠ 通过」** ⇒ 交付传播结果 =
+          **让「最粗」这条承重性质从可判退化成判不了**。
+
+    ⚠️ 这个注入**必须**用传播**真的更细**的那一格（甲那格传播在预算内，但**仍更细**）——
+       命题是「**不论传播多划算，交付物都得是 `csr`**」。
+    """
+    spec, kernel, plugin, cover = _view_chain(nodes, edges)
+    fixtures = _a8_fixtures(spec)
+    ov = None
+    if injected:
+        name, seed = fixtures[0]
+        q = tuple(propagate(seed, spec))
+        ov = {name: Maintenance(q=q, action="重建" if False else "重建",
+                                shrink=shrink_ratio(q, spec), propagate_equal=False,
+                                shrink_if_propagated=shrink_ratio(q, spec),
+                                reason="注入：把传播结果当交付")}
+    return _view_report(build_views(kernel, spec, cover, plugin),
+                        a8={"fixtures": fixtures, "overrides": ov})
+
+
+def inj_a8_mislabelled(nodes: Any, edges: Any, injected: bool) -> Report:
+    """`§A8` 注入**乙**：**动作谎报** —— 两条路**并不同构**，却把动作标成「传播」。
+
+        基线  动作与实相符                                ⇒ **绿**
+        注入  报「传播」而 `propagate ≠ csr`                ⇒ **③ 红**
+
+    ⚠️ 守的是「**报的是不是实话**」：维护记录的**全部**可解释性都挂在「动作」上 ——
+       它错了，读者就**说不出**这份认识是怎么来的。
+       ⇒ 而 ①② 两条**都抓不到**（那份交付物本身是 `csr`、也稳定）。
+    """
+    spec, kernel, plugin, cover = _view_chain(nodes, edges)
+    fixtures = _a8_fixtures(spec)
+    ov = None
+    if injected:
+        name, seed = fixtures[1]
+        m = maintain(seed, spec)
+        ov = {name: Maintenance(q=m.q, action="传播",      # ← 谎报（实际不同构）
+                                shrink=m.shrink, propagate_equal=m.propagate_equal,
+                                shrink_if_propagated=m.shrink_if_propagated,
+                                reason="注入：动作谎报")}
+    return _view_report(build_views(kernel, spec, cover, plugin),
+                        a8={"fixtures": fixtures, "overrides": ov})
 
 
 def inj_a7(nodes: Any, edges: Any, injected: bool) -> Report:
@@ -2094,7 +2175,7 @@ CASES: dict[str, Callable] = {
     "B11": inj_b11, "B12": inj_b12, "B13": inj_b13, "B14": inj_b14, "B15": inj_b15,
     "B16": inj_b16, "B17": inj_b17, "B18": inj_b18, "B19": inj_b19, "B20": inj_b20,
     "A1": inj_a1, "A2": inj_a2, "A3": inj_a3,
-    "A4": inj_a4, "A5": inj_a5, "A6": inj_a6, "A7": inj_a7,
+    "A4": inj_a4, "A5": inj_a5, "A6": inj_a6, "A7": inj_a7, "A8": inj_a8_deliver_propagated,
     "M0": inj_m0, "M1": inj_m1, "M2": inj_m2, "M3": inj_m3,
     "M4": inj_m4, "M5": inj_m5, "M6": inj_m6,
     # ★ `(检索)` 那一组：四条**都是守卫** ⇒ 四条注入**全是手造的**（见上面的段落）。
@@ -2122,6 +2203,7 @@ EXTRA_CASES: dict[str, tuple[str, Callable]] = {
     "A5·项不是语料的项": ("A5", inj_a5_bad_item),
     "A5·独立重算不成立": ("A5", inj_a5_unwarranted),
     "A7·用重算冒充传播": ("A7", inj_a7_recompute),
+    "A8·动作谎报": ("A8", inj_a8_mislabelled),
 }
 
 

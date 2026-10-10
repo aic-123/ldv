@@ -109,11 +109,14 @@ from .checks.abstraction import (
     a5_ledger,
     a6_roundtrip,
     a7_propagate,
+    a8_maintenance,
+    a8_reading,
     a7_reading,
     build_views,
     ledger_entries,
     load_spec_file,
     reading_ctx,
+    render_maintenance,
     render_propagation,
     render_views,
     spec_for,
@@ -541,10 +544,25 @@ def view_report(loaded, targets: list[str]) -> Report:
     old_q = coarsest_stable_refinement(restrict_spec(spec, frozenset({spec.universe[-1]})))
     a7_propagate(old_q, spec, rep)
 
+    # ★ `§A8`（`§A7` §7.4 的**持续**那一半）—— **两个夹具**，两条分支都要跑到：
+    #    甲 只拿掉 2 个方向 ⇒ 只传播 shrink 0.480 ≤ 预算 ⇒ 政策应当**选传播**
+    #    乙 拿掉 13 个方向 ⇒ 只传播 shrink 0.920 > 预算 ⇒ 政策应当**选重建**
+    #  ⚠️ 只配甲的话「重建」那条分支**一次都没被验过**，而它正是这条判据存在的理由。
+    #  ⚠️ 夹具的「拿掉几个」是**从实测挑出来的**（`outputs/_probe_recognition_drift.py`
+    #     的同族测量）：挑法本身不判，判的是「超预算就必须重建」。
+    a8_fixtures = [
+        ("甲·传播在预算内", coarsest_stable_refinement(
+            restrict_spec(spec, frozenset(spec.universe[-2:])))),
+        ("乙·传播严重退化", coarsest_stable_refinement(
+            restrict_spec(spec, frozenset(spec.universe[-13:])))),
+    ]
+    a8_maintenance(a8_fixtures, spec, rep)
+
     prof = view_profile(vs)
     rep.note(f"{why}；方向 `{which}`")
     rep.note(render_views(vs, prof, which))
     rep.note(render_propagation(a7_reading(old_q, spec), spec))
+    rep.note(render_maintenance(a8_reading(a8_fixtures, spec), spec))
     return rep
 
 
@@ -735,7 +753,23 @@ def retrieval_report(loaded, targets: list[str]) -> Report:
         return rep
 
     cover = coverage_of(which, nodes, edges)
-    disk = view_persist.to_dict(build_views(kernel, spec, cover, plugin))
+
+    # ★★ **读盘上那份认识**（`§7.4` / `§A8`）—— 这是「抽象层持续影响检索层」的**落点**。
+    #
+    #   在此之前这里**每次都现造**一份（`to_dict(build_views(...))`）⇒
+    #   `T2`（「用到的认识的指纹 == 当前结构的指纹」）**只有一半在判**：
+    #   现造的那份**按构造**就是当前的 ⇒ 它永远不会不符。
+    #
+    #   ⇒ 改成：**有盘上那份就用它**（`T2` 这才真的有东西可判）；
+    #     没有才现造，并**印明是现造的**（「现造」与「读到盘上那份」不许共用一行
+    #     —— 否则读者会以为 `T2` 绿是「陈旧被挡住了」，其实根本没有陈旧的可能）。
+    #
+    #   ⚠️ 盘上那份由 **`python -m ldv.recognize`** 产生（那是它的唯一生产入口）。
+    disk_path = view_persist.default_path(find_corpus())
+    disk = view_persist.read(disk_path)
+    from_disk = bool(disk)
+    if not disk:
+        disk = view_persist.to_dict(build_views(kernel, spec, cover, plugin))
     recognition = view_persist.from_dict(disk, kernel, cover, plugin)
 
     # ★ 「按使用细调」（`基线§14.7`）要**使用记录**才有内容 —— 而流程 A 本来就会记
@@ -750,10 +784,16 @@ def retrieval_report(loaded, targets: list[str]) -> Report:
     run_retrieval(kernel, plugin, {which: retriever.as_bar(query)}, spec, rep,
                   recognition=recognition, tendency=tendency)
     rep.note(f"{why}；方向 `{which}`；需求取自第 1 条查询（`{query.label}`）")
-    rep.note("⚠️ 本趟的**盘上认识**是**现造的**（默认语料上没有 `views.json`）——"
-             "它拿的就是**当前结构** ⇒ `T2` 这一趟**只有守卫作用**"
-             "（结构没动、认识没陈旧）。它的红形态只能靠**注入**（§C3），"
-             "对照在 `run_tests.test_retriever`。")
+    if from_disk:
+        rep.note(f"盘上的认识：`{disk_path.name}`（{len(disk.get('q') or [])} 块）——"
+                 f"**本趟读的就是它** ⇒ `T2` 这一趟**真的有东西可判**"
+                 f"（陈旧的可能**真实存在**，不是守卫）")
+    else:
+        rep.note("⚠️ 本趟的**盘上认识**是**现造的**"
+                 "（盘上没有 `views.json` —— 由 `python -m ldv.recognize` 产生）——"
+                 "它拿的就是**当前结构** ⇒ `T2` 这一趟**只有守卫作用**"
+                 "（结构没动、认识没陈旧）。它的红形态只能靠**注入**（§C3），"
+                 "对照在 `run_tests.test_retriever`。")
     return rep
 
 

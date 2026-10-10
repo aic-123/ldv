@@ -43,13 +43,81 @@ from .views import ViewSpec, partition_of
 
 __all__ = [
     "FORMAT",
+    "FORMAT_KEY",
     "ViewPersistenceError",
+    "default_path",
     "to_dict",
     "from_dict",
+    "read",
+    "write",
 ]
 
 #: 格式串 —— 与 `core/persist.py::FORMAT` 同一个用途：换了格式要能一眼看出来。
 FORMAT = "ldv-views/1"
+
+#: 格式串在字典里的**键名**。★ 一处定义：`to_dict` / `from_dict` / `write` 都取它 ——
+#:  2026-10-10 实测踩到：`write` 里写死成 `"format"`（真键名是 `"格式"`）⇒ 一写就抛。
+FORMAT_KEY = "格式"
+
+#: 认识的落盘文件名。与 `checks.abstraction.VIEW_SPEC_NAME` / `expected_reds.json`
+#: 同一套规矩：**外部语料的东西不进版本库**，就放在语料旁。
+VIEWS_NAME = "views.json"
+
+
+def default_path(nodes_dir: Any) -> Any:
+    """认识的默认落点 —— **与 `abstraction.spec_paths` 同一条规则**。
+
+        语料在 `ldv/` 包内（仓内默认语料） ⇒ `ldv/checks/views.json`
+        语料在包外（`_data/<名>/nodes`）        ⇒ `<语料父目录>/views.json`
+
+    ⚠️ **与 `spec_paths` 必须同源**：认识是**跟着声明**走的（`spec` 是它的版本）——
+       声明在一处、认识在另一处，两者就会「看着都对、其实配错」。
+       这条规则由 `run_tests.test_spec_paths` 里那条 `[S4]`/`[S5]` 的同族对照守着。
+    """
+    from pathlib import Path as _P
+
+    nd = _P(nodes_dir)
+    pkg_root = _P(__file__).resolve().parents[1]          # ldv/
+    try:
+        nd.resolve().relative_to(pkg_root)
+    except ValueError:
+        return nd.parent / VIEWS_NAME                     # 包外 ⇒ 语料旁
+    return _P(__file__).resolve().parent.parent / "checks" / VIEWS_NAME
+
+
+def write(path: Any, vs: Any) -> Any:
+    """落盘。**只写权威边**（`to_dict` 的规矩），并**先过一遍读回**再返回。
+
+    ⚠️ 「先读回」不是洁癖：写坏的存档与写对的存档在**只看文件存在**时长得一样。
+       ⇒ 写完当场用 `from_dict` 的**构造部分**验一次结构（不重建视图，那要内核）。
+    """
+    from pathlib import Path as _P
+
+    p = _P(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    body = dumps(vs)
+    p.write_text(body, encoding="utf-8")
+    # ⚠️ 键名从 `to_dict` **一处取**（原来在这里写死了一个 `"format"` —— 而真键名是
+    #    `"格式"` ⇒ 写一次就抛 `ViewPersistenceError`）。**两处各写一份就会这样。**
+    back = json.loads(p.read_text(encoding="utf-8"))
+    if back.get(FORMAT_KEY) != FORMAT:
+        raise ViewPersistenceError(
+            f"落盘后格式串不对：{back.get(FORMAT_KEY)!r} ≠ {FORMAT!r}")
+    return p
+
+
+def read(path: Any) -> dict:
+    """读盘（返回**原始字典**）—— 重建成 `ViewSet` 要内核，那是调用方的事。
+
+        文件不在 ⇒ `{}`（与 `abstraction.load_spec_file` 同一个约定：
+                     「还没写」与「写坏了」必须分得开 —— 后者由 JSON 解析抛异常）
+    """
+    from pathlib import Path as _P
+
+    p = _P(path)
+    if not p.is_file():
+        return {}
+    return json.loads(p.read_text(encoding="utf-8"))
 
 
 class ViewPersistenceError(RuntimeError):
@@ -63,7 +131,7 @@ def to_dict(vs: Any) -> dict:
        要造「存了派生边」的形态，用 `_to_dict_storing_derived`。
     """
     return {
-        "格式": FORMAT,
+        FORMAT_KEY: FORMAT,
         "spec": vs.spec.as_dict(),
         "q": [sorted(b) for b in sorted(vs.q, key=min)],
         "视图": [{"vid": v.vid, "block": sorted(v.block)} for v in vs.views],
@@ -83,9 +151,9 @@ def from_dict(
     """
     from ..checks.abstraction import View, ViewSet  # 局部 import：避免 core→checks 的常态依赖
 
-    if data.get("格式") != FORMAT:
+    if data.get(FORMAT_KEY) != FORMAT:
         raise ViewPersistenceError(
-            f"格式串是 {data.get('格式')!r}，期望 {FORMAT!r}")
+            f"格式串是 {data.get(FORMAT_KEY)!r}，期望 {FORMAT!r}")
     s = data.get("spec") or {}
     spec = ViewSpec(
         universe=tuple(s.get("universe") or ()),

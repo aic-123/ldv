@@ -107,6 +107,10 @@ __all__ = [
     "Level",
     "MAX_LEVELS",
     "MIN_SHRINK_RATIO",
+    # --- 认识的持续维护（`§A8`） ---
+    "Maintenance",
+    "maintain",
+    "shrink_ratio",
     "block_namer",
     "quotient_spec",
     "quotient_universe",
@@ -370,6 +374,166 @@ def propagate_naive(
             blocks[home].add(d)
             owner[d] = home
     return partition_of(blocks)
+
+
+#: 折叠的两个**外生**参数（`§M1` / `§M2`）。**必填，没有默认值** —— 与 `ViewSpec`
+#: 同一个理由：猜一个就是替人做 `§K9` 的决定。
+#:
+#: `MIN_SHRINK_RATIO = 0.5` 的出处：METIS 论文 p.365 逐字
+#: 「the number of vertices in Gi+1 cannot be less than half the number of
+#: vertices in Gi」。**那一侧是结构性保证**（先验成立，阈值只兜病态）；
+#: ldv **没有**这条保证 ⇒ 同一个数在这里从「兜底」变成**要求**。
+#: 实测基线（36 项语料、25 个方向 ⇒ 8 张视图）收缩比约 **0.32** ⇒ 基线绿。
+#:
+#: ⚠️ `MAX_LEVELS` 是**兜底**，不是主刹车 —— 已核文献里直接给层数封顶只是
+#:   「configured maximum level」那种配置项。主刹车是 `MIN_SHRINK_RATIO`。
+MAX_LEVELS = 8
+MIN_SHRINK_RATIO = 0.5
+
+# --- 认识的**持续**维护：传播优先 + 阈值重建（`§A8`） -----------------------------
+#
+# ## 为什么「传播」单独一条不够 —— 2026-10-10 实测
+#
+# `propagate` 是**单调细化**的（只分不合，它自己那段 ⚠️ 有证明）。所以
+# **反复**传播会一路细化下去，而细化的终点是「一个方向一张视图」：
+#
+#     真语料（36 项 / keyset），逐项插入、每步只传播：
+#         末态 |Q| = 25 = |U|  ⇒ shrink = **1.000** ⇒ 粗粒度被**磨光**
+#         同一条轨迹上「重算」始终是 8 块 ⇒ shrink = 0.320
+#
+# ⇒ **「模糊掌握」会被磨光**，而那时 `T1`（候选集 ≡ 不用视图）**照样绿** ——
+#   候选集本来就与 `Q` 无关 ⇒ 退化与「正常」在只看判据时**长得一模一样**。
+#
+# ## 文献：三段式 + 阈值摊销 + 回收失效
+#
+# Acar/Blelloch/Harper POPL 2002（`acar02`，**已核**）把这件事定成三段：
+#
+#     「`val init: unit -> unit` / `val change: 'a mod * 'a -> unit` /
+#       `val propagate: unit -> unit`」           ← **攒变更**，再一次传播
+#     「the trace … is used by the change propagation algorithm」
+#     「change propagation yields **essentially the same result as a complete
+#       re-execution** on the changed inputs」      ← ★ **正确性 = 等于全量重算**
+#
+# ★★ 而**本仓库的 `E′` 只有这条的一半**：`Q′ ⊑ Q*`（只细化，实测 11 vs 8），
+#    **不是** `Q′ == Q*`。⇒ 想让它「跟上」，**必须有一步把差距收回来** ——
+#    那就是重建。所以阈值重建**不是优化，是补齐**。
+#
+# 两条给出「怎么攒/什么时候付」：
+#
+#     `betree`（Bender 等 2015，**已核**）：「Moving messages down the tree **in batches**
+#       is the **key** … the B ε-tree **only moves messages to a subtree when enough
+#       messages have accumulated for that subtree to amortize** the I/O cost」
+#     `lsmsurvey`（Luo & Carey，**已核**）：「a **background process** called the
+#       **vacuum cleaner** to **continuously garbage-collect obsolete records**」
+#         ★ 后者正对流程 B 的**情形 ③**（「曾由 W 强制，现已不成立」的标记）——
+#           那些标记只在**重建**时才会被回收。
+#
+# `mvselect2026`（**已核**）给的是纪律：「incorporating **incremental view maintenance
+#   cost directly into the optimization objective**」⇒ 维护代价要**进决策**，
+#   不能当免费的。本函数把「代价」表达成**一个质量预算**（`shrink_max`），
+#   而预算取的正是**已有的一处定义** `MIN_SHRINK_RATIO`（`§M1` 判的就是它）
+#   ⇒ **不新增参数**。
+#
+# ## ⚠️ 被否掉的那条路：**延迟 / 批量维护**
+#
+# `betree` 的批量指的是**代价**（攒够再付），很容易被读成「**别每次都维护**」。
+# 本设计**不采纳后者**，理由是一条安全性质：
+#
+#     延迟 ⇒ 窗口内**盘上的认识是陈旧的** ⇒ 检索层 `T2`（「用到的认识的指纹
+#     == 当前结构的指纹」）会判否 ⇒ 要么拒用（**退化成重算，本层的影响归零**），
+#     要么**允许用陈旧的认识** ⇒ 那就要放松 `T2` ——
+#     而 `T2` 存在的**全部理由**就是「陈旧的认识与当前的认识不许混」
+#     （`基线§6`：不比对的话两者在只看输出时长得一模一样）。
+#
+# ⇒ 所以本设计的「批量」只体现在**维护自身的动作选择**上：
+#   **能传播就传播（便宜），超预算才重建（贵）**。频率仍是「每次结构变动」。
+
+
+@dataclass(frozen=True)
+class Maintenance:
+    """一次认识维护的**全部可判内容** —— 判据 `§A8` 只读这里，不去别处现算。
+
+        `q`                    维护后的划分（**交付物**）
+        `action`               `重建` —— 或者 `传播`**仅当**它与重建逐块相同
+        `shrink`               交付物的收缩比 `|q| / |U|`
+        `propagate_equal`      `propagate(seed, spec)` 是否**逐块等于** `csr(spec)`
+        `shrink_if_propagated` **只传播**会是多少（读数；交付**不许**用它）
+        `reason`               判据要印的那句话
+    """
+
+    q: tuple[frozenset[str], ...]
+    action: str
+    shrink: float
+    propagate_equal: bool
+    shrink_if_propagated: float
+    reason: str
+
+
+def shrink_ratio(q: Sequence[frozenset[str]], spec: ViewSpec) -> float:
+    """`shrink = |Q| / |U|` —— 与 `§M1` **同一个量**（0 最好，1.0 = 一点没缩）。"""
+    u = len(spec.universe)
+    return (len(q) / u) if u else 0.0
+
+
+def maintain(
+    seed: Sequence[frozenset[str]] | None,
+    spec: ViewSpec,
+) -> Maintenance:
+    """`§A8` —— 把认识维护到当前结构。**交付物是 `csr(spec)`**，不是传播结果。
+
+    ## ★★ 为什么交付物必须是 `csr` —— 2026-10-10 **实测**（这条是原则，不是偏好）
+
+        `§A3`（视图最粗）要枚举**更粗的**候选划分数。候选数随块数**组合爆炸**：
+
+            `csr(spec)` 8 块   ⇒ 候选 **4140**   ⇒ `§A3` **判得了**（枚举完，已是最粗）
+            传播结果    12 块  ⇒ 候选 **4213597** ⇒ `§A3` **判不了**（超上限）⇒ **跳过**
+            （全量语料上更极端：19 块 ⇒ 5.83e12）
+
+        ⇒ 交付一个**比 `csr` 更细**的划分，会让「最粗」这条承重性质
+          从**可判**退化成**判不了** —— 而本仓库的规矩是 **「跳过 ≠ 通过」**。
+        ⇒ 所以「**用传播结果当交付**」不是「差一点的方案」，是**把一条判据弄瞎**。
+          ★ 这一条是**量的结果**，不是口径之争：`§A3` 在 8 块上过、在 12 块上跳。
+
+    ## `propagate` 在图里的位置（诚实版）
+
+        `propagate`（`E′`）**不是**交付路径。设计稿 §7.3 逐字已经说了它不是省算力的优化
+        （实测 `11 > 8`、`25 > 8`）；本函数给出**第二条独立理由**：
+        它交出来的东西**让承重判据失去可判性**。
+        ⇒ 它的结果只进**读数**（`shrink_if_propagated` / `propagate_equal`）。
+
+        ⚠️ **唯一的例外**：若 `propagate(seed, spec)` **逐块等于** `csr(spec)`
+          （真语料上确实会发生 —— 结构变动没有真的劈开任何块时），
+          那两条路**同一个东西** ⇒ 记 `action="传播"` 也只是**如实**，不是省了什么
+          （`csr` 反正已经算出来比对了）。
+
+    ## 两个读数（进输出，不进退出码）
+
+        `shrink_if_propagated`  只传播会到多少 —— 与 `§7.3` 的实测同族
+        `propagate_equal`       两条路这一趟是否同构
+
+    ⚠️ **没有「预算」参数**（上一版有，已删）：它的前提是「传播够不够细由预算说了算」，
+       而实测否掉了那个前提 —— 交付物**必须**是 `csr`，与传播多细**无关**。
+       留一个用不上的旋钮比删掉它更坏：它会让读者以为存在一个可以调的折中。
+    """
+    q_reb = partition_of(coarsest_stable_refinement(spec))
+    s_reb = shrink_ratio(q_reb, spec)
+    if not seed:
+        return Maintenance(q=q_reb, action="重建", shrink=s_reb, propagate_equal=False,
+                           shrink_if_propagated=s_reb,
+                           reason="没有旧认识 ⇒ 没有可传播的起点（那是重建）")
+    q_prop = partition_of(propagate(seed, spec))
+    s_prop = shrink_ratio(q_prop, spec)
+    same = q_prop == q_reb
+    return Maintenance(
+        q=q_reb,
+        action="传播" if same else "重建",
+        shrink=s_reb,
+        propagate_equal=same,
+        shrink_if_propagated=s_prop,
+        reason=(f"交付 `csr`（{len(q_reb)} 块，shrink {s_reb:.3f}）"
+                + (f"；只传播**这一趟同构**（{len(q_prop)} 块）⇒ 如实记作「传播」" if same
+                   else f"；只传播会是 {len(q_prop)} 块（shrink {s_prop:.3f}）——"
+                        f"**不采**：那会让 `§A3` 的可判性退化（候选数随块数爆炸）")))
 
 
 # --- 两个**独立**的 oracle -----------------------------------------------------
@@ -738,19 +902,9 @@ def view_parts(
 # 折叠的每一层都只由 `csr`（Paige–Tarjan，解唯一）产出 ⇒ 不需要目标函数。
 
 
-#: 折叠的两个**外生**参数（`§M1` / `§M2`）。**必填，没有默认值** —— 与 `ViewSpec`
-#: 同一个理由：猜一个就是替人做 `§K9` 的决定。
-#:
-#: `MIN_SHRINK_RATIO = 0.5` 的出处：METIS 论文 p.365 逐字
-#: 「the number of vertices in Gi+1 cannot be less than half the number of
-#: vertices in Gi」。**那一侧是结构性保证**（先验成立，阈值只兜病态）；
-#: ldv **没有**这条保证 ⇒ 同一个数在这里从「兜底」变成**要求**。
-#: 实测基线（36 项语料、25 个方向 ⇒ 8 张视图）收缩比约 **0.32** ⇒ 基线绿。
-#:
-#: ⚠️ `MAX_LEVELS` 是**兜底**，不是主刹车 —— 已核文献里直接给层数封顶只是
-#:   「configured maximum level」那种配置项。主刹车是 `MIN_SHRINK_RATIO`。
-MAX_LEVELS = 8
-MIN_SHRINK_RATIO = 0.5
+#: ⚠️ **`MAX_LEVELS` / `MIN_SHRINK_RATIO` 已上移到「认识的持续维护」那一节**
+#:    （2026-10-10）—— 它们的**第二个**消费者 `maintain`（`§A8`）在那个位置，
+#:    而模块级常量必须在**第一次使用之前**定义。**定义只有一处**，就在上面。
 
 
 @dataclass(frozen=True)

@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
@@ -3642,6 +3643,129 @@ def _spec_mechanical_mismatch(doc: dict, which: str, nodes, edges) -> list[str]:
             for k in MECHANICAL if doc.get(k) != spec[k]]
 
 
+def test_maintain() -> None:
+    """`§A8` —— **认识的持续维护**（`core/views.maintain`）。
+
+    守的是一个**别处看不见**的东西：`csr`（最粗）**同时**是
+
+        ① 交给检索层的那份认识的**定义**（`§3` 的定理：唯一 ⇒ 不用挑）
+        ② `§A3`（视图最粗）**判得了**的前提 —— 候选数随块数**组合爆炸**
+
+    ⇒ 而 `E′` 传播交出来的是**更细**的划分 ⇒ 它会让 ② **从可判退化成判不了**。
+      这就是本条判据存在的**全部理由**，也是它**不重复 `§A3`** 的地方：
+      `§A3` 红了是「有更粗的」，本条的典型红形态是「**`§A3` 变成跳过**」。
+
+        ① 交付物**逐块等于** `csr`（两个夹具都要，**不论传播多划算**）
+        ② **退化曲线**：反复**只传播** ⇒ `shrink` 升到 **1.000**（`propagate` 定理的推论）
+        ③ ★ **可判性退化**：`csr` 8 块 ⇒ `§A3` 候选 **4140**（判得了）；
+           传播 12 块 ⇒ 候选 **4213597** ⇒ **超上限、判不了** —— 这是**实测**
+        ④ 动作与实相符（同构 ⇒ 报传播；不同构 ⇒ 报重建）
+        ⑤ 没有种子 ⇒ 重建（没有「从旧出发」这回事）
+    """
+    from ldv.checks._fixtures import make_builder
+    from ldv.checks.abstraction import VIEW_SPEC_PATH, a8_branches, spec_for
+    from ldv.checks.coverage import corpus_fingerprint
+    from ldv.core.views import (
+        MAX_COARSENING_CANDIDATES,
+        Maintenance,
+        ViewSpec,
+        coarsest_stable_refinement,
+        maintain,
+        n_coarsening_candidates,
+        partition_of,
+        propagate,
+        refines,
+        restrict_spec,
+        shrink_ratio,
+        stable,
+    )
+
+    loaded = load()
+    if loaded is None:
+        return
+    nodes, edges, _ = loaded
+    doc = json.loads(VIEW_SPEC_PATH.read_text(encoding="utf-8"))
+    spec, _why = spec_for(doc, str(doc.get("方向")), corpus_fingerprint(nodes, edges))
+    if spec is None:
+        return
+    U = spec.universe
+    seeds = {
+        "甲·传播在预算内": coarsest_stable_refinement(restrict_spec(spec, frozenset(U[-2:]))),
+        "乙·传播严重退化": coarsest_stable_refinement(restrict_spec(spec, frozenset(U[-13:]))),
+    }
+    q_csr = partition_of(coarsest_stable_refinement(spec))
+
+    # ── ① 交付物逐块等于 `csr` ─────────────────────────────────────────
+    m_a, m_b = maintain(seeds["甲·传播在预算内"], spec), maintain(seeds["乙·传播严重退化"], spec)
+    ok("① ★ [A8] **交付物逐块等于 `csr`** —— 两个夹具都要，**不论传播看起来多划算**："
+       "甲那格只传播 0.480（在预算内）但它**更细**（12 块 vs 8 块）"
+       "⇒ 「超预算才重建」是**上一版错的那个政策**，已改",
+       partition_of(m_a.q) == q_csr and partition_of(m_b.q) == q_csr,
+       f"甲 {len(m_a.q)} 块、乙 {len(m_b.q)} 块、`csr` {len(q_csr)} 块")
+
+    # ── ② 退化曲线（`propagate` 那条定理的推论 ⇒ 已知答案）──────────────
+    build = make_builder("keyset", nodes, edges)
+    ids = sorted(nodes)
+    qp = None
+    curve: list[float] = []
+    for k in (6, 12, 18, 24, 30, 36):
+        kernel, _plug = build(ids[:k])
+        dirs = sorted(kernel.all_directions(), key=lambda d: _did_order(d.did))
+        u = tuple(d.did for d in dirs)
+        s_k = ViewSpec(universe=u, partition=(frozenset(u),),
+                       relation=frozenset((d.parent, d.did) for d in dirs if d.parent))
+        qp = (tuple(coarsest_stable_refinement(s_k)) if qp is None
+              else tuple(propagate(qp, s_k)))
+        curve.append(shrink_ratio(qp, s_k))
+    ok("② ★ [A8] **退化曲线**：反复**只传播** ⇒ `shrink` 升到 **1.000**"
+       "（= 离散划分，粗粒度被磨光）—— 它是 `propagate` 那条定理的推论，"
+       "**所以是已知答案**，不是「跑一遍看看」",
+       curve[-1] == 1.0 and curve == sorted(curve), f"曲线 {['%.3f' % x for x in curve]}")
+
+    # ── ③ ★ 可判性退化（本条的**核心实测**）────────────────────────────
+    kernel, _plug = build(ids)
+    dirs = sorted(kernel.all_directions(), key=lambda d: _did_order(d.did))
+    u = tuple(d.did for d in dirs)
+    s_full = ViewSpec(universe=u, partition=(frozenset(u),),
+                      relation=frozenset((d.parent, d.did) for d in dirs if d.parent))
+    q_prop = tuple(propagate(seeds["甲·传播在预算内"], s_full))
+    n_csr = n_coarsening_candidates(s_full, list(q_csr))
+    n_prp = n_coarsening_candidates(s_full, list(q_prop))
+    ok("③ ★★ [A8] **可判性退化**（这条是**量的结果**）：`§A3` 要枚举更粗的候选，"
+       "候选数随块数爆炸 ⇒ **交付 `csr` 时判得了、交付传播结果时判不了**。"
+       "⚠️ 而「跳过 ≠ 通过」⇒ 交付传播结果 = **把承重判据弄瞎**",
+       n_csr <= MAX_COARSENING_CANDIDATES < n_prp,
+       f"`csr` {len(q_csr)} 块 ⇒ 候选 {n_csr}（上限 {MAX_COARSENING_CANDIDATES}）；"
+       f"传播 {len(q_prop)} 块 ⇒ 候选 {n_prp}")
+
+    # ── ④ 动作与实相符 ─────────────────────────────────────────────────
+    same_ok = all((m.propagate_equal and m.action == "传播")
+                  or (not m.propagate_equal and m.action == "重建") for m in (m_a, m_b))
+    ok("④ [A8] **动作与实相符**：同构 ⇒ 报「传播」（如实，不是省了什么）；"
+       "不同构 ⇒ 报「重建」。⇒ 判据 ③ 那条红形态（谎报）它抓得到",
+       same_ok, f"甲 {m_a.action}(同构 {m_a.propagate_equal})；乙 {m_b.action}"
+                f"(同构 {m_b.propagate_equal})")
+
+    # ── ⑤ 安全 + 无种子 ⇒ 重建 ─────────────────────────────────────────
+    st, why = stable(s_full, m_b.q)
+    m0 = maintain(None, s_full)
+    ok("⑤ [A8] 交付物**稳定且细化 `P`**（对任何 `q` 都成立 ⇒ 「安全」）；"
+       "**没有种子 ⇒ 重建**（没有「从旧结果出发」这回事，同 `§A7` 的 ⚠️）",
+       st and refines(s_full, list(m_b.q)) and m0.action == "重建",
+       f"稳定 {st}｜{why[:1]}｜无种子动作 {m0.action}")
+
+    # ── ⑥ 「永远重建」过判据：代价是读数，不是红 ────────────────────────
+    br = a8_branches(s_full, seed=seeds["甲·传播在预算内"],
+                     result=Maintenance(q=tuple(q_csr), action="重建",
+                                        shrink=shrink_ratio(q_csr, s_full),
+                                        propagate_equal=False,
+                                        shrink_if_propagated=0.0, reason="永远重建"))
+    ok("⑥ ★ [A8] **「永远重建」过判据** —— 它安全、交付物也对、动作也照实报。"
+       "⇒ 「省代价」**不是**这条判据判的东西；它进**读数**"
+       "（⚠️ 而「交付传播结果」**会**红 —— 那条红线划在**可判性**上，不是代价上）",
+       not (br["①"] or br["②"] or br["③"]), f"①②③ = {br['①'] or br['②'] or br['③']}")
+
+
 def test_spec_paths() -> None:
     """**外生声明的落点与查找** —— `spec_paths` / `spec_target` / `load_spec_file`。
 
@@ -4708,8 +4832,8 @@ def main() -> int:
                test_b3_reduction_premise, test_reach_cache_premise,
                test_reach_cache_transparency, test_tree_premise,
                test_deletion_path, test_persistence, test_lock_scope,
-               test_query_hit_items, test_spec_paths, test_views, test_multilevel,
-               test_retriever, test_cli_paths):
+               test_query_hit_items, test_spec_paths, test_maintain, test_views,
+               test_multilevel, test_retriever, test_cli_paths):
         fn()
     total = len(PASS) + len(FAIL)
     for f in FAIL:

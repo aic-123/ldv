@@ -107,14 +107,16 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Callable, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 from ..core.tri import Tri
 from ..core.views import (
+    MIN_SHRINK_RATIO,
     ViewSpec,
     coarser_stable_exists,
     coarsest_stable_refinement,
     extend_q,
+    maintain,
     partition_of,
     propagate,
     propagate_naive,
@@ -130,7 +132,7 @@ from ._framework import Report
 #: 不是它们的一部分（视图层与插件无关，见模块开头）。
 #: ⚠️ **只列**已经实现了的。没实现的不许写进来 —— 写进来就等于声称
 #:    「套件全绿」覆盖了它，而它根本没跑（注册表自检会红）。
-VIEW_CODES = ("A1", "A2", "A3", "A4", "A5", "A6", "A7")
+VIEW_CODES = ("A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8")
 
 #: 外生声明放**代码旁边**，与 `cover_leak_baseline.json` 同一个理由：
 #: 它要跟着代码走、进版本库，换了语料或换了方向就该一起改。
@@ -1032,6 +1034,125 @@ def render_propagation(prof: dict[str, Any], spec: ViewSpec) -> str:
             f"旧 {prof['旧']} 张 ⇒ 传播 {prof['传播']} 张 vs 重算 {prof['重算']} 张"
             f"｜不同构 {prof['不同构']}｜传播 ⊑ 重算 {prof['传播⊑重算']}"
             f"（**不同构是读数不是红** —— 设计稿 §7；定理保证传播只会更细）")
+
+
+# --- §A8 认识的**持续**维护 ----------------------------------------------------
+#
+# 设计稿 §7.4：结构一动，**认识**也要跟上 —— 否则结构层与检索层之间就只有
+# **一次快照**，而不是「持续影响」。`§A7` 判的是**一次**传播播得对不对；
+# `§A8` 判的是**连着维护**时会不会把粗粒度磨光（`maintain` 的政策对不对）。
+#
+# ⚠️ **为什么这条必须有**（`基线§7.3` 自己写的 + 2026-10-10 实测）：
+#    `E′` 传播**只细化、不重新合并** ⇒ 反复传播一路细化到「一个方向一张视图」：
+#
+#        真语料逐项插入、每步只传播：末态 |Q| = 25 = |U| ⇒ shrink = **1.000**
+#        同一条轨迹上重算始终 8 块 ⇒ 0.320
+#
+#    ⇒ 而那时 **`T1` 照样绿**（候选集本来就与 `Q` 无关）⇒
+#      **退化与「正常」在只看判据时长得一模一样** —— 这正是本仓库的中心形状。
+#      ⇒ 所以它必须**有一条自己的判据**，而不是指望别处能看出来。
+
+def a8_branches(
+    spec: ViewSpec,
+    *,
+    seed: Sequence[frozenset[str]] | None = None,
+    result: Any = None,
+) -> dict[str, Any]:
+    """`§A8` 的分支（结构化返回）—— 与 `a6_branches` / `a7_branches` 同一条理由。
+
+        ① **交付物不是 `csr`**        ⇒ 红（★ 它会让 `§A3` 的可判性退化，见下）
+        ② **交付物不稳定 / 不细化 `P`** ⇒ 红（`§K8` 那一侧）
+        ③ **动作与实不符**（报「传播」而两条路并不同构）⇒ 红（那是**谎报**）
+    """
+    m = result if result is not None else maintain(seed, spec)
+    b1: list[str] = []
+    b2: list[str] = []
+    b3: list[str] = []
+    q = list(m.q)
+    q_csr = coarsest_stable_refinement(spec)
+    # ① 交付物必须**逐块等于** `csr`
+    #     ⚠️ 这一条**不是**在重复 `§A3`：`§A3` 判「有没有更粗的稳定划分」，
+    #       而本条的**红形态**恰恰是「`§A3` 变成判不了」——
+    #       实测：12 块 ⇒ 候选 4213597 > 上限 ⇒ `§A3` 报**跳过**，
+    #       而「跳过 ≠ 通过」⇒ 那条承重判据**瞎了**。
+    if partition_of(q) != partition_of(q_csr):
+        b1.append(f"交付物**不是 `csr`**（{len(q)} 块 vs 最粗 {len(q_csr)} 块）"
+                  f"⇒ `§A3` 的候选数随块数**组合爆炸** ⇒ 从**可判**退化成**判不了**"
+                  f"（实测 8 块 4140 个候选 ⇒ 判得了；12 块 4213597 ⇒ 跳过）")
+    if spec.relation:
+        ok, why = stable(spec, q)
+        if not ok:
+            b2.append(f"交付物**不稳定**（{len(why)} 对块）：{why[:1]}")
+    if not refines(spec, q):
+        b2.append("交付物**不细化 `P`** ⇒ 比声明还粗 ⇒ 不在 `csr` 上升链上")
+    if m.action == "传播" and not m.propagate_equal:
+        b3.append("报**传播**，但两条路**并不同构**（`propagate ≠ csr`）")
+    if m.action == "重建" and m.propagate_equal:
+        b3.append("报**重建**，但两条路**同构** ⇒ 这条记录与实不符（读数会误导）")
+    return {"①": b1, "②": b2, "③": b3, "动作": m.action, "块数": len(q),
+            "最粗": len(q_csr), "shrink": m.shrink,
+            "只传播会": m.shrink_if_propagated, "同构": m.propagate_equal}
+
+
+def a8_maintenance(
+    fixtures: Sequence[tuple[str, Sequence[frozenset[str]] | None]],
+    spec: ViewSpec,
+    rep: Report,
+    *,
+    overrides: Mapping[str, Any] | None = None,
+) -> None:
+    """`§A8` —— **交付的认识必须是 `csr`**（否则「最粗」这条承重性质变成判不了）。
+
+    ## 它判什么、为什么它不重复 `§A3`
+
+        `§A3` 判「**这一份 `q`** 有没有更粗的稳定划分」。
+        `§A8` 判「**交给下一层的**那一份是不是 `csr`」——
+        两者的**红形态不同**：`§A3` 红了是「有更粗的」，
+        而本条的典型红形态是「**`§A3` 变成跳过**」（候选数爆炸）。
+
+    ## 两个夹具
+
+        甲  `seed` 来自「只拿掉 2 个方向」⇒ 传播在预算内，但**仍交付 `csr`**
+        乙  `seed` 来自「拿掉 13 个方向」⇒ 传播严重退化（shrink 0.920）
+
+    ⚠️ **两个都要**：命题是「**不论传播看起来多划算，交付物都得是 `csr`**」，
+       只配乙会把它读成「超预算才要重建」—— 那是**上一版错的那个政策**。
+
+    ⚠️ **`overrides` 是对照口子**（`test_injections` 用），生产路径不传。
+    """
+    title = "认识维护：交付物必须是 `csr`（不然 `§A3` 的可判性会退化——实测 12 块即超上限）"
+    ov = dict(overrides or {})
+    rows: list[str] = []
+    bad: list[str] = []
+    for name, seed in fixtures:
+        r = ov.get(name)
+        br = a8_branches(spec, seed=seed, result=r)
+        hits = br["①"] + br["②"] + br["③"]
+        bad += [f"[{name}] {x}" for x in hits]
+        rows.append(f"{name} {br['块数']} 块 shrink {br['shrink']:.3f}"
+                    f"（只传播 {br['只传播会']:.3f}／同构 {br['同构']}）")
+    rep.add("A8", title, Tri.NO if bad else Tri.YES,
+            f"{len(bad)} 处：{bad[:2]}" if bad
+            else f"{'｜'.join(rows)}｜交付物 == `csr` ⇒ `§A3` 保持可判")
+
+
+def a8_reading(fixtures: Sequence[tuple[str, Any]], spec: ViewSpec) -> dict[str, Any]:
+    """`§A8` 的**读数**（进输出，不进退出码）—— 传播这条路**这一趟值不值**。"""
+    out: list[str] = []
+    n_same = 0
+    for name, seed in fixtures:
+        m = maintain(seed, spec)
+        if m.propagate_equal:
+            n_same += 1
+        out.append(f"{name}：只传播 {m.shrink_if_propagated:.3f}"
+                   f"／交付 {m.shrink:.3f}{'（同构）' if m.propagate_equal else ''}")
+    return {"明细": out, "同构次数": n_same}
+
+
+def render_maintenance(prof: dict[str, Any], spec: ViewSpec) -> str:
+    return ("认识的持续维护（`§A8`）：" + "｜".join(prof["明细"])
+            + f"｜两条路**同构** {prof['同构次数']} 次"
+            + "（⚠️ 交付物**总是** `csr` —— 传播结果更细，会让 `§A3` 判不了）")
 
 
 # --- 已知答案的对照组（合成图，三态各一例） ------------------------------------

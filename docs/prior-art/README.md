@@ -230,7 +230,10 @@ PYTHONIOENCODING=utf-8 PYTHONUTF8=1 "$V" repo/docs/prior-art/verify_quotes.py \
     repo/docs/*.md repo/README.md repo/ldv/MEASUREMENTS.md
 ```
 
-**2026-10-09 实测（最近一次）：引文 265 条｜全覆盖 265｜有缺口 0。**
+**2026-10-10 实测（最近一次）：引文 272 条｜全覆盖 272｜有缺口 0。**
+（同日 265 → **272**：+7 全在 `repo/docs/分层方向视图-抽象层.md` **§7.4** 的文献表 ——
+ `acar02` ×2 ／ `lsmsurvey` ×1 ／ `mvselect2026` ×1 ／ `graphsumm` ×1 ／ `betree` ×1，
+ 以及 §7.4.6 表头那两条的重复引用。**每一句都人工逐字核过**（`norm()` 压平后 `in` 判定）。）
 （同日三次累加，每一档都逐条可追：
  253 → **257**：+4 全在 `repo/docs/分层方向视图-检索器层.md` §14.0，
  是本轮首次进仓库文档引用的 **HNSW**（`sources/hnsw.txt`）；
