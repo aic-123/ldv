@@ -115,10 +115,13 @@ from ldv.checks.contract import (  # noqa: E402
     b6_signal_not_collapsed,
 )
 from ldv.checks.coverage import (  # noqa: E402
+    BASELINE_FORMAT,
+    BASELINE_FORMAT_KEY,
     b16_members_covered,
     b18_cover_leak_baseline,
     b19_progress_guard,
     corpus_fingerprint,
+    corpus_key,
     cover_leak_profile,
     progress_profile,
     soundness_profile,
@@ -760,8 +763,10 @@ def inj_b18(nodes, edges, injected: bool) -> Report:
     fp = corpus_fingerprint(nodes, edges)
     rep = _rep()
     b18_cover_leak_baseline(obs, rep, fp,
-                            {"语料": fp,
-                             "基线": {"sequence|batch": {"漏项数": 0, "漏的对数": 0}}})
+                            {BASELINE_FORMAT_KEY: BASELINE_FORMAT,
+                             "基线": {corpus_key(fp): {
+                                 "语料": fp,
+                                 "条目": {"sequence|batch": {"漏项数": 0, "漏的对数": 0}}}}})
     return rep
 
 

@@ -60,7 +60,13 @@ FORMAT = "ldv-views/1"
 FORMAT_KEY = "格式"
 
 #: 认识的落盘文件名。与 `checks.abstraction.VIEW_SPEC_NAME` / `expected_reds.json`
-#: 同一套规矩：**外部语料的东西不进版本库**，就放在语料旁。
+#: 同一套规矩：**外部语料的数据不进版本库**，就放在语料旁。
+#:
+#: ⚠️ **2026-10-10 用户裁定的一处例外**：`openalex-citations` 的**外生声明与认识**
+#:    （`view_spec.json` + `views.json`）**进版本库**（`.gitignore` 里两条 `!` 例外）。
+#:    语料本身（`nodes/` / `raw/`）照旧不进。理由：仓内语料那一对
+#:    （`ldv/checks/view_spec.json` + `ldv/checks/views.json`）**本来就在库里** ——
+#:    外部那份跟着进，两条链才对称；否则新 clone 上 `T2` 没有「盘上那份」可判。
 VIEWS_NAME = "views.json"
 
 

@@ -6,4 +6,17 @@ venv/
 # 外部语料**不进仓库** —— 取法与丢弃明细见 `ldv/tools/intake_openalex.py` 与 README。
 # 放在这里靠的是「一处解析器按优先级找」：`LDV_CORPUS`（路径或名字）→
 # `_data/<名字>/nodes` → `ldv/corpus/nodes`（随仓库提交的那份）。
-_data/
+#
+# ⚠️ 必须是 `_data/*` 而不是 `_data/` —— 带斜杠是**排除目录本身**，
+#    那样下面的 `!` 例外**一律无效**（git 不为被排除的目录重新包含其中的文件）。
+_data/*
+
+# ★ 例外（2026-10-10，用户裁定）：**语料不进，但「外生声明 + 认识」进**。
+#   外部语料的 `nodes/` / `raw/` / `MANIFEST.json` / `expected_reds.json` 照旧不进；
+#   而声明与认识是两个**小**文件，且与仓内语料那一对正好对称 ——
+#   仓内那份是 `ldv/checks/view_spec.json` + `ldv/checks/views.json`（**都已在库**）。
+#   ⇒ 进了库，`T2` 才有「盘上那份」可判（否则新 clone 上它一路「跳过」）。
+!_data/openalex-citations/
+_data/openalex-citations/*
+!_data/openalex-citations/view_spec.json
+!_data/openalex-citations/views.json

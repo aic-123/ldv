@@ -1600,7 +1600,7 @@ def test_cover_leak_baseline() -> None:
 
     ## 逐条钉住（每条都能红）
 
-        ① 基线文件在、指纹 == 现算的、条目非空 —— **非空转**前提
+        ① 基线文件在、**本语料那一区**在且指纹 == 现算的、条目非空 —— **非空转**前提
         ② 观测 > baseline          ⇒ 红（新增违规）
         ③ baseline > 0 且 观测 == 0 ⇒ 红（条目失效 —— 不许当永久豁免）
         ④ 语料指纹不符             ⇒ **跳过**（未展开），**不是**红也不是绿
@@ -1609,6 +1609,8 @@ def test_cover_leak_baseline() -> None:
         ⑦ 0 < 观测 < baseline      ⇒ 绿 + 报「可以收紧」
         ⑧ `corpus` 漏传            ⇒ 当场 `TypeError`（防御不许静默消失）
         ⑨ 真语料上这条守卫**确实在判**，且**冻结的数 == 现算的数**
+        ⑩ **重冻第二份语料是「合并」** —— 第一份那一区逐字没动（否则是**挪洞**）
+        ⑩′ 旧格式（v1，顶层 `语料`）**读的时候当场升级**，不许静默退化成「跳过」
 
     ## ★ ⑥ 是实测出来的，而且**两条臂都得跑**（`outputs/_measure_b18_missing_baseline.py`）
 
@@ -1647,9 +1649,13 @@ def test_cover_leak_baseline() -> None:
     )
     from ldv.checks._framework import Assertion, Report
     from ldv.checks.coverage import (
+        BASELINE_FORMAT,
+        BASELINE_FORMAT_KEY,
         BASELINE_PATH,
         b18_cover_leak_baseline,
+        baseline_zones,
         corpus_fingerprint,
+        corpus_key,
         cover_leak_profile,
         load_baseline,
     )
@@ -1660,15 +1666,19 @@ def test_cover_leak_baseline() -> None:
         return
     nodes, edges, _ = loaded
     fp = corpus_fingerprint(nodes, edges)
+    ckey = corpus_key(fp)
 
-    # ── ① 非空转前提：文件在、指纹对得上、条目非空 ────────────────────────
+    # ── ① 非空转前提：文件在、**本语料那一区**在且指纹对得上、条目非空 ──────
     doc = load_baseline()
+    zones = baseline_zones(doc)
     ok("★ [B18] 基线文件在（否则「新增」这个概念不存在）",
        BASELINE_PATH.is_file(), str(BASELINE_PATH))
-    ok("★ [B18] 基线里的语料指纹 == **现算的**指纹（对不上 ⇒ 真跑时一路「跳过」）",
-       doc.get("语料") == fp, f"基线 {doc.get('语料')} vs 现算 {fp}")
-    ok("★ [B18] 基线条目非空（空基线 ⇒ 守卫在守空气）",
-       bool(doc.get("基线")), f"{doc.get('基线')}")
+    ok("★ [B18] 基线里**有本语料那一区**，且区里记的指纹 == **现算的**指纹"
+       "（对不上 ⇒ 真跑时一路「跳过」）",
+       zones.get(ckey, {}).get("语料") == fp,
+       f"本语料分区键 {ckey!r}；已冻分区 {sorted(zones)}")
+    ok("★ [B18] 本语料那一区的条目非空（空基线 ⇒ 守卫在守空气）",
+       bool(zones.get(ckey, {}).get("条目")), f"{zones.get(ckey, {}).get('条目')}")
 
     def guard(obs: dict, baseline: dict, corpus: dict) -> Assertion:
         rep = Report(plugin="(自检)")
@@ -1679,8 +1689,14 @@ def test_cover_leak_baseline() -> None:
         return {"漏项数": n, "漏的对数": pairs,
                 "明细": [{"父": "D0", "漏项数": n}] if n else []}
 
-    base0 = {"语料": fp, "基线": {"keyset|maintenance": {"漏项数": 0, "漏的对数": 0}}}
-    base16 = {"语料": fp, "基线": {"keyset|maintenance": {"漏项数": 16, "漏的对数": 2}}}
+    def doc_of(entries: dict, fingerprint: dict) -> dict:
+        """造一份**格式 v2**（按语料分区）的基线 —— 只有本语料那一区。"""
+        return {BASELINE_FORMAT_KEY: BASELINE_FORMAT,
+                "基线": {corpus_key(fingerprint): {"语料": fingerprint,
+                                                   "条目": entries}}}
+
+    base0 = doc_of({"keyset|maintenance": {"漏项数": 0, "漏的对数": 0}}, fp)
+    base16 = doc_of({"keyset|maintenance": {"漏项数": 16, "漏的对数": 2}}, fp)
     #: ★ 一份**故意不是本语料**的指纹。两个数各 +1 ⇒ 保证与 `fp` 一定不等
     #:（这份语料恰好是 36 项 / 47 边，写死一个别的数也行，但加 1 不会随语料失效）。
     other = {"项数": fp["项数"] + 1, "边数": fp["边数"] + 1}
@@ -1764,7 +1780,7 @@ def test_cover_leak_baseline() -> None:
     ok("★ [B18] 真语料上它是**绿** —— 基线就是在本语料上冻的",
        a.result is Tri.YES, f"{a.result}：{a.detail}")
 
-    frozen = doc.get("基线", {})
+    frozen = zones.get(ckey, {}).get("条目", {})
     mism = {k: (frozen.get(k, {}).get("漏项数"), v["漏项数"])
             for k, v in real.items()
             if frozen.get(k, {}).get("漏项数") != v["漏项数"]}
@@ -1777,6 +1793,50 @@ def test_cover_leak_baseline() -> None:
        " —— 基线的形状与 §1 表第四行对得上（该行 2026-10-07 已降级）",
        set(nonzero) == {"sequence|maintenance"},
        f"非零条目：{nonzero}")
+
+    # ── ⑩ **重冻一份语料不许把另一份那一区抹掉**（2026-10-10 加）───────────
+    #
+    # 用户的原话是「现在真实数据已经注入了，守卫应该有材料了啊，以此补充」。
+    # 而「补材料」有一个**看起来对、实际是挪洞**的走法：直接在全量上重冻。
+    # 单语料格式下那会把 36 项那一区**抹掉** ⇒ 36 项那条守卫立刻变「跳过」。
+    #
+    # ⇒ ⑩ 用**临时文件**（绝不碰真基线）走一遍：先冻 A、再冻 B，然后查三件事。
+    from ldv.checks import coverage as _cov
+
+    with tempfile.TemporaryDirectory() as _td:
+        _saved = _cov.BASELINE_PATH
+        _cov.BASELINE_PATH = Path(_td) / "cover_leak_baseline.json"
+        try:
+            e_a = {"keyset|batch": {"漏项数": 0, "漏的对数": 0}}
+            e_b = {"keyset|batch": {"漏项数": 3, "漏的对数": 1}}
+            _cov.write_baseline(e_a, corpus=fp)
+            _cov.write_baseline(e_b, corpus=other)
+            z2 = _cov.baseline_zones(_cov.load_baseline())
+            ok("★ [B18] 重冻第二份语料是**合并**：两份分区同时在（不是顶掉）",
+               set(z2) == {corpus_key(fp), corpus_key(other)}, f"{sorted(z2)}")
+            ok("★ [B18] 而且第一份那一区**逐字没动** —— 否则是「挪洞」不是「补洞」",
+               z2.get(corpus_key(fp), {}).get("条目") == e_a,
+               f"{z2.get(corpus_key(fp))}")
+            # 单变量对照：两份语料**各自判得了**（没有哪一份退化成「跳过」）
+            r1, r2 = Report(plugin="(自检)"), Report(plugin="(自检)")
+            _cov.b18_cover_leak_baseline({"keyset|batch": leak(0, 0)}, r1, fp)
+            _cov.b18_cover_leak_baseline({"keyset|batch": leak(3, 1)}, r2, other)
+            ok("★ [B18] 合并之后两份语料**各自判得了**（一份「跳过」就说明洞被挪了）",
+               r1.assertions[-1].result is Tri.YES
+               and r2.assertions[-1].result is Tri.YES,
+               f"{r1.assertions[-1].result} / {r2.assertions[-1].result}")
+        finally:
+            _cov.BASELINE_PATH = _saved
+
+    # ── ⑩′ 旧格式（v1）文件**读的时候当场升级**，不许静默退化成「跳过」──────
+    v1 = {"语料": fp, "基线": {"keyset|maintenance": {"漏项数": 0, "漏的对数": 0}}}
+    z1 = baseline_zones(v1)
+    ok("★ [B18] 旧格式（v1，顶层 `语料`）**读时升级**成一个分区 —— 不丢数据",
+       z1.get(corpus_key(fp), {}).get("语料") == fp
+       and z1[corpus_key(fp)]["条目"] == v1["基线"], f"{z1}")
+    a = guard({"keyset|maintenance": leak(5)}, v1, fp)
+    ok("★ [B18] 而且旧格式文件上守卫**照样判**（升级后指纹对得上）",
+       a.result is Tri.NO, f"{a.result}：{a.detail}")
 
 
 def _ref_cover(which: str, nodes, edges):

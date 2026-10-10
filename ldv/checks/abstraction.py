@@ -165,6 +165,12 @@ def spec_paths(nodes_dir: Path | None = None) -> tuple[Path, ...]:
     `nodes_dir.parent / "expected_reds.json"`），理由也印在那里：
     **外部数据不进仓库，它的读数也不进** ⇒ 它的**声明**同理。
 
+    ⚠️ **2026-10-10 用户裁定的一处例外**：`openalex-citations` 的**声明与认识**
+       （`view_spec.json` + `views.json`）**进版本库**（`.gitignore` 里两条 `!` 例外），
+       语料本身照旧不进。理由：仓内那一对（`ldv/checks/` 下同名两份）**本来就在库里**
+       ⇒ 外部那份跟着进，两条链才对称。**`expected_reds.json` 仍不进** ——
+       它是**读数**，一条命令就能重冻（`--write-red-baseline`）。
+
     ⚠️ 路径**不由环境变量决定**：它跟着 `nodes_dir` 走 ⇒ 「跑的是哪份语料」与
        「读的是哪份声明」**不可能分叉**（`find_corpus` 已经为语料保证了同一件事）。
     """

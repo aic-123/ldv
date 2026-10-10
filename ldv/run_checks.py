@@ -139,8 +139,11 @@ from .checks.coverage import (
     b16_members_covered,
     b18_cover_leak_baseline,
     b19_progress_guard,
+    baseline_zones,
     corpus_fingerprint,
+    corpus_key,
     cover_leak_profile,
+    load_baseline,
     progress_profile,
     render_cover_leak,
     render_progress,
@@ -885,10 +888,13 @@ def main(argv: list[str]) -> int:
         entries = {k: {"漏项数": v["漏项数"], "漏的对数": v["漏的对数"]}
                    for k, v in sorted(entries.items())}
         write_baseline(entries, corpus=corpus_fingerprint(nodes, edges))
-        print("已冻结覆盖不漏基线：")
-        print(f"  语料指纹 {corpus_fingerprint(nodes, edges)}")
+        print("已冻结覆盖不漏基线（**合并**进本语料那一区，别的语料不动）：")
+        print(f"  语料指纹 {corpus_fingerprint(nodes, edges)}"
+              f" ⇒ 分区 {corpus_key(corpus_fingerprint(nodes, edges))!r}")
         for k, v in entries.items():
             print(f"  {k:24s} {v['漏项数']} 漏 / {v['漏的对数']} 对")
+        zones = baseline_zones(load_baseline())
+        print(f"  文件里现在有 {len(zones)} 个语料分区：{sorted(zones)}")
         return 0
 
     reps: list[Report] = []

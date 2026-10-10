@@ -443,16 +443,60 @@ def corpus_fingerprint(nodes: Any, edges: Any) -> dict[str, int]:
     return {"项数": len(nodes), "边数": sum(len(v) for v in edges.values())}
 
 
+#: 基线文件的**格式串**。
+#:     `1`（旧）= **单语料** —— 顶层 `语料` 是指纹、顶层 `基线` 直接就是条目。
+#:     `2`（现在）= **按语料分区** —— `基线` 是 `{分区键: {语料, 条目}}`。
+#: ⚠️ 为什么非要升这一版：基线文件是**一个**，而语料有**多份**（36 项 / 3907 项）。
+#:    单语料格式下，「在全量上重冻」会把 36 项那一份**抹掉** ⇒ 36 项那条守卫
+#:    立刻变成「跳过」—— **洞没补上，只是从一份语料挪到了另一份**。
+BASELINE_FORMAT = 2
+BASELINE_FORMAT_KEY = "格式"
+
+
+def corpus_key(corpus: dict[str, int]) -> str:
+    """语料指纹 → **分区键**。**只由指纹的两个数决定**：同语料同键、换语料必换键。
+
+    ⚠️ 用**人可读**的串而不是 `repr(dict)`：出问题时报告里要能直接读出
+       「已冻的语料有哪些」，`{'项数': 36, '边数': 47}` 那种串读不动。
+    """
+    return f"{corpus.get('项数', '?')} 项 / {corpus.get('边数', '?')} 边"
+
+
+def baseline_zones(doc: dict[str, Any]) -> dict[str, Any]:
+    """`{分区键: {语料, 条目}}` —— **旧格式（v1）当场升级**成一个区，不丢数据。
+
+    ⚠️ 升级放在**读**这一侧而不是「让用户手工改文件」：旧文件在仓库里，
+       要是读的时候不认，它就会静默退化成「跳过」—— 那正是本仓库一直在防的形状。
+    """
+    if doc.get(BASELINE_FORMAT_KEY) == BASELINE_FORMAT:
+        zones = doc.get("基线")
+        return dict(zones) if isinstance(zones, dict) else {}
+    old_fp, old_entries = doc.get("语料"), doc.get("基线")
+    if isinstance(old_fp, dict) and old_fp and isinstance(old_entries, dict):
+        return {corpus_key(old_fp): {"语料": old_fp, "条目": old_entries}}
+    return {}
+
+
 def write_baseline(entries: dict[str, Any], corpus: dict[str, int] | None = None) -> None:
+    """冻结**本语料**那一区 —— **合并**，绝不覆盖别的语料。
+
+    ⚠️ 合并是这条命令的**语义**，不是优化：写成覆盖，在第二份语料上重冻就会把
+       第一份那区抹掉 ⇒ 第一份那条守卫立刻变「跳过」—— **洞没补上，只是挪了地方**。
+       实测（`run_tests.test_cover_leak_baseline` 第 ⑩ 组）：两份语料各判各的。
+    """
+    corpus = corpus or {}
+    zones = baseline_zones(load_baseline())
+    zones[corpus_key(corpus)] = {"语料": corpus, "条目": entries}
     body = {
         "_note": ("覆盖不漏（§1 表第四行，⬜ 2026-10-07 已降级为「度量 + baseline 守卫」）"
                   "的**冻结基线**。"
-                  "由 `python -m ldv.run_checks --write-cover-leak-baseline` 生成。"
+                  "由 `python -m ldv.run_checks --write-cover-leak-baseline` 生成 —— "
+                  "它**合并**进本语料那一区，别的语料不动。"
                   "新增违规会红；条目不再发生也会红（ESLint `--prune-suppressions` 那条纪律）。"
-                  "`语料` 是**本基线是在哪份语料上冻的** —— 换了语料这条守卫报「跳过」，"
+                  "`基线` 按**语料指纹**分区：换了语料这条守卫报「跳过」，"
                   "不报「红」：**「baseline 是别的语料的」与「新增违规」必须分得开**。"),
-        "语料": corpus or {},
-        "基线": entries,
+        BASELINE_FORMAT_KEY: BASELINE_FORMAT,
+        "基线": zones,
     }
     BASELINE_PATH.write_text(
         json.dumps(body, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
@@ -498,6 +542,13 @@ def b18_cover_leak_baseline(obs: dict[str, dict[str, Any]], rep: Report,
     ⇒ 语料指纹对不上 ⇒ 报 **未展开**（跳过），并说清是**换了语料**。
       跳过 ≠ 通过：它明确地说「这条守卫在本语料上判不了」，而不是「没问题」。
 
+    ⚠️ **2026-10-10 起，baseline 是「按语料分区」的**（`BASELINE_FORMAT = 2`）：
+       一个文件装多份语料，各占一区（`corpus_key`）。第 0 条的判定从
+       「顶层 `语料` == 现在」变成「**本语料那一区在不在**」。
+       ⇒ 于是 `--write-cover-leak-baseline` **必须合并写入**：否则在第二份语料上
+         重冻会把第一份那区抹掉，第 0 条立刻把它报成「另一份语料」——
+         **洞没补上，只是从一份语料挪到了另一份**（`test_cover_leak_baseline` 第 ⑩ 组守这条）。
+
     ⚠️ **`corpus` 是必填参数**（不是 `= None` 的默认值）。理由与第 0 条同源：
        防御**不能因为调用方少传一个参数而静默消失** —— 那正是本仓库一直在防的形状。
        漏传会在调用点直接 `TypeError`，而不是变成一条「永远绿」的守卫。
@@ -507,18 +558,26 @@ def b18_cover_leak_baseline(obs: dict[str, dict[str, Any]], rep: Report,
        会让整条守卫**无声地失去防御**（`frozen == {}` 恒不等于 `corpus` 之外无差别）。
     """
     doc = baseline if baseline is not None else load_baseline()
-    base = doc.get("基线", {})
-    frozen = doc.get("语料") or {}
-    if frozen != corpus:
-        why = (f"baseline 是在**另一份语料**上冻的（{frozen} vs 现在 {corpus}）"
-               if frozen else
-               f"baseline 里**没记语料指纹**（`语料` = {frozen!r}）"
-               f"⇒ 无法判定它是不是本语料的")
+    zones = baseline_zones(doc)
+    key = corpus_key(corpus)
+    zone = zones.get(key)
+    if zone is None or zone.get("语料") != corpus:
+        if not zones:
+            why = (f"baseline 里**没记语料指纹**（`语料` = {doc.get('语料')!r}、"
+                   f"`格式` = {doc.get(BASELINE_FORMAT_KEY)!r}）"
+                   f"⇒ 无法判定它是不是本语料的")
+        elif zone is None:
+            why = (f"baseline 是在**另一份语料**上冻的 —— 本语料（{key}）"
+                   f"不在已冻的分区里（已冻：{sorted(zones)}）")
+        else:
+            why = (f"baseline 里本语料那一区的**指纹与分区键对不上**"
+                   f"（键 {key}、区里记的是 {zone.get('语料')}）⇒ 存档被改坏了")
         rep.add("B18", "覆盖不漏（baseline 守卫）", Tri.UNEXPANDED,
                 f"{why} ⇒ 这条守卫在本语料上**判不了**。要判就先 "
                 f"`python -m ldv.run_checks --write-cover-leak-baseline` 重冻。"
                 f"**跳过 ≠ 通过**：它没说本语料不漏")
         return
+    base = zone.get("条目", {})
     bad: list[str] = []
     tight: list[str] = []
     checked = 0
