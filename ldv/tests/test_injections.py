@@ -1808,34 +1808,6 @@ def inj_m3(nodes, edges, injected: bool) -> Report:
     return rep
 
 
-def inj_m4(nodes, edges, injected: bool) -> Report:
-    """`§M4` —— 注入「一层 11 块 ⇒ `Bell(11) = 678570 > 200000`」。
-
-    这一条与 `§A3` 的**跳过**必须分得开：`§M4` 在**折叠之前**就红
-    （设计层面：这一层压根不该这么设计），而 `§A3` 那时只会报**跳过**
-    （读数层面：判不了）。两者在只看布尔值时长得一模一样 ⇒
-    `test_multilevel` 里那一条断言**同时观察**这两个。
-    """
-    spec, kernel, plugin, cover = _ml_chain(nodes, edges)
-    if not injected:
-        return _ml_report(spec, kernel, plugin, cover)
-    # 把 `universe` 切成 11 块（尽量均匀，但只保证非空、无重、覆盖全集）。
-    u = list(spec.universe)
-    k = 11
-    blocks: list[frozenset[str]] = []
-    for i in range(k):
-        chunk = u[i * len(u) // k:(i + 1) * len(u) // k]
-        if chunk:
-            blocks.append(frozenset(chunk))
-    while len(blocks) < k:                      # `len(u) < k` 时补单元素块
-        blocks.append(frozenset({f"__pad{len(blocks)}__"}))
-    pad = frozenset().union(*blocks) - set(u)
-    if pad:                                     # 把补出来的占位并进第一块，保持覆盖
-        blocks[0] = (blocks[0] - pad) | frozenset()
-    q0 = tuple(b for b in blocks if b and b <= set(u))
-    return _ml_report(spec, kernel, plugin, cover, q0=q0)
-
-
 def inj_m5(nodes, edges, injected: bool) -> Report:
     """`§M5` —— 注入「末层停因**为空**」（= 没有刹车，跑到不动点）。
 
@@ -1926,11 +1898,52 @@ def inj_t1(nodes, edges, injected: bool) -> Report:
     return rep
 
 
-def inj_t2(nodes, edges, injected: bool) -> Report:
-    """`T2` —— 注入「**不比对指纹、直接用盘上那份**」（`基线§6`）。
+def inj_t2_unreadable(nodes, edges, injected: bool) -> Report:
+    """`T2` 注入**乙**：`disk_unreadable=True` —— 「**盘上那份读不回来**」。
 
-    红形态 = 陈旧的 `spec` 指纹。⚠️ 它**不是**「盘上没有认识」——那一档是**跳过**，
-       与红**不是一回事**（`§C3`），`known_answer_controls` 里两条对照分开验。
+        基线  盘上那份能读回来（且当前）      ⇒ 绿
+        注入  盘上**有一份**、但**读不回来**    ⇒ **红**
+
+    ## ★ 这一条是**实测踩出来的**（2026-10-10）
+
+        造一份陈旧的 `views.json` ⇒ `view_persist.from_dict` **抛**
+        ⇒ 而 `retrieval_report` 当时**没有兜住** ⇒
+          **`(检索)` 组整个消失、`run_checks` 当场崩**（`Traceback` 一节都不剩）。
+
+    ⇒ 「崩」比「红」更糟：**红是判据在说话，崩是判据没了**。
+      所以这条注入守的是「**坏档必须变成一个红，而不是一次崩溃**」。
+    """
+    from ldv.checks.abstraction import ViewSet
+    from ldv.checks.retrieval import RETRIEVER_CODES, t2_current
+    from ldv.core.views import coarsest_stable_refinement
+    from ldv.retriever import as_bar, retrieve
+
+    from ldv.checks.retrieval import _synth, _synth_spec
+
+    kernel, plugin, q = _synth(with_losing_merge=False)
+    spec = _synth_spec(kernel)
+    on_disk = ViewSet(spec=spec, q=coarsest_stable_refinement(spec), views=())
+    r = retrieve(kernel, plugin, {"keyset": as_bar(q)}, spec=spec, recognition=on_disk,
+                 disk_unreadable=injected)
+    rep = Report(plugin="(检索)", expects=RETRIEVER_CODES)
+    t2_current(rep, r, spec)
+    return rep
+
+
+def inj_t2(nodes, edges, injected: bool) -> Report:
+    """`T2` —— 注入「**盘上那份陈旧**」（`基线§6`；命题 2026-10-10 改过）。
+
+    红形态 = **盘上那份**的 `spec` 指纹 ≠ 当前。
+
+    ⚠️ 三条边界（`known_answer_controls` 里各有一条对照）：
+
+        盘上那份**当前**   ⇒ 过
+        盘上那份**读不回来**⇒ 红（**另一条红形态**，见 `inj_t2_unreadable`）
+        盘上**没有**       ⇒ **跳过**（跳过 ≠ 通过）
+
+    ★ 这一条现在**生产可达**（不再是只能手造的守卫）：结构动了而没跑
+      `python -m ldv.recognize` ⇒ 盘上那份陈旧 ⇒ **红**。用户裁定 2026-10-10：
+      「认识必须要维护」。修法一条命令。
     """
     from ldv.checks.abstraction import ViewSet
     from ldv.checks.retrieval import RETRIEVER_CODES, t2_current
@@ -1942,15 +1955,14 @@ def inj_t2(nodes, edges, injected: bool) -> Report:
     kernel, plugin, q = _synth(with_losing_merge=False)
     spec = _synth_spec(kernel)
     on_disk = ViewSet(spec=spec, q=coarsest_stable_refinement(spec), views=())
-    r = retrieve(kernel, plugin, {"keyset": as_bar(q)}, spec=spec, recognition=on_disk)
     if injected:
-        # 「直接用盘上那份」的可观测形态：结构已经动了，指纹还是旧的那个。
+        # 「**盘上那份陈旧**」的可观测形态：结构已经动了（这里用一个**另一个 `spec`**
+        # 代表「盘上那份按旧结构写的」），而盘上那份没跟着变。
         other = ViewSpec(universe=spec.universe,
                          partition=tuple(frozenset({d}) for d in spec.universe),
                          relation=spec.relation)
-        r = replace(r, recognition=replace(r.recognition,
-                                           fingerprint=spec_fingerprint(other),
-                                           source="盘上（直接用）"))
+        on_disk = ViewSet(spec=other, q=coarsest_stable_refinement(other), views=())
+    r = retrieve(kernel, plugin, {"keyset": as_bar(q)}, spec=spec, recognition=on_disk)
     rep = Report(plugin="(检索)", expects=RETRIEVER_CODES)
     t2_current(rep, r, spec)
     return rep
@@ -2177,7 +2189,7 @@ CASES: dict[str, Callable] = {
     "A1": inj_a1, "A2": inj_a2, "A3": inj_a3,
     "A4": inj_a4, "A5": inj_a5, "A6": inj_a6, "A7": inj_a7, "A8": inj_a8_deliver_propagated,
     "M0": inj_m0, "M1": inj_m1, "M2": inj_m2, "M3": inj_m3,
-    "M4": inj_m4, "M5": inj_m5, "M6": inj_m6,
+    "M5": inj_m5, "M6": inj_m6,
     # ★ `(检索)` 那一组：四条**都是守卫** ⇒ 四条注入**全是手造的**（见上面的段落）。
     #   ⚠️ `T4` 的注入用**真语料**（它判的那一档「未展开」在手造小夹具上未必有）。
     "T1": inj_t1, "T2": inj_t2, "T3": inj_t3, "T4": inj_t4, "T5": inj_t5,
@@ -2204,6 +2216,7 @@ EXTRA_CASES: dict[str, tuple[str, Callable]] = {
     "A5·独立重算不成立": ("A5", inj_a5_unwarranted),
     "A7·用重算冒充传播": ("A7", inj_a7_recompute),
     "A8·动作谎报": ("A8", inj_a8_mislabelled),
+    "T2·盘上那份读不回来": ("T2", inj_t2_unreadable),
 }
 
 

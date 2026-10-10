@@ -67,6 +67,7 @@ from __future__ import annotations
 
 import sys
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 
 from .checks._fixtures import (
@@ -766,11 +767,24 @@ def retrieval_report(loaded, targets: list[str]) -> Report:
     #
     #   ⚠️ 盘上那份由 **`python -m ldv.recognize`** 产生（那是它的唯一生产入口）。
     disk_path = view_persist.default_path(find_corpus())
-    disk = view_persist.read(disk_path)
-    from_disk = bool(disk)
-    if not disk:
+    disk_on_file = view_persist.read(disk_path)
+    bad_why = ""
+    from_disk = bool(disk_on_file)
+    # ★★ **盘上那份读不回来时不许崩**（2026-10-10 实测踩到）：
+    #    造一份陈旧的 `views.json`（`spec` 与当前结构不自洽）⇒ `from_dict` 抛
+    #    ⇒ **`(检索)` 组整个消失、`run_checks` 当场崩**（比红更糟：红是判据说话，崩是判据没了）。
+    # ⇒ 处置：读不回来 ⇒ **照旧重算**（结果仍对），但**把这件事记在 `Recognition` 上**，
+    #    由 `T2` 判红（「坏档/陈旧必须看得见」）。
+    try:
+        recognition = view_persist.from_dict(
+            disk_on_file, kernel, cover, plugin) if from_disk else None
+        bad_disk = False
+    except Exception as exc:  # noqa: BLE001 —— 坏档要**报出来**，不是崩
+        recognition, bad_disk = None, True
+        bad_why = f"{type(exc).__name__}: {exc}"
+    if recognition is None:
         disk = view_persist.to_dict(build_views(kernel, spec, cover, plugin))
-    recognition = view_persist.from_dict(disk, kernel, cover, plugin)
+        recognition = view_persist.from_dict(disk, kernel, cover, plugin)
 
     # ★ 「按使用细调」（`基线§14.7`）要**使用记录**才有内容 —— 而流程 A 本来就会记
     #   （`R5a` 展示 + `R5b` 逐条 `record_usage`）。⇒ 先跑几条查询攒记录，
@@ -781,19 +795,32 @@ def retrieval_report(loaded, targets: list[str]) -> Report:
     tendency = selfopt.tendency_by_direction(kernel)
 
     query = queries[0]
-    run_retrieval(kernel, plugin, {which: retriever.as_bar(query)}, spec, rep,
-                  recognition=recognition, tendency=tendency)
+    # ★ 取回 `Retrieval` —— 判据读的是它的 `recognition`（`Recognition`），
+    #   而上面那个 `recognition` 是**盘上读回的 `ViewSet`**。两者不是一回事：
+    #   前者带「盘上那份的指纹/读得回来吗」，后者只描述视图本身。
+    r = run_retrieval(kernel, plugin, {which: retriever.as_bar(query)}, spec, rep,
+                      recognition=recognition, tendency=tendency,
+                      disk_unreadable=bad_disk)
+    rec = r.recognition
     rep.note(f"{why}；方向 `{which}`；需求取自第 1 条查询（`{query.label}`）")
-    if from_disk:
-        rep.note(f"盘上的认识：`{disk_path.name}`（{len(disk.get('q') or [])} 块）——"
+    # ⚠️ **四种状态各印一行，不许共用**（`§K6` 的同一条纪律）：
+    #    盘上那份**当前** / 盘上那份**陈旧** / 盘上那份**读不回来** / 盘上**没有**
+    if not from_disk:
+        rep.note("⚠️ 盘上没有 `views.json` ⇒ 认识是**现造的**"
+                 "（由 `python -m ldv.recognize` 产生）—— 它拿的就是**当前结构**"
+                 "⇒ **「持续影响」这一趟不在**，`T2` 报**跳过**（跳过 ≠ 通过）")
+    elif not rec.disk_readable:
+        rep.note(f"⚠️ 盘上有 `{disk_path.name}`，但它**读不回来**"
+                 f"（{bad_why}）⇒ 本趟按**重算**处理（结果仍对），`T2` 报**红**")
+    elif rec.disk_fingerprint != retriever.spec_fingerprint(spec):
+        rep.note(f"⚠️ 盘上的 `{disk_path.name}` 是**陈旧的**"
+                 f"（指纹 {rec.disk_fingerprint} ≠ 当前 {retriever.spec_fingerprint(spec)}）"
+                 f"⇒ 本趟按**重算**处理（结果仍对），`T2` 报**红** —— "
+                 f"修法：`python -m ldv.recognize`")
+    else:
+        rep.note(f"盘上的认识：`{disk_path.name}`（{len(disk_on_file.get('q') or [])} 块）——"
                  f"**本趟读的就是它** ⇒ `T2` 这一趟**真的有东西可判**"
                  f"（陈旧的可能**真实存在**，不是守卫）")
-    else:
-        rep.note("⚠️ 本趟的**盘上认识**是**现造的**"
-                 "（盘上没有 `views.json` —— 由 `python -m ldv.recognize` 产生）——"
-                 "它拿的就是**当前结构** ⇒ `T2` 这一趟**只有守卫作用**"
-                 "（结构没动、认识没陈旧）。它的红形态只能靠**注入**（§C3），"
-                 "对照在 `run_tests.test_retriever`。")
     return rep
 
 

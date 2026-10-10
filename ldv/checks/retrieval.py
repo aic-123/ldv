@@ -88,7 +88,7 @@ RETRIEVER_CODES = ("T1", "T2", "T3", "T4", "T5", "T6", "T7")
 #:    `run_tests.test_retriever` ⑥ 段**逐字对照**两边（并核 `set(TITLES) == set(RETRIEVER_CODES)`）。
 TITLES: dict[str, str] = {
     "T1": "等价：候选集(步骤 T3) ≡ 候选集（不用视图、直接按 R0 遍历）",
-    "T2": "当前：用到的认识的 `spec` 指纹 == 当前结构的 `spec` 指纹",
+    "T2": "当前：**盘上那份**认识的 `spec` 指纹 == 当前结构的 `spec` 指纹（陈旧 ⇒ 红）",
     "T3": "解释指得到：`步骤 T4` 的每条理由都指得到实际结果",
     "T4": "画像不许说错：三档读法（已细分过/分不开/还没长出来）+混合 与结构事实相符",
     "T5": "按使用细调真的进了顺序（有记录的块按倾向降序、排在「不知道」之前）",
@@ -132,21 +132,54 @@ def t1_equivalence(rep: Report, r: Retrieval, kernel: Any) -> None:
 # --- `T2` ---------------------------------------------------------------------
 
 def t2_current(rep: Report, r: Retrieval, spec: ViewSpec) -> None:
-    """`T2` —— 取到的认识**必须是当前的**（`基线§6`）。
+    """`T2` —— **盘上的认识必须是当前的**（`基线§6`）。
 
-    跳过：**盘上没有任何认识** ⇒ 没得比（`§C3`）。**跳过 ≠ 通过。**
+    ## ★★ 命题在 2026-10-10 **改过**，原因是旧的**按构造恒真**
+
+    旧命题：「用到的那份认识必须是当前的」。而 `current_recognition` 在
+    陈旧/坏档时**会重算**、并把 `fingerprint` 写成**当前**的 ⇒ 三个分支**都**返回
+    当前指纹 ⇒ `rec.fingerprint != now` **永远是假** ⇒ 那条判据**不可能红**
+    （实测：造一份陈旧 `views.json`，它照样绿）。
+
+    ⇒ 改成判**盘上那份**：`rec.disk_fingerprint`（盘上那份**自己**的指纹）。
+
+        `disk_fingerprint is None`   ⇒ 盘上没有 ⇒ **跳过**（没得比；跳过 ≠ 通过）
+        盘上有，但**读不回来**       ⇒ **红**（坏了 / 与当前结构不自洽）
+        盘上有，指纹 ≠ 当前          ⇒ **红**（**陈旧** —— 认识没跟着结构变）
+        盘上有，指纹 == 当前         ⇒ 过
+
+    ## 为什么「陈旧」该红（用户裁定 2026-10-10：**认识必须要维护**）
+
+        陈旧 ⇒ `current_recognition` **悄悄重算** ⇒ 结果仍然**正确**
+        ⇒ 但「抽象层**持续**影响检索层」这件事**归零了**，而它**原先看不见**
+        （「悄悄重算」与「真的用了盘上那份」只差一句 `source` 文本）。
+
+        ⇒ 这正是本项目的中心形状：**退化与正常在只看别的判据时长得一模一样**。
+          所以它必须**有一条判据**。修法一条命令：`python -m ldv.recognize`。
+
+    ⚠️ **它不判「用没用盘上那份」** —— 那件事由 `current_recognition` **结构上**保证；
+       写成本条会把「按构造恒真」当成判据（就是旧命题的错）。
     """
     rec = r.recognition
-    if not rec.on_disk:
+    if rec.disk_fingerprint is None and not rec.on_disk:
         rep.add("T2", TITLES["T2"], Tri.UNEXPANDED,
-                "盘上**没有任何认识** ⇒ 没有可比的版本（跳过 ≠ 通过）")
+                f"盘上**没有任何认识** ⇒ 没有可比的版本（跳过 ≠ 通过）"
+                f"　⚠️ 「持续影响」这一趟**不在**（{rec.source}）—— "
+                f"`python -m ldv.recognize` 产生 `views.json`")
+        return
+    if not rec.disk_readable:
+        rep.add("T2", TITLES["T2"], Tri.NO,
+                f"盘上**有一份**认识，但它**读不回来**（与当前结构不自洽 / 存档坏了）"
+                f"⇒ 陈旧与坏档必须看得见，不许悄悄重算过去（本来会**整套崩掉**）")
         return
     now = spec_fingerprint(spec)
-    bad = rec.fingerprint != now
+    bad = rec.disk_fingerprint != now
     rep.add("T2", TITLES["T2"], Tri.NO if bad else Tri.YES,
-            (f"用到的是**陈旧的**那份：指纹 {rec.fingerprint} ≠ 当前 {now}"
-             f"（来源：{rec.source}）—— 结构动了，那份认识没跟着变") if bad
-            else f"指纹相符 `{now}`（来源：{rec.source}）")
+            (f"盘上那份是**陈旧的**：指纹 {rec.disk_fingerprint} ≠ 当前 {now}"
+             f"　⇒ 结构动了，那份认识**没跟着变**"
+             f"（本趟已按重算处理，结果仍对；但**「持续影响」归零了**）"
+             f"　修法：`python -m ldv.recognize`") if bad
+            else f"盘上那份的指纹 `{now}` == 当前（来源：{rec.source}）")
 
 
 # --- `T3` ---------------------------------------------------------------------
@@ -410,6 +443,7 @@ def run_retrieval(kernel: Any, plugin: Any,
                   need: Mapping[str, Mapping[str, object]], spec: ViewSpec,
                   rep: Report, *, recognition: Any = None,
                   tendency: Mapping[str, float] | None = None,
+                  disk_unreadable: bool = False,
                   deepen_rounds: int = 1) -> Retrieval:
     """走一遍流程 T（`T0`–`T4`）+ 按建议**深化**（`R3a` 的接线），再逐条判 `T1`–`T7`。
 
@@ -422,7 +456,7 @@ def run_retrieval(kernel: Any, plugin: Any,
        这样「顺序 / 认识 / 画像」判的还是**同一份结构**上的同一件事。
     """
     r = retrieve(kernel, plugin, need, spec=spec, recognition=recognition,
-                 tendency=tendency)
+                 tendency=tendency, disk_unreadable=disk_unreadable)
     t1_equivalence(rep, r, kernel)
     t2_current(rep, r, spec)
     t3_reasons(rep, r, kernel)
@@ -584,24 +618,36 @@ def known_answer_controls() -> list[str]:
     if judge(lambda rep: t1_equivalence(rep, empty, kernel)) is not Tri.UNEXPANDED:
         fails.append("§T1 空需求没被判「跳过」（跳过 ≠ 通过）")
 
-    # ── `T2`：指纹相符 ⇒ 绿；用了陈旧那份 ⇒ 红；盘上什么都没有 ⇒ 跳过 ─────
+    # ── `T2`：**四个状态各一例**（2026-10-10 命题改过，见 `t2_current` 的 docstring）──
+    #    盘上那份**当前** ⇒ 绿｜**陈旧** ⇒ 红｜**读不回来** ⇒ 红｜盘上**没有** ⇒ 跳过
     from .abstraction import ViewSet
 
     other = ViewSpec(universe=spec.universe,
                      partition=tuple(frozenset({d}) for d in spec.universe),
                      relation=spec.relation)
-    stale = ViewSet(spec=other, q=coarsest_stable_refinement(other), views=())
-    ok_r = retrieve(kernel, plugin, need, spec=spec, recognition=stale)
+    current_vs = ViewSet(spec=spec, q=coarsest_stable_refinement(spec), views=())
+    stale_vs = ViewSet(spec=other, q=coarsest_stable_refinement(other), views=())
+    # ① 当前 ⇒ 绿（且**用到的那份**也必须是当前的 —— 那是 `current_recognition` 的结构保证）
+    ok_r = retrieve(kernel, plugin, need, spec=spec, recognition=current_vs)
     if ok_r.recognition.fingerprint != spec_fingerprint(spec):
-        fails.append("§T2 真实现没用当前那份（陈旧认识应当被丢掉、重算）")
+        fails.append("§T2 真实现没用当前那份（指纹相符时应当**用盘上那份**）")
+    if ok_r.recognition.disk_fingerprint != spec_fingerprint(spec):
+        fails.append("§T2 没记下「盘上那份自己的指纹」⇒ 判据没有可判的东西")
     if judge(lambda rep: t2_current(rep, ok_r, spec)) is not Tri.YES:
-        fails.append("§T2 指纹相符（重算后）被判红")
-    trusting = replace(ok_r, recognition=replace(ok_r.recognition,
-                                                fingerprint=spec_fingerprint(other),
-                                                source="盘上（直接用）"))
-    if judge(lambda rep: t2_current(rep, trusting, spec)) is not Tri.NO:
-        fails.append("§T2「不比对、直接用盘上那份」没被抓住")
-    none_r = replace(ok_r, recognition=replace(ok_r.recognition, on_disk=False))
+        fails.append("§T2 盘上那份**当前**被判红")
+    # ② 陈旧 ⇒ **红**（★ 这是生产可达的红：结构动了而没跑 `python -m ldv.recognize`）
+    st_r = retrieve(kernel, plugin, need, spec=spec, recognition=stale_vs)
+    if st_r.recognition.fingerprint != spec_fingerprint(spec):
+        fails.append("§T2 陈旧时没按重算走（结果仍要对）")
+    if judge(lambda rep: t2_current(rep, st_r, spec)) is not Tri.NO:
+        fails.append("§T2 盘上那份**陈旧**没被抓住（用户裁定：认识必须要维护）")
+    # ③ 盘上那份**读不回来** ⇒ 红（不是跳过、更不是崩）
+    bad_r = retrieve(kernel, plugin, need, spec=spec, recognition=None,
+                     disk_unreadable=True)
+    if judge(lambda rep: t2_current(rep, bad_r, spec)) is not Tri.NO:
+        fails.append("§T2 盘上那份**读不回来**没被抓住")
+    # ④ 盘上什么都没有 ⇒ **跳过**（跳过 ≠ 通过）
+    none_r = retrieve(kernel, plugin, need, spec=spec, recognition=None)
     if judge(lambda rep: t2_current(rep, none_r, spec)) is not Tri.UNEXPANDED:
         fails.append("§T2 盘上没有任何认识时没被判「跳过」（跳过 ≠ 通过）")
 

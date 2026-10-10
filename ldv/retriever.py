@@ -182,7 +182,16 @@ class Recognition:
         `q`             实际拿来给块排序的那个划分
         `source`        它是**怎么来的**：`盘上` / `重算`
         `fingerprint`   **实际用到的那份认识**的 `spec` 指纹
-        `on_disk`       盘上到底有没有一份认识 —— 决定 `T2` 判据**判还是跳**
+        `on_disk`       盘上到底有没有一份认识（读到文件了没有）
+        `disk_fingerprint`  **盘上那份**自己的指纹（`None` = 盘上没有）
+        `disk_readable`     盘上那份**读得回来吗**（`False` = 坏了 / 与当前结构不自洽）
+
+    ## ★ 为什么后两项必须分开（2026-10-10 实测）
+
+        `fingerprint` 是**用到的那份**，而 `current_recognition` 在陈旧/坏档时
+        **会修好它**（重算）⇒ 它**永远**等于当前指纹 ⇒ 拿它做判据**恒真**
+        （实测：三个分支**都**返回 `spec_fingerprint(spec)`）。
+        ⇒ 「盘上那份是不是当前的」必须**另外记**，否则那条判据是空的。
     """
 
     spec: ViewSpec
@@ -190,9 +199,14 @@ class Recognition:
     source: str
     fingerprint: str
     on_disk: bool
+    #: 盘上那份**自己**的指纹；`None` = 盘上没有（或读不回来）。
+    disk_fingerprint: str | None = None
+    #: 盘上那份读得回来吗。`False` 且 `on_disk` 为真 ⇒ 坏了 / 与当前结构不自洽。
+    disk_readable: bool = False
 
 
-def current_recognition(spec: ViewSpec, recognition: Any = None) -> Recognition:
+def current_recognition(spec: ViewSpec, recognition: Any = None, *,
+                        disk_unreadable: bool = False) -> Recognition:
     """`步骤 T1` —— 取**当前**认识（`基线§6`）。
 
         `recognition is None`     盘上没有任何认识 ⇒ 现算 `csr(spec)`
@@ -205,18 +219,29 @@ def current_recognition(spec: ViewSpec, recognition: Any = None) -> Recognition:
     ⚠️ **不比对的话，「陈旧的认识」与「当前的认识」在只看输出时长得一模一样** ——
        正是本项目最忌的形状（`基线§6`）。
     """
+    if disk_unreadable:
+        # ★ **盘上有一份，但读不回来**（与当前结构不自洽 / 存档坏了）。
+        #   它与「盘上什么都没有」**必须分得开**：后者是「还没建」，前者是「建了但坏了」。
+        #   ⇒ 不崩、按重算走（结果仍对），但把状态**记在 `Recognition` 上**，由 `T2` 判红。
+        return Recognition(spec=spec, q=coarsest_stable_refinement(spec),
+                           source="重算（盘上那份**读不回来**）",
+                           fingerprint=spec_fingerprint(spec), on_disk=True,
+                           disk_fingerprint=None, disk_readable=False)
     if recognition is None:
         return Recognition(spec=spec, q=coarsest_stable_refinement(spec),
                            source="重算（盘上没有任何认识）",
-                           fingerprint=spec_fingerprint(spec), on_disk=False)
+                           fingerprint=spec_fingerprint(spec), on_disk=False,
+                           disk_fingerprint=None, disk_readable=False)
     on_disk_fp = spec_fingerprint(recognition.spec)
     if on_disk_fp != spec_fingerprint(spec):
         return Recognition(spec=spec, q=coarsest_stable_refinement(spec),
                            source=f"重算（盘上陈旧：{on_disk_fp} ≠ 当前）",
-                           fingerprint=spec_fingerprint(spec), on_disk=True)
+                           fingerprint=spec_fingerprint(spec), on_disk=True,
+                           disk_fingerprint=on_disk_fp, disk_readable=True)
     return Recognition(spec=spec, q=partition_of(recognition.q),
                        source="盘上（指纹相符）",
-                       fingerprint=spec_fingerprint(spec), on_disk=True)
+                       fingerprint=spec_fingerprint(spec), on_disk=True,
+                       disk_fingerprint=on_disk_fp, disk_readable=True)
 
 
 # ═══ T2 排序 ══════════════════════════════════════════════════════════════════
@@ -580,6 +605,7 @@ def advice_of(candidates: Iterable[str],
 def retrieve(kernel: Kernel, plugin: Any, need: Mapping[str, Mapping[str, object]], *,
              spec: ViewSpec, recognition: Any = None,
              tendency: Mapping[str, float] | None = None,
+             disk_unreadable: bool = False,
              known: Iterable[str] = BAR_NAMES) -> Retrieval:
     """`步骤 T0`–`步骤 T4` 走一遍。`T5`（展示 + 记录）由 `flow.run_query` 一并完成。
 
@@ -602,7 +628,7 @@ def retrieve(kernel: Kernel, plugin: Any, need: Mapping[str, Mapping[str, object
             f"（已知栏 {sorted(dispatched)}）")
     query = dispatched[plugin.name]
 
-    rec = current_recognition(spec, recognition)
+    rec = current_recognition(spec, recognition, disk_unreadable=disk_unreadable)
     tend = dict(tendency or {})
     first, late = order_blocks(kernel, plugin, rec.q, query, tendency=tend)
     flow_a, scanned = run_in_order(kernel, query, first + late)

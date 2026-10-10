@@ -90,6 +90,7 @@ from typing import Callable, Iterable, Iterator, Sequence
 __all__ = [
     "ViewSpec",
     "coarsest_stable_refinement",
+    "coarsest_stable_refinement_signature",
     "propagate",
     "propagate_naive",
     "extend_q",
@@ -252,6 +253,65 @@ def coarsest_stable_refinement(
        返回值按 `partition_of` 规范化（排元素 id，不排任何度量）。
     """
     return partition_of(_refine(list(spec.partition), spec.relation))
+
+
+def coarsest_stable_refinement_signature(
+    spec: ViewSpec,
+) -> tuple[frozenset[str], ...]:
+    """`csr(P)` 的**第二条独立实现** —— 按「**可达块签名**」分块（不走 `E⁻¹` 劈）。
+
+    ## 为什么需要它（2026-10-10，全量语料实测）
+
+    `§A3`（视图最粗）原来的 oracle 是 `coarser_stable_exists` —— **暴力枚举**粗化，
+    候选数是 `∏ Bell(组内块数)`。实测：36 项（8 块）**4140** 个候选 ⇒ 搜得完；
+    全量（19 块）**5.83e12** ⇒ **搜不完** ⇒ `§A3` 只能**报跳过**。
+
+    而**「跳过 ≠ 通过」** ⇒ 那条承重判据在全量上**瞎了**。
+    ⇒ 本函数给出**多项式**的第二条路，让 `§A3` **在任何规模上都能判**。
+
+    ## 它为什么与 `_refine` **不同路**
+
+        `_refine`：反复拿 `E⁻¹(某个块)` 去**劈**每个块，直到劈不动
+        本函数  ：反复按「**这个元素能走到哪些块**」这一组**签名**重新分组，
+                  直到没有块被拆开
+
+    同一个不动点（「最粗稳定细化唯一」那条定理），**两条不同的计算路径**。
+    ⇒ 与 `propagate` / `propagate_naive`、`to_dict` / `_to_dict_storing_derived`
+      同一个模式：**判据要有与被判对象不同路的参照物**。
+
+    ## 正确性（与 `_refine` 的论证同构，但走的是签名）
+
+        `Q` 稳定 ⟺ ∀ 块 `B`、∀ 块 `A`：`E⁻¹(A) ∩ B ∈ {∅, B}`
+              ⟺ **同一块里的元素「能走到哪些块」完全一致**（本函数的签名）
+        ⇒ 设 `R` 是 `P` 的**任一**稳定细化，`x, y` 同属一个 `R` 块。
+          对任一 `Q` 块 `A`：`A` 是若干 `R` 块的并（因 `R ⊑ Q`）；
+          而 `R` 稳定 ⇒ `E⁻¹(A) ∩ (R 的某个块)` 要么是空、要么是整块
+          ⇒ **`x` 与 `y` 在「能否走到 `A`」上一致** ⇒ 它们签名相同
+          ⇒ 本函数的每一步都**保持** `R` ⇒ 不动点细化**每一个**稳定细化
+          ⇒ 它 ≤ 最粗的那个；而它自己稳定且细化 `P` ⇒ 最粗的那个 ≤ 它
+          ⇒ **相等**。∎
+
+    ⚠️ 复杂度：每轮 `O(|E| + |U|)`，最多 `|U|` 轮 ⇒ `O(|U|·|E|)`。
+       全量（79 个方向 / 78 条边）是**微秒级**。
+    """
+    q: list[frozenset[str]] = [frozenset(b) for b in spec.partition]
+    edges: dict[str, list[str]] = {}
+    for x, y in spec.relation:
+        edges.setdefault(x, []).append(y)
+    while True:
+        idx = {d: i for i, b in enumerate(q) for d in b}
+        new: list[frozenset[str]] = []
+        for b in q:
+            sig_of: dict[frozenset[int], set[str]] = {}
+            for d in b:
+                # 签名 = 「这个元素能走到哪些块」
+                sig = frozenset(idx[y] for y in edges.get(d, ()) if y in idx)
+                sig_of.setdefault(sig, set()).add(d)
+            new.extend(frozenset(members) for members in sig_of.values())
+        # 没有任何块被拆开 ⇒ 不动点（每拆一次块数**严格增加**，上界 `|U|`）
+        if len(new) == len(q):
+            return partition_of(new)
+        q = new
 
 
 # --- `E′` 增量传播（§7） -------------------------------------------------------

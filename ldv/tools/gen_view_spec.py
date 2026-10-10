@@ -119,7 +119,8 @@ def build_spec(which: str, nodes, edges) -> tuple[dict, list[str]]:
     return spec, notes
 
 
-def carry_readings(doc: dict, which: str) -> tuple[list | None, str]:
+def carry_readings(doc: dict, which: str,
+                   spec_corpus: dict[str, int] | None = None) -> tuple[list | None, str]:
     """照抄现有文件里的 `读数`。返回 `(读数 或 None, 说明)`。
 
     ⚠️ 三种情形分开说 —— 它们要人做的事**不一样**：
@@ -135,6 +136,26 @@ def carry_readings(doc: dict, which: str) -> tuple[list | None, str]:
     r = doc.get("读数")
     if not r:
         return None, "现有文件里 `读数` 为空 ⇒ 没有可照抄的"
+
+    # ★★ **语料相关的那一部分不许照抄**（2026-10-10 实测踩到，这是本次 A4 红的根因）
+    #
+    #     `读数` 看起来与语料无关，但 `holistic` 那一条的 `见证.A / 见证.B` 是
+    #     **人挑的一组方向**，而它成立与否**取决于语料**（`摘要 = (计数, 和)`，而「和」随语料变）。
+    #     实测：36 项上挑的那一对被搬进全量声明 ⇒ 两边 `摘要` 不再相同
+    #     ⇒ `§A4` 红（「中位数 / 覆盖计数 的见证不成立」）。
+    #     ⇒ 那是**生成器静默搬了一个绑语料的东西**，而它长得像「照抄人写的栏」。
+    #
+    #  ⇒ 规矩：`见证` 若是**显式 A / B**（绑语料）⇒ **换语料时拒绝照抄**；
+    #    若是**构造法**（`构造`，与语料无关）⇒ 照抄没问题。
+    #     拒绝之后由人重挑 —— **宁可不替他挑，也不许静默搬一条不成立的见证**。
+    bound = [d.get("名") for d in r
+             if isinstance(d.get("见证"), dict) and "A" in d["见证"]]
+    if bound and doc.get("语料") != spec_corpus:
+        return None, (f"现有文件的 `读数` 里有 {len(bound)} 条**绑语料**的显式见证"
+                      f"（{bound}）⇒ **拒绝照抄**：语料从 {doc.get('语料')} 变成 "
+                      f"{spec_corpus} ⇒ 那对 A / B 的 `摘要` 不再相同（`§A4` 会红）。"
+                      f"　两条出路：改成**构造法**（`见证: {{摘要, 构造: 同摘要异读数}}`，"
+                      f"与语料无关）或按新语料重挑一对")
     return r, f"照抄现有 `读数` {len(r)} 条（**逐字**，生成器不改它）"
 
 
@@ -209,7 +230,7 @@ def main(argv: list[str]) -> int:
     src = target if target.is_file() else next(
         (q for q in spec_paths(nodes_dir) if q.is_file()), target)
     old = json.loads(src.read_text(encoding="utf-8")) if src.is_file() else {}
-    readings, rnote = carry_readings(old, which)
+    readings, rnote = carry_readings(old, which, spec.get("语料"))
     if src != target and src.is_file():
         rnote += f"（来源：{src}）"
     merged, dropped = merge_spec(old, spec, readings)

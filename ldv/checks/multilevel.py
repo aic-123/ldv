@@ -85,15 +85,11 @@ from ..core.tri import Tri
 #: ⚠️ 名字里的 `M` 是 `multilevel` 的残留（这一组原来是按「多层」写的）。
 #:    代码**不改名** —— 改名要动注册表、注入、文档四处，而编号本身
 #:    对「这一组守什么」一个字节的信息都没有。**改的是主语**（标题与文档）。
-MULTILEVEL_CODES = ("M0", "M1", "M2", "M3", "M4", "M5", "M6")
+MULTILEVEL_CODES = ("M0", "M1", "M2", "M3", "M5", "M6")
 
 
 def _title_m2(n: int) -> str:
     return f"折叠：层数 ≤ `MAX_LEVELS`（{n}）"
-
-
-def _title_m4(cap: int) -> str:
-    return f"每层：验证代价 `n_cand ≤ {cap}`（`§A3` 的**前置门**）"
 
 
 #: 七条的**标题** —— **一处定义，两处用**（真跑时 `rep.add`、跳过时 `skip_all`）。
@@ -102,7 +98,7 @@ def _title_m4(cap: int) -> str:
 #:    ——「跳过时印的标题」与「真跑时印的标题」不一致时，读起来像**两条不同的判据**。
 #:    `run_tests.test_multilevel` ⑥ 段**逐字对照**两边（并核 `set(TITLES) == set(CODES)`）。
 #:
-#: ⚠️ `M2` / `M4` 的标题带**参数**（`max_levels` / `cap`），所以它们是**函数**：
+#: ⚠️ `M2` 的标题带**参数**（`max_levels`），所以它是**函数**：
 #:    形参不是默认值时标题要跟着动，否则输出里印的那个数就是**假的**
 #:    （而「印错了数」与「印对了数」在只看红绿时长得一模一样）。
 TITLES: dict[str, str] = {
@@ -111,7 +107,6 @@ TITLES: dict[str, str] = {
           "（视图层**真的在缩** —— 这一层就是产物）",
     "M2": _title_m2(MAX_LEVELS),
     "M3": "折叠：总代价 `Σ|U_k| ≤ 2·|U_0|`（几何递减的推论 —— 守卫）",
-    "M4": _title_m4(MAX_COARSENING_CANDIDATES),
     "M5": "折叠：终止只由 `§M1`（收缩比）/ `§M2`（层数）触发 —— 守卫",
     "M6": "折叠：顶层账 ⊇ 各层丢掉的并（账必须**被携带**，不许现推）",
 }
@@ -247,21 +242,35 @@ def m3_cost(levels: Sequence[Level], rep: Report) -> None:
 
 # --- §M4 ----------------------------------------------------------------------
 
-def m4_verifiable(levels: Sequence[Level], rep: Report,
-                  cap: int = MAX_COARSENING_CANDIDATES) -> None:
-    """`§M4` —— **每一层**的验证代价 `n_cand ≤ cap`。
+def m4_reading(levels: Sequence[Level],
+               cap: int = MAX_COARSENING_CANDIDATES) -> dict[str, Any]:
+    """**验证代价**（`n_cand`）—— **读数，不是判据**（2026-10-10 从 `§M4` 降级）。
 
-    与 `§A3` 的跳过**必须分得开**（模块开头那段）：
-    `§A3` 是「跑到那一层才发现判不了」，`§M4` 是「折叠**之前**就知道这一层不该这么设计」。
-    ⇒ 判据在 `fold_until` 之前/之中就该有结论，而不是等 `§A3` 报跳过。
+    ## 为什么降级：它的**前提**被本轮的改动取代了
+
+    它原先的命题是「每层 `n_cand ≤ 200000`（`§A3` 的**前置门**）」，
+    理由是「`§A3` 会因枚举不完而报跳过」。
+
+    ⇒ 而 `§A3` 现在有**第二条 oracle**（`core/views.coarsest_stable_refinement_signature`，
+      多项式、独立实现，全量实测 **0.5 ms**）⇒ **它不再因代价而跳过**。
+    ⇒ 于是这条门**失去了它的存在理由**：`n_cand` 大**不再**意味着「判不了」。
+
+    ⚠️ **一条失去了理由的判据必须降级，不许留着**，否则它会变成
+      「一条常驻的红等于没人再看红」那种东西（本仓库记过两次）。
+      `n_cand` 这个**数**仍然有用（它说明暴力 oracle 这一趟跑不跑得起）⇒ 留作**读数**。
     """
-    bad = [(i, lv.n_cand) for i, lv in enumerate(levels) if lv.n_cand > cap]
-    rep.add("M4", _title_m4(cap),
-            Tri.NO if bad else Tri.YES,
-            (f"{len(bad)} 层超上限：{bad[:3]} —— `§A3` 那时只会报**跳过**，"
-             f"而跳过不阻止交付") if bad
-            else (f"{len(levels)} 层的 `n_cand` = "
-                  f"{[lv.n_cand for lv in levels]}，全 ≤ {cap}"))
+    return {"每层 n_cand": [lv.n_cand for lv in levels],
+            "上限": cap,
+            "超上限的层": [i for i, lv in enumerate(levels) if lv.n_cand > cap]}
+
+
+def render_m4(prof: dict[str, Any]) -> str:
+    over = prof["超上限的层"]
+    return (f"验证代价（读数，**不判**）：每层 `n_cand` = {prof['每层 n_cand']}"
+            f"（上限 {prof['上限']}）"
+            + (f"｜⚠️ 第 {over} 层超上限 ⇒ **暴力 oracle 跑不起**，"
+               f"`§A3` 走的就是**多项式 oracle**" if over
+               else "｜全在上限内 ⇒ `§A3` 走的是**暴力 oracle**（独立性最强的那条）"))
 
 
 # --- §M5 ----------------------------------------------------------------------
@@ -427,12 +436,12 @@ def known_answer_controls() -> list[str]:
     if judge(m3_cost, flat_many) is not Tri.NO:
         fails.append("§M3 「每层不缩」没被抓住（Σ = 12 > 2·4 = 8）")
 
-    # ── `§M4`：小 `n_cand` 绿；`Bell(11) > 200000` 红 ──────────────────────
-    big = [replace(ok_levels[0], n_cand=678_570)]      # `Bell(11)`
-    if judge(m4_verifiable, ok_levels) is not Tri.YES:
-        fails.append("§M4 小 `n_cand` 被判红")
-    if judge(m4_verifiable, big) is not Tri.NO:
-        fails.append("§M4 `Bell(11)=678570 > 200000` 没被抓住")
+    # ── `§M4` 已降级为**读数**（2026-10-10）—— 这里只剩它的读数对照 ─────────────
+    #    降级理由：`§A3` 有了多项式 oracle ⇒「`n_cand` 大」**不再**意味着「判不了」。
+    if m4_reading(ok_levels)["超上限的层"]:
+        fails.append("§M4 读数：小 `n_cand` 被判成「超上限」")
+    if not m4_reading([replace(ok_levels[0], n_cand=678_570)])["超上限的层"]:
+        fails.append("§M4 读数：`Bell(11)=678570 > 200000` 没被判成「超上限」")
 
     # ── `§M5`：合法停因绿；停因为空（跑到不动点）红 ────────────────────────
     #    ⚠️ 旧的第三例（`flat`：只折一层 ⇒ 红）已删 —— 那条判的是 `§M1` 的事，
@@ -520,7 +529,7 @@ def run_multilevel(spec: ViewSpec, kernel: object, cover: Callable[[object], fro
     # ⚠️ `§M2` 用**声明的** `MAX_LEVELS` 判，不用形参 —— 见 docstring。
     m2_levels(levels, rep, max_levels=MAX_LEVELS)
     m3_cost(levels, rep)
-    m4_verifiable(levels, rep)
+    rep.note(render_m4(m4_reading(levels)))
     m5_termination(levels, rep)
     m6_ledger(levels, rep)
     return levels

@@ -3643,6 +3643,119 @@ def _spec_mechanical_mismatch(doc: dict, which: str, nodes, edges) -> list[str]:
             for k in MECHANICAL if doc.get(k) != spec[k]]
 
 
+def test_view_oracles() -> None:
+    """`§A3` 的**两条 oracle** 与 `§A4` 的**见证构造** —— 2026-10-10 新增。
+
+    这两件都是「**判据要能红，就必须有一个与被判对象不同路的参照物**」那条纪律的落点，
+    而且它们各自的**失效形态**都长得像正常：
+
+        `§A3` 的多项式 oracle 若与 `_refine` 分岔 ⇒ 「视图最粗」会在全量上**报错或漏判**
+        `§A4` 的见证构造若搜不到 ⇒ 「holistic」**没有支撑**，而它只差一句话
+
+    ⚠️ **本测试全程用合成图**（不依赖语料大小）⇒ 换语料不会让它静默失效。
+    """
+    import random
+
+    from ldv.checks.abstraction import (
+        WITNESS_BUILDERS, SUMMARIES, ReadingCtx, judge_reading,
+        witness_same_digest_diff_reading,
+    )
+    from ldv.core.views import (
+        ViewSpec, coarser_stable_exists, coarsest_stable_refinement,
+        coarsest_stable_refinement_signature, n_coarsening_candidates,
+        partition_of, stable,
+    )
+
+    # ── ① 两条 `csr` 实现**随机对拍** —— 400 组随机小图 ────────────────────
+    rnd = random.Random(20261010)
+    diffs, checked = [], 0
+    for _ in range(400):
+        m = rnd.randint(2, 6)
+        U = [f"x{i}" for i in range(m)]
+        E = frozenset((a, b) for a in U for b in U
+                      if a != b and rnd.random() < 0.35)
+        lab = [rnd.randint(0, max(0, rnd.randint(0, m - 1))) for _ in U]
+        P = tuple(frozenset(U[i] for i in range(m) if lab[i] == k)
+                  for k in sorted(set(lab)))
+        P = tuple(b for b in P if b)
+        try:
+            spec = ViewSpec(universe=tuple(U), partition=P, relation=E)
+        except Exception:  # noqa: BLE001 —— 不合法的随机实例直接跳过
+            continue
+        checked += 1
+        a, b = coarsest_stable_refinement(spec), coarsest_stable_refinement_signature(spec)
+        if partition_of(a) != partition_of(b):
+            diffs.append((sorted(map(sorted, a)), sorted(map(sorted, b))))
+        # 暴力 oracle 的结论必须与「两条实现是否一致」对上
+        ex, _why, _seen = coarser_stable_exists(spec, b)
+        if ex != (partition_of(a) != partition_of(b)):
+            diffs.append(("暴力 oracle 与实现不一致", spec.relation))
+    ok(f"① ★ [O] 两条 `csr` 实现（`_refine` vs **签名**）在 {checked} 组随机小图上"
+       f"**逐块相同**，且与暴力 oracle 的结论一致 —— 第二条实现是 `§A3` 在全量上"
+       f"能判的前提（全量候选数 5.83e12 ⇒ 暴力枚举跑不完）",
+       not diffs and checked > 300, f"{len(diffs)} 处分岔：{diffs[:2]}")
+
+    # ── ② **三环反例**：证明「局部判据」会漏判（所以 `§A3` 不能改成它）──────
+    #    `E = {(a,c),(c,b),(b,a)}`、`P = {U}`：`{{a},{b},{c}}` 里任意两块合起来都不稳定，
+    #    **而三块合成一块稳定** ⇒ 「两块能不能合并」这条判据会把「有更粗的」判成「没有」。
+    ring = ViewSpec(universe=("a", "b", "c"),
+                    partition=(frozenset("abc"),),
+                    relation=frozenset({("a", "c"), ("c", "b"), ("b", "a")}))
+    singles = [frozenset({x}) for x in "abc"]
+    pair_ok = {f"{x}{y}": stable(ring, [frozenset({x, y}),
+                                        frozenset(set("abc") - {x, y})])[0]
+               for x, y in (("a", "b"), ("a", "c"), ("b", "c"))}
+    whole_ok = stable(ring, [frozenset("abc")])[0]
+    ok("② ★★ [O] **三环反例**：「任意两块合并都不稳定」**但**「三块合成一块稳定」"
+       "⇒ 任何「局部判据」（只看两块能不能并）都会把「有更粗的」**判成「没有」**；"
+       "而暴力 oracle 与两条实现都说「最粗是三块」",
+       (not any(pair_ok.values())) and whole_ok
+       # ⚠️ `partition_of` 返回 **tuple**（不是 list）—— 比错类型会让这条**恒红**
+       and partition_of(coarsest_stable_refinement(ring)) == (frozenset("abc"),)
+       and coarser_stable_exists(ring, singles)[0] is True,
+       f"pair={pair_ok} whole={whole_ok}"
+       f"｜暴力 oracle 说「有更粗的」=" + str(coarser_stable_exists(ring, singles)[0]))
+
+    # ── ③ `§A4` 的见证构造：在给定语料上**搜得到**，且**逐字可复现** ────────
+    #    用一个**手工造的语料**：值分布确定 ⇒ 已知答案是「搜得到」。
+    #    ⚠️ 这份语料是**照着见证造的**：`{1,5,9}` 与 `{3,4,8}` 的和都是 15，
+    #       而中位数 5 ≠ 4 ⇒ 见证必然存在（否则这条对照会「因为语料本身没见证」而红
+    #       —— 那是**夹具的问题**，不是实现的问题）。
+    ctx = ReadingCtx(
+        value_of={"v1": 1.0, "v5": 5.0, "v9": 9.0, "v3": 3.0, "v4": 4.0, "v8": 8.0},
+        cover_of={d: frozenset({d}) for d in ("v1", "v5", "v9", "v3", "v4", "v8")})
+    f_med = lambda S, c: float(sorted(c.value_of[d] for d in S)[len(S) // 2])  # noqa: E731
+    sf = SUMMARIES["计数与和"]
+    w1 = WITNESS_BUILDERS["同摘要异读数"](f_med, sf, ctx)
+    w2 = WITNESS_BUILDERS["同摘要异读数"](f_med, sf, ctx)
+    ok("③ ★ [O] `§A4` 的见证**构造法**在给定语料上搜得出一对「同摘要、异读数」，"
+       "且**两次搜到同一对**（顺序确定 ⇒ 输出逐字可复现）",
+       w1 is not None and w1 == w2
+       and sf(w1[0], ctx) == sf(w1[1], ctx)
+       and f_med(w1[0], ctx) != f_med(w1[1], ctx),
+       f"{w1}")
+
+    # ── ④ 搜不到时 `§A4` **判红**（不是跳过）────────────────────────────
+    #    造一个**搜不到**的语料：所有值相同 ⇒ 任何子集的摘要相同 ⇒ 读数也相同
+    flat = ReadingCtx(value_of={d: 1.0 for d in "abcd"},
+                      cover_of={d: frozenset({d}) for d in "abcd"})
+    ok("④ ★ [O] 搜不到见证时 `§A4` **判红**（不是跳过）—— 「声称 holistic 却拿不出支撑」"
+       "必须是一条红，否则那条声称**永远不用被兑现**",
+       WITNESS_BUILDERS["同摘要异读数"](lambda S, c: float(len(S)), sf, flat) is None
+       and judge_reading("计数", "holistic",
+                         {"名": "计数", "类别": "holistic",
+                          "见证": {"摘要": "计数与和", "构造": "同摘要异读数"}},
+                         {}, flat)[0] is False,
+       f"{judge_reading('计数', 'holistic', {'名': '计数', '类别': 'holistic', '见证': {'摘要': '计数与和', '构造': '同摘要异读数'}}, {}, flat)[1][:80]}")
+
+    # ── ⑤ 构造法名字写错 ⇒ 红（声明指不到实现）──────────────────────────
+    ok("⑤ [O] 见证构造法**不在注册表里** ⇒ 红（「声明写错了」与「还没写」是两件事）",
+       judge_reading("计数", "holistic",
+                     {"名": "计数", "类别": "holistic",
+                      "见证": {"摘要": "计数与和", "构造": "不存在的构造法"}},
+                     {}, ctx)[0] is False)
+
+
 def test_maintain() -> None:
     """`§A8` —— **认识的持续维护**（`core/views.maintain`）。
 
@@ -4299,7 +4412,7 @@ def test_multilevel() -> None:
         TITLES,
         known_answer_controls,
         m2_levels,
-        m4_verifiable,
+        m4_reading,
         n_folds,
         render_levels,
         run_multilevel,
@@ -4425,17 +4538,31 @@ def test_multilevel() -> None:
     n_cand = n_coarsening_candidates(spec, q_big)
     ok(f"★★ [M] `§M4` 与 `§A3` **用的是同一个数**：`n_cand = {n_cand}`"
        f"（`Bell(11) = 678570 > {MAX_COARSENING_CANDIDATES}`）—— "
-       f"两处各算一份的话，症状是「`§A3` 说判得了、`§M4` 说爆了」，"
-       f"而**两个判据各自看着都对**",
+       f"两处各算一份的话，症状是「说不清这一层验证得起不起」",
        n_cand > MAX_COARSENING_CANDIDATES, f"n_cand = {n_cand}")
-    rep_m4 = Report(plugin="(L0)", expects=("M4",))
-    m4_verifiable([_replace(levels[0], q=q_big, n_cand=n_cand)], rep_m4)
-    found, why_a3, _seen = coarser_stable_exists(spec, q_big)
-    ok("★★ [M] `§M4` 红 **且** `§A3` 跳过 —— **同时观察到**，才证明两条分得开"
-       "（只看布尔值时它们长得一模一样：都是「没通过」）",
-       rep_m4.assertions[0].result is Tri.NO and found is None,
-       f"`§M4`={rep_m4.assertions[0].result}、"
-       f"`§A3`={'跳过' if found is None else found}（{why_a3[:40]}）")
+
+    # ★★★ 这一条是 **2026-10-10 用户裁定**要的：**`n_cand` 超上限不许让 `§A3` 变成判不了**
+    #     （「A3 不能承认这只是在小语料可用」）
+    from ldv.checks.abstraction import a3_oracle
+    big_spec = ViewSpec(universe=spec.universe,
+                        partition=(frozenset(spec.universe),),   # `P = {U}` ⇒ 一块
+                        relation=spec.relation)
+    has_big, why_big, seen_big, tag_big = a3_oracle(big_spec, q_big)
+    ok("★★★ [M] `n_cand` 超上限时 `§A3` **仍然判得了**（走**多项式 oracle**，"
+       "不再报跳过）—— 这是「**不能承认只在小语料可用**」那条要求的落点",
+       has_big is not None and "多项式" in tag_big,
+       f"`has={has_big}`｜{tag_big[:70]}")
+    # 同一件事的另一半：还在上限内时**必须**走独立性最强的暴力 oracle
+    has_small, why_small, _seen_s, tag_small = a3_oracle(spec, q0)
+    ok("★★ [M] `n_cand` **在上限内**时 `§A3` 走**暴力枚举**（独立性最强的那条）——"
+       "两条 oracle 的**选法**本身也要被验，否则「换了没换」看不出来",
+       has_small is not None and "暴力" in tag_small, tag_small[:70])
+    # `§M4` 降级后仍要报这个数（读数）
+    r_m4 = m4_reading([_replace(levels[0], q=q_big, n_cand=n_cand)])
+    ok("★★ [M] `§M4` 已**降级为读数** —— 它仍然报 `n_cand` 与「超没超上限」，"
+       "但**不再判**（理由：`§A3` 有了多项式 oracle ⇒ 代价大不再意味着判不了）",
+       r_m4["超上限的层"] == [0] and r_m4["每层 n_cand"] == [n_cand],
+       f"{r_m4}")
 
     # ── ⑤ 不超上限时 `§A3` **不**报跳过 ────────────────────────────────────
     ok("★ [M] 不超上限时 `§A3` **不**报跳过（否则「跳过」会变成一条常驻的红）",
@@ -4460,12 +4587,15 @@ def test_multilevel() -> None:
        f"；键差：{sorted(set(TITLES) ^ set(MULTILEVEL_CODES))}")
     r12 = Report(plugin="(L0)", expects=("M2",))
     m2_levels(levels, r12, max_levels=12)
-    rcap = Report(plugin="(L0)", expects=("M4",))
-    m4_verifiable(levels, rcap, cap=1)
-    ok("★★ [M] `M2` / `M4` 的标题带**参数**：形参一改，标题里的数**跟着动** —— "
-       "否则印出来的是**假的数**，而「印错了」与「印对了」在只看红绿时长得一模一样",
-       "（12）" in r12.assertions[0].title and "≤ 1`" in rcap.assertions[0].title,
-       f"{r12.assertions[0].title} ｜ {rcap.assertions[0].title}")
+    ok("★★ [M] `M2` 的标题带**参数**：形参一改，标题里的数**跟着动** —— "
+       "否则印出来的是**假的数**，而「印错了」与「印对了」在只看红绿时长得一模一样"
+       "（`M4` 已降级为读数，不再有标题 ⇒ 这条只管 `M2`）",
+       "（12）" in r12.assertions[0].title, f"{r12.assertions[0].title}")
+    # ★ 降级之后，`M4` **不许**再出现在注册表/标题里（否则「声明了却没跑」）
+    ok("★★ [M] `M4` 已从 `MULTILEVEL_CODES` 与 `TITLES` 里**彻底移除** ——"
+       "降级只降一半（还留在注册表里）会让「套件全绿」覆盖一个不存在的判据",
+       "M4" not in MULTILEVEL_CODES and "M4" not in TITLES,
+       f"CODES={MULTILEVEL_CODES}")
 
 
 def _raises_valueerror(fn) -> bool:
@@ -4719,7 +4849,9 @@ def test_retriever() -> None:
         source="对照：离散划分（= 不用视图）",
         fingerprint=retriever.spec_fingerprint(spec), on_disk=True)
     _cr = retriever.current_recognition
-    retriever.current_recognition = lambda s, r=None: _disc
+    # ⚠️ 必须接 `**kw` —— `retrieve` 会传 `disk_unreadable`（2026-10-10 加的）。
+    #    替身签名比真实现窄 ⇒ 调用点加了参数就会在这里炸（而炸的是**测试**，不是被测代码）。
+    retriever.current_recognition = lambda s, r=None, **kw: _disc
     try:
         rd = retriever.retrieve(kernel, plugin, {which: retriever.as_bar(query)}, spec=spec)
     finally:
@@ -4832,7 +4964,8 @@ def main() -> int:
                test_b3_reduction_premise, test_reach_cache_premise,
                test_reach_cache_transparency, test_tree_premise,
                test_deletion_path, test_persistence, test_lock_scope,
-               test_query_hit_items, test_spec_paths, test_maintain, test_views,
+               test_query_hit_items, test_spec_paths, test_maintain,
+               test_view_oracles, test_views,
                test_multilevel, test_retriever, test_cli_paths):
         fn()
     total = len(PASS) + len(FAIL)

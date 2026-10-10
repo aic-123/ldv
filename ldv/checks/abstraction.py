@@ -104,6 +104,7 @@ docstring 里那条证明）。⇒ 这一步**不新增接口方法**，也不�
 
 from __future__ import annotations
 
+import itertools
 import json
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -111,10 +112,13 @@ from typing import Any, Callable, Mapping, Sequence
 
 from ..core.tri import Tri
 from ..core.views import (
+    MAX_COARSENING_CANDIDATES,
     MIN_SHRINK_RATIO,
     ViewSpec,
     coarser_stable_exists,
     coarsest_stable_refinement,
+    coarsest_stable_refinement_signature,
+    n_coarsening_candidates,
     extend_q,
     maintain,
     partition_of,
@@ -429,7 +433,7 @@ def a3_coarsest(spec: ViewSpec, q: Sequence[frozenset[str]], rep: Report) -> Non
                 f"`Q` 自己就**不稳定**（{len(bad)} 对块）⇒ 它不可能是那个唯一解；"
                 f"反例见 `§A2`：{bad[:1]}")
         return
-    has, why, seen = coarser_stable_exists(spec, q)
+    has, why, seen, oracle = a3_oracle(spec, q)
     if has is None:
         rep.add("A3", "视图最粗：不存在更粗的稳定划分", Tri.UNEXPANDED,
                 f"{why} —— 判不了，不是通过")
@@ -437,8 +441,59 @@ def a3_coarsest(spec: ViewSpec, q: Sequence[frozenset[str]], rep: Report) -> Non
     rep.add("A3", "视图最粗：不存在更粗的稳定划分（`Q` 就是那个**唯一**的解）",
             Tri.NO if has else Tri.YES,
             f"存在更粗的稳定划分：{why} —— `P` 本身选粗了（停止条件 3：`P` 外生，"
-            f"只能由人改）" if has
-            else f"{len(q)} 块已是最粗（枚举了 {seen} 个粗化，没有一个稳定）")
+            f"只能由人改）｜oracle：{oracle}" if has
+            else f"{len(q)} 块已是最粗（{oracle}）")
+
+
+def a3_oracle(
+    spec: ViewSpec, q: Sequence[frozenset[str]],
+) -> tuple[bool | None, str, int, str]:
+    """`§A3` 的**判定** —— 返回 `(有没有更粗的稳定划分, 说明, 枚举到的候选数, 用的哪条 oracle)`。
+
+    ## 两条 oracle，**按规模选**（2026-10-10 加第二条）
+
+        ① **暴力枚举**（`coarser_stable_exists`）—— 候选数 `≤ MAX_COARSENING_CANDIDATES` 时用。
+           它**一行都不走** `_refine`，是最强的独立性 ⇒ **能跑就跑它**。
+        ② **多项式（签名）** —— 候选数超上限时用。
+           `coarsest_stable_refinement_signature` 是 `csr(P)` 的**第二条实现**
+           （按「可达块签名」分块，而不是按 `E⁻¹` 劈），实测全量上 **0.5 ms**。
+
+    ## ★★ 为什么必须有 ② —— 2026-10-10 全量语料实测
+
+        候选数是 `∏ Bell(组内块数)`：36 项（8 块）**4140** ⇒ 搜得完；
+        **全量（19 块）5.83e12** ⇒ 搜不完 ⇒ ① 只能**报跳过**。
+        而**跳过 ≠ 通过** ⇒ 「视图最粗」这条**承重性质在全量上瞎了**。
+
+    ## ② 的判据与前提取自那条**唯一性**定理
+
+        `Q` **稳定**且 `⊑ P`（调用方已在前面**重算**过这两件 —— 不是信 `§A2` 的结论）
+        ⇒ `csr(P) ⊑ Q`（最粗的定义）⇒
+
+            `Q == csr(P)`  ⟺  **没有更粗的稳定划分**
+
+        而没有稳定性时这个等价**不成立** ⇒ 所以调用方必须在前面挡住不稳定
+        （它会红，且与 `§A2` **同源** —— 那段重叠写在 `a3_coarsest` 的 docstring 里）。
+
+    ⚠️ **不许改成「两块能不能合并」那种局部判据。** 实测反例（三环，
+       `E = {(a,c),(c,b),(b,a)}`、`P = {U}`）：`{{a},{b},{c}}` 里**任意两块合并都不稳定**，
+       而**三块合成一块稳定** ⇒ 局部判据会把「有更粗的」**判成「没有」**（假绿）。
+       见 `run_tests.test_views` 的那条对照。
+    """
+    n_cand = n_coarsening_candidates(spec, q)
+    if n_cand <= MAX_COARSENING_CANDIDATES:
+        has, why, seen = coarser_stable_exists(spec, q)
+        tag = f"暴力枚举（{seen} 个粗化，上限 {MAX_COARSENING_CANDIDATES}）"
+        if has is None:
+            return None, why, seen, tag
+        return has, why, seen, tag
+    q_star = coarsest_stable_refinement_signature(spec)
+    same = partition_of(q) == partition_of(q_star)
+    why = (f"`Q` 逐块等于**独立**算出的最粗稳定细化（{len(q_star)} 块）" if same
+           else f"独立算出的最粗稳定细化**更粗**（{len(q)} ⇒ {len(q_star)} 块）")
+    tag = (f"**多项式（签名）**—— 候选数 {n_cand} 超上限 "
+           f"{MAX_COARSENING_CANDIDATES}，暴力枚举跑不完；"
+           f"改用独立实现，实测 0.5 ms")
+    return (not same), why, n_cand, tag
 
 
 # --- 度量（不进退出码） --------------------------------------------------------
@@ -603,6 +658,61 @@ SUMMARIES: dict[str, Callable] = {
 }
 
 
+#: `holistic` 见证的**构造法**注册表 —— `名 → 在语料上找出 (A, B) 的函数`。
+#
+#  ★★ 为什么不是「声明里写死 A / B」（2026-10-10 改，全量语料实测逼出来的）
+#
+#      写死的 A/B 是**语料相关**的：`摘要` 是 `(计数, 和)`，而「和」**随语料变**。
+#      实测：`gen_view_spec --write` 换语料时按既定规矩把 `读数` **逐字照抄**，
+#      于是那份**为 36 项挑的**见证被搬到 3907 项上 ⇒ 两边 `摘要` 不再相同 ⇒ `§A4` 红。
+#      ⇒ 根因不是「那两条声称错了」（**实测是对的**：同摘要异读数确实存在），
+#        而是**见证被写死在一个语料上**。
+#      ⇒ 改成**构造法**：`§A4` 在**当前**语料上搜一对「同摘要、异读数」。
+#        这样声明**与语料无关**，而证据**每次都是当场量出来的**。
+#
+#  ⚠️ 搜不到 ⇒ **红**（不是跳过）：声称是 holistic，而这份语料上拿不出支撑
+#     ⇒ 要么人补一个显式见证，要么把类别降成 `algebraic`（设计稿 §10 停止条件 2）。
+
+def witness_same_digest_diff_reading(f: Callable, sf: Callable, ctx: "ReadingCtx",
+                                     ks: Sequence[int] = (2, 3, 4),
+                                     ) -> tuple[frozenset[str], frozenset[str]] | None:
+    """在语料上搜一对 `(A, B)`：`摘要` 相同，而**读数不同**。
+
+    ## 为什么这个搜索是**可判**的（不用枚举全部子集）
+
+        只要一对。⇒ 按 `摘要` 分桶，**每桶只留第一个**：
+            再来一个同摘要的候选，若读数**不同** ⇒ **立刻命中**
+            读数相同 ⇒ 不留（留第一个就够）⇒ 内存 `O(桶数)`，不是 `O(子集数)`
+
+    ⚠️ **`k` 从 2 起**（2 元集合里「中位数 = 均值」由和决定 ⇒ 它对 `计数与和`
+       必然**搜不到** —— 那一档自动跳过，由更大的 `k` 接手）。
+    ⚠️ **顺序完全确定**（`sorted(universe)` + `combinations` 的字典序）
+       ⇒ 同一份语料上**每次搜到同一对**，输出逐字可复现（§8.2）。
+    ⚠️ **`universe` 从 `ctx.value_of` 的键取**（那就是 `spec.universe`）——
+       这样构造法**不必**多接一个 `spec` 参数，`§A4` 的调用点一处不改。
+    """
+    universe = sorted(ctx.value_of)
+    for k in ks:
+        if k > len(universe):
+            continue
+        seen: dict[Any, tuple[Any, frozenset[str]]] = {}
+        for combo in itertools.combinations(universe, k):
+            S = frozenset(combo)
+            dg = sf(S, ctx)
+            val = f(S, ctx)
+            prev = seen.get(dg)
+            if prev is None:
+                seen[dg] = (val, S)
+            elif not _close(prev[0], val):
+                return prev[1], S
+    return None
+
+
+WITNESS_BUILDERS: dict[str, Callable[..., Any]] = {
+    "同摘要异读数": witness_same_digest_diff_reading,
+}
+
+
 def _close(a: Any, b: Any, tol: float = 1e-9) -> bool:
     """读数相等吗 —— 数是**容差比**，别的一律 `==`。
 
@@ -668,10 +778,28 @@ def judge_reading(
             return False, (f"`{name}` 声称 holistic，却没附可用的**见证摘要**"
                            f"（{sname!r}；只有 {sorted(SUMMARIES)}）")
         sf = SUMMARIES[str(sname)]
-        A = frozenset(w.get("A") or ())
-        B = frozenset(w.get("B") or ())
-        if not A or not B:
-            return False, f"`{name}` 声称 holistic，却没附见证的**两组方向**（A / B）"
+        # ★ 见证有**两种**给法（2026-10-10）：
+        #     构造法 `{摘要, 构造}`  —— **与语料无关**，`§A4` 当场在语料上搜一对
+        #     显式   `{摘要, A, B}` —— 人挑的一对，**绑语料**（换语料必须重挑）
+        builder = w.get("构造")
+        if builder is not None:
+            if builder not in WITNESS_BUILDERS:
+                return False, (f"`{name}` 的见证构造法 {builder!r} 不在注册表里"
+                               f"（只有 {sorted(WITNESS_BUILDERS)}）")
+            found = WITNESS_BUILDERS[str(builder)](f, sf, ctx)
+            if found is None:
+                return False, (
+                    f"见证**搜不到**：这份语料上没有任何一对方向集合，`{sname}` 相同"
+                    f"而读数不同（搜到 4 元为止）⇒ 「holistic」**没有支撑** —— "
+                    f"要么补一个显式见证（`A` / `B`），要么把类别降成 `algebraic`"
+                    f"（设计稿 §10 停止条件 2）")
+            A, B = found
+        else:
+            A = frozenset(w.get("A") or ())
+            B = frozenset(w.get("B") or ())
+            if not A or not B:
+                return False, (f"`{name}` 声称 holistic，却既没给**构造法**（`构造`）"
+                               f"也没给见证的**两组方向**（`A` / `B`）")
         unknown = sorted((A | B) - set(ctx.value_of))[:3]
         if unknown:
             return False, f"见证里的方向不在 `universe` 里：{unknown}"
@@ -679,11 +807,15 @@ def judge_reading(
         fa, fb = f(A, ctx), f(B, ctx)
         if sa != sb:
             return False, (f"见证**不成立**：`{sname}` 在 A / B 上本来就不同"
-                           f"（{sa} vs {sb}）⇒ 它证明不了「这个摘要不够用」")
+                           f"（{sa} vs {sb}）⇒ 它证明不了「这个摘要不够用」"
+                           + ("　⚠️ 像是**从别的语料搬来的** —— 显式见证绑语料，"
+                              "建议改成构造法 `同摘要异读数`" if builder is None else ""))
         if _close(fa, fb):
             return False, (f"见证**不成立**：`{sname}` 相同（{sa}）而读数**也相同**"
                            f"（{fa}）⇒ 这个摘要**够用** ⇒ 「holistic」没有支撑")
-        return True, (f"见证成立：`{sname}` 两边都是 {sa}，而读数 {fa} ≠ {fb} "
+        how = (f"构造法 `{builder}` 当场搜到" if builder is not None else "声明的显式一对")
+        return True, (f"见证成立（{how}）：A={sorted(A)} B={sorted(B)}；"
+                      f"`{sname}` 两边都是 {sa}，而读数 {fa} ≠ {fb} "
                       f"⇒ 定长摘要分不开它们 ⇒ 「无常数额摘要」有支撑")
 
     return False, f"未知类别 {category!r}（只认 distributive / algebraic / holistic）"
