@@ -3642,6 +3642,93 @@ def _spec_mechanical_mismatch(doc: dict, which: str, nodes, edges) -> list[str]:
             for k in MECHANICAL if doc.get(k) != spec[k]]
 
 
+def test_spec_paths() -> None:
+    """**外生声明的落点与查找** —— `spec_paths` / `spec_target` / `load_spec_file`。
+
+    ## 守的是什么
+
+    `view_spec.json` 里的 `语料` 指纹把它**绑死在一份语料**上。文件只有一份时，
+    **另一份语料的 `§A`/`§M`/`§T` 三组必然整组跳过** —— 2026-10-10 全量跑实测：
+    96 条断言里 **21 条**跳过，而 `T1`–`T7` 正是 v0.1.15 的卖点 ⇒
+    **「全量闸门通过」不覆盖那两层**。
+
+    ## 为什么这几条必须有已知答案
+
+    「跳过」与「没声明」在输出里长得像，而「找对了那份」与「只是找到了某一份」
+    **也长得像** ⇒ 必须造**两份不同的声明**，让它们给出**不同的**答案。
+
+    ⚠️ 仓内那份（`ldv/checks/view_spec.json`）是**真文件**，测试里用
+       `mock.patch.object` 把它换到临时目录，**不碰仓库里那份**。
+    """
+    import json as _json
+    from unittest import mock
+
+    from ldv.checks import abstraction as _ab
+    from ldv.tools.gen_view_spec import spec_target
+
+    # ① `spec_paths` 的顺序：**语料旁优先、仓内兜底**
+    inside = _ab.VIEW_SPEC_PATH.parent.parent / "corpus" / "nodes"        # ldv/corpus/nodes
+    outside = Path(tempfile.gettempdir()) / "_ldv_probe_corpus" / "nodes"  # 包外
+    got = _ab.spec_paths(inside)
+    ok("① [S1] `spec_paths` 对**包内**语料：仍以仓内那份为准（顺序 = 语料旁、仓内）",
+       len(got) == 2 and got[-1] == _ab.VIEW_SPEC_PATH,
+       f"{[str(g) for g in got]}")
+    got2 = _ab.spec_paths(outside)
+    ok("① [S2] `spec_paths` 对**包外**语料：语料旁那份排在**前**（优先级）",
+       got2[0] == outside.parent / "view_spec.json" and got2[-1] == _ab.VIEW_SPEC_PATH,
+       f"{[str(g) for g in got2]}")
+    ok("① [S3] `spec_paths(None)`：只给仓内那份（不知道语料时只有兜底）",
+       _ab.spec_paths(None) == (_ab.VIEW_SPEC_PATH,),
+       f"{[str(g) for g in _ab.spec_paths(None)]}")
+
+    # ② `spec_target` 的落点：**包外 ⇒ 语料旁；包内 ⇒ 仓内**（不许按「谁存在」定）
+    ok("② [S4] `spec_target` 包外语料 ⇒ 落点**语料旁**（与 `spec_paths` 同源）",
+       spec_target(outside) == outside.parent / "view_spec.json",
+       str(spec_target(outside)))
+    ok("② [S5] `spec_target` 包内语料 ⇒ 落点**仓内那份**（36 项那份不许被写掉）",
+       spec_target(inside) == _ab.VIEW_SPEC_PATH and spec_target(None) == _ab.VIEW_SPEC_PATH,
+       f"{spec_target(inside)}")
+
+    # ③ `load_spec_file`：**匹配当前语料的那份优先**（两份都给已知答案）
+    with tempfile.TemporaryDirectory() as td:
+        t = Path(td)
+        corp = t / "data" / "corp" / "nodes"
+        corp.mkdir(parents=True)
+        beside = corp.parent / "view_spec.json"
+        inside_fake = t / "inside_view_spec.json"
+        A, B = {"项数": 7, "边数": 9}, {"项数": 8, "边数": 10}
+        beside.write_text(_json.dumps({"语料": A, "_who": "beside"}), encoding="utf-8")
+        inside_fake.write_text(_json.dumps({"语料": B, "_who": "inside"}), encoding="utf-8")
+        with mock.patch.object(_ab, "VIEW_SPEC_PATH", inside_fake):
+            ok("③ [S6] 语料旁那份**匹配** ⇒ 选它（不是仓内那份）",
+               _ab.load_spec_file(corp, A).get("_who") == "beside",
+               str(_ab.load_spec_file(corp, A)))
+            ok("③ [S7] 仓内那份**匹配** ⇒ 选它（语料旁那份不匹配就不许抢）",
+               _ab.load_spec_file(corp, B).get("_who") == "inside",
+               str(_ab.load_spec_file(corp, B)))
+            # ⚠️ 都不匹配 ⇒ 返回**第一份存在的**（= 语料旁那份），
+            #    好让上层印出「声明是在另一份语料上写的（它写的 vs 现在）」，
+            #    而不是笼统一句「没声明」—— 前者能让人去修，后者不能。
+            ok("③ [S8] 两份都**不匹配** ⇒ 返回第一份存在的（供上层报准指纹，不报「没声明」）",
+               _ab.load_spec_file(corp, {"项数": 99, "边数": 99}).get("_who") == "beside",
+               str(_ab.load_spec_file(corp, {"项数": 99, "边数": 99})))
+            # 两份都不在 ⇒ `{}`（上层报「未声明」）
+            inside_fake.unlink()
+            beside.unlink()
+            ok("③ [S9] 两份都**不存在** ⇒ `{}`（上层报「未声明」，与「不匹配」分得开）",
+               _ab.load_spec_file(corp, A) == {},
+               str(_ab.load_spec_file(corp, A)))
+            # 语法错 ⇒ **抛**（写坏的声明与没写的声明必须分得开）⇒ 不许被静默吞掉
+            beside.write_text("{ 这不是 json", encoding="utf-8")
+            raised = False
+            try:
+                _ab.load_spec_file(corp, A)
+            except ValueError:
+                raised = True
+            ok("③ [S10] 声明**语法错** ⇒ **抛**（不许静默跳到下一份 ⇒ 否则「坏了」像「没写」）",
+               raised, "没抛")
+
+
 def test_views() -> None:
     """流程 E · 抽象层 —— `core/views.py` 的算法 + `checks/abstraction.py` 的七条判据。
 
@@ -4621,8 +4708,8 @@ def main() -> int:
                test_b3_reduction_premise, test_reach_cache_premise,
                test_reach_cache_transparency, test_tree_premise,
                test_deletion_path, test_persistence, test_lock_scope,
-               test_query_hit_items, test_views, test_multilevel, test_retriever,
-               test_cli_paths):
+               test_query_hit_items, test_spec_paths, test_views, test_multilevel,
+               test_retriever, test_cli_paths):
         fn()
     total = len(PASS) + len(FAIL)
     for f in FAIL:

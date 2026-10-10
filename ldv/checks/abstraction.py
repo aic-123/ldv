@@ -136,6 +136,39 @@ VIEW_CODES = ("A1", "A2", "A3", "A4", "A5", "A6", "A7")
 #: 它要跟着代码走、进版本库，换了语料或换了方向就该一起改。
 VIEW_SPEC_PATH = Path(__file__).resolve().parent / "view_spec.json"
 
+#: 声明文件的**名字**（两个位置同名，靠所在目录区分）。
+VIEW_SPEC_NAME = VIEW_SPEC_PATH.name
+
+
+def spec_paths(nodes_dir: Path | None = None) -> tuple[Path, ...]:
+    """外生声明的**两个位置**，按优先级：
+
+        ① **语料旁**  `<nodes 的父目录>/view_spec.json` —— 外部语料用
+        ② **仓内**    `ldv/checks/view_spec.json`        —— 仓内默认语料用（原来那一份）
+
+    ## 为什么要按语料找 —— 2026-10-10 的全量跑暴露的
+
+    声明里的 `语料` 指纹把它**绑死在一份语料**上（`spec_for` 拿它比对）。
+    而文件**只有一份** ⇒ 无论写哪一份语料，**另一份的 `§A`/`§M`/`§T` 三组必然整组跳过**
+    —— 实测：全量 3907 项那趟，96 条断言里 **21 条**（`A1`–`A7` / `M0`–`M6` / `T1`–`T7`）
+    因为「声明是 36 项语料上写的」而跳过 ⇒ **「全量闸门通过」不覆盖这两层**。
+
+    ## 为什么放在语料旁 —— 有先例，不是新布局
+
+    `expected_reds.json` 就是这么放的（`test_intake.red_baseline_path`：
+    `nodes_dir.parent / "expected_reds.json"`），理由也印在那里：
+    **外部数据不进仓库，它的读数也不进** ⇒ 它的**声明**同理。
+
+    ⚠️ 路径**不由环境变量决定**：它跟着 `nodes_dir` 走 ⇒ 「跑的是哪份语料」与
+       「读的是哪份声明」**不可能分叉**（`find_corpus` 已经为语料保证了同一件事）。
+    """
+    out: list[Path] = []
+    if nodes_dir is not None:
+        out.append(nodes_dir.parent / VIEW_SPEC_NAME)
+    if VIEW_SPEC_PATH not in out:
+        out.append(VIEW_SPEC_PATH)
+    return tuple(out)
+
 
 # --- 视图对象 -----------------------------------------------------------------
 
@@ -215,10 +248,31 @@ def build_views(kernel: Any, spec: ViewSpec, cover: Callable[[Any], frozenset[st
 
 # --- 外生 spec 的加载 ----------------------------------------------------------
 
-def load_spec_file() -> dict[str, Any]:
-    if not VIEW_SPEC_PATH.is_file():
+def load_spec_file(nodes_dir: Path | None = None,
+                   corpus: dict[str, int] | None = None) -> dict[str, Any]:
+    """读外生声明。**按语料找**（`spec_paths`），并把 `语料` 匹配的那一份优先。
+
+    ## 两条规矩（都为了「跳过」与「坏了」分得开）
+
+        两份都**不存在**        ⇒ 返回 `{}` ⇒ 上层报「**未声明**」（还没人写）
+        有存在的，但**都不匹配**  ⇒ 返回**第一份存在的** ⇒ 上层报
+                                  「声明是在**另一份语料**上写的（{它写的} vs 现在 {现在}）」
+                                  ★ 这样印出来的是**它到底写了哪份语料**，而不是笼统一句「没声明」
+        **有语法错**            ⇒ **抛**（不 catch）—— 写坏的声明与没写的声明必须分得开
+                                  ⇒ 所以**不**为了「跳到下一份」而吞掉异常
+
+    ⚠️ `corpus` 给了才做匹配；不给就只按优先级取第一份（那等于「只找位置、不认语料」，
+       只有调用方明确不需要匹配时才该这么用）。
+    """
+    found = [p for p in spec_paths(nodes_dir) if p.is_file()]
+    if not found:
         return {}
-    return json.loads(VIEW_SPEC_PATH.read_text(encoding="utf-8"))
+    if corpus is not None:
+        for p in found:
+            doc = json.loads(p.read_text(encoding="utf-8"))   # 语法错 ⇒ 抛，见上
+            if doc.get("语料") == corpus:
+                return doc
+    return json.loads(found[0].read_text(encoding="utf-8"))
 
 
 def spec_for(doc: dict[str, Any], which: str, corpus: dict[str, int]) -> tuple[ViewSpec | None, str]:

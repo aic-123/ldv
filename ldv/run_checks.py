@@ -76,6 +76,7 @@ from .checks._fixtures import (
     build_sequence,
     coverage_of,
     equiv_classes,
+    find_corpus,
     keyset_queries,
     label_bearing,
     labels,
@@ -485,7 +486,10 @@ def view_report(loaded, targets: list[str]) -> Report:
     nodes, edges, _ = loaded
     corpus = corpus_fingerprint(nodes, edges)
     rep = Report(plugin="(视图)", expects=VIEW_CODES)
-    doc = load_spec_file()
+    # ★ **按语料找**（`spec_paths`：先看语料旁那份，再落回仓内那份）——
+    #   不传语料的话，全量语料会读到 36 项那份声明 ⇒ `§A`/`§M`/`§T`
+    #   三组**整组跳过**（2026-10-10 全量跑实测：96 条里跳 21 条）。
+    doc = load_spec_file(find_corpus(), corpus)
 
     if not doc:
         _skip_views(rep,
@@ -580,7 +584,10 @@ def multilevel_report(loaded, targets: list[str]) -> Report:
     nodes, edges, _ = loaded
     corpus = corpus_fingerprint(nodes, edges)
     rep = Report(plugin="(L0)", expects=MULTILEVEL_CODES)
-    doc = load_spec_file()
+    # ★ **按语料找**（`spec_paths`：先看语料旁那份，再落回仓内那份）——
+    #   不传语料的话，全量语料会读到 36 项那份声明 ⇒ `§A`/`§M`/`§T`
+    #   三组**整组跳过**（2026-10-10 全量跑实测：96 条里跳 21 条）。
+    doc = load_spec_file(find_corpus(), corpus)
 
     if not doc:
         skip_all(rep, "外生项**未声明**（`view_spec.json` 不在）—— "
@@ -700,7 +707,10 @@ def retrieval_report(loaded, targets: list[str]) -> Report:
     nodes, edges, _ = loaded
     corpus = corpus_fingerprint(nodes, edges)
     rep = Report(plugin="(检索)", expects=RETRIEVER_CODES)
-    doc = load_spec_file()
+    # ★ **按语料找**（`spec_paths`：先看语料旁那份，再落回仓内那份）——
+    #   不传语料的话，全量语料会读到 36 项那份声明 ⇒ `§A`/`§M`/`§T`
+    #   三组**整组跳过**（2026-10-10 全量跑实测：96 条里跳 21 条）。
+    doc = load_spec_file(find_corpus(), corpus)
 
     if not doc:
         skip_retrieval(rep, "外生项**未声明**（`view_spec.json` 不在）—— "

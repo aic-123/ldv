@@ -55,14 +55,39 @@ import json
 import sys
 from pathlib import Path
 
-from ..checks._fixtures import load
-from ..checks.abstraction import VIEW_SPEC_PATH, ViewSpec
+from ..checks._fixtures import find_corpus, load
+from ..checks.abstraction import VIEW_SPEC_NAME, VIEW_SPEC_PATH, ViewSpec, spec_paths
 from ..checks.coverage import corpus_fingerprint
 from ..core.kernel import _did_order
 
 #: 生成器**算**的那三栏 + 照抄的一栏。写在这里，免得 `--write` 时漏栏。
 MECHANICAL = ("语料", "方向", "universe", "partition", "relation")
 CARRIED = ("读数",)
+
+
+def spec_target(nodes_dir: Path | None) -> Path:
+    """`--write` 的落点 —— **外部语料 ⇒ 语料旁；仓内语料 ⇒ 仓内那份**。
+
+    ## 为什么不能靠「哪份文件已存在」来定落点
+
+    **外部语料第一次生成时，语料旁那份还不存在** ⇒ 若按「谁存在写谁」，
+    就会落到仓内那份 ⇒ **把 36 项语料的声明覆盖掉**（那份是仓内默认语料在用的）。
+
+    ⇒ 所以判据是「**语料在哪**」，不是「文件在哪」：
+        语料在 `ldv/` 包内（`corpus/nodes`）  ⇒ `ldv/checks/view_spec.json`（现状，不动）
+        语料在包外（`_data/<名>/nodes`）      ⇒ `<语料父目录>/view_spec.json`（语料旁）
+
+    ⚠️ 与 `spec_paths` 的**查找**顺序同源：查找是「语料旁优先、仓内兜底」，
+       而落点是「按语料归一」。两者一致 ⇒ 「读到的」与「写回的」是同一份。
+    """
+    if nodes_dir is None:
+        return VIEW_SPEC_PATH
+    pkg_root = Path(__file__).resolve().parents[1]          # ldv/
+    try:
+        nodes_dir.resolve().relative_to(pkg_root)
+    except ValueError:
+        return nodes_dir.parent / VIEW_SPEC_NAME            # 包外 ⇒ 语料旁
+    return VIEW_SPEC_PATH
 
 
 def build_spec(which: str, nodes, edges) -> tuple[dict, list[str]]:
@@ -103,7 +128,7 @@ def carry_readings(doc: dict, which: str) -> tuple[list | None, str]:
         有读数且方向相同   ⇒ 照抄，条数报出来
     """
     if not doc:
-        return None, f"`{VIEW_SPEC_PATH.name}` 不在 ⇒ 没有可照抄的 `读数`（要人写）"
+        return None, "两个位置都没有声明文件 ⇒ 没有可照抄的 `读数`（要人写）"
     if doc.get("方向") != which:
         return None, (f"现有文件的 `方向` 是 {doc.get('方向')!r}，本次是 {which!r} "
                       f"⇒ **拒绝照抄 `读数`**（那是另一条方向的声称，搬过来就是替人改声明）")
@@ -174,12 +199,23 @@ def main(argv: list[str]) -> int:
     nodes, edges, _ = loaded
 
     spec, notes = build_spec(which, nodes, edges)
-    old = json.loads(VIEW_SPEC_PATH.read_text(encoding="utf-8")) \
-        if VIEW_SPEC_PATH.is_file() else {}
+
+    # ★ **落点跟着语料走**（与 `spec_paths` 的查找顺序同源）。
+    nodes_dir = find_corpus()
+    target = spec_target(nodes_dir)
+    # `读数` 的**来源**：先看落点那份；落点不在时看另一处 —— `读数` 是**插件**的
+    # 性质声称（`distributive`/`algebraic`/`holistic`），与语料无关；
+    # 而 `carry_readings` 自带「方向不符 ⇒ 拒绝照抄」的保护，所以照抄是安全的。
+    src = target if target.is_file() else next(
+        (q for q in spec_paths(nodes_dir) if q.is_file()), target)
+    old = json.loads(src.read_text(encoding="utf-8")) if src.is_file() else {}
     readings, rnote = carry_readings(old, which)
+    if src != target and src.is_file():
+        rnote += f"（来源：{src}）"
     merged, dropped = merge_spec(old, spec, readings)
 
-    print(f"═══ 生成 `{VIEW_SPEC_PATH.name}` · 方向 {which} ═══")
+    print(f"═══ 生成 `{target.name}` · 方向 {which} ═══")
+    print(f"  落点 {target}")
     print(f"  语料 {spec['语料']}")
     for n in notes:
         print(f"  {n}")
@@ -216,7 +252,7 @@ def main(argv: list[str]) -> int:
         return 1
 
     body = json.dumps(merged, ensure_ascii=False, indent=2) + "\n"
-    raw = VIEW_SPEC_PATH.read_text(encoding="utf-8") if VIEW_SPEC_PATH.is_file() else None
+    raw = target.read_text(encoding="utf-8") if target.is_file() else None
 
     # ★ **内容没变就不动文件**（2026-10-08 加）。
     #
@@ -236,8 +272,8 @@ def main(argv: list[str]) -> int:
             return 0
         # `--reformat`：内容不变但要把排版统一成规范形 —— 显式要求才做。
 
-    VIEW_SPEC_PATH.write_text(body, encoding="utf-8")
-    print(f"\n✔ 已写入 {VIEW_SPEC_PATH}")
+    target.write_text(body, encoding="utf-8")
+    print(f"\n✔ 已写入 {target}")
     print("  ⚠️ 生成器只给了**候选** `P` 与**机械算的** `E`；落盘之后它们就算"
           "**人的声明**了 —— 改它们要走 `--write` + 人复核，"
           "不是让它跟着语料自动漂。")
