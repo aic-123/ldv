@@ -9,10 +9,11 @@
 
 from __future__ import annotations
 
+import copy
 import os
 import random
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 from ..core.kernel import Kernel, Query
 from ..corpus.loader import CorpusError, Node, load_edges, load_nodes
@@ -315,6 +316,73 @@ def build_incremental(build: Any, nodes: dict[str, Node],
     for i in later_ids:
         k.insert(i, all_items[i])
     return k
+
+
+# --- 「同一份装配只建一次」 ---------------------------------------------------
+#
+# 一次 `run_checks --no-probes` 里，**内核建造占了墙钟的绝大部分**，而其中很大一块
+# 是**同一份装配被建了不止一遍** —— 因为每个消费者都要一份**pristine** 的内核。
+#
+# 实测（`snap-email-eu` 1005 项，`outputs/_measure_build_duplication.py`，只包
+# `Kernel.build` / `Kernel.insert` 两个方法，不抄序列）：
+#
+#     调用者                          根次  等价全量建      秒    占墙钟
+#     cli:_assemble                    24      23.76    586.23    55.7%
+#     structure:b15_reproducible         9       9.00    203.09    19.3%
+#     run_checks:batch_kernel           6       6.00     70.11     6.7%
+#     run_checks:maintenance_kernel     3       3.00     65.77     6.3%
+#     structure:b8_invalidation_local   3       3.00     59.42     5.6%
+#     ──────────────────────────────────────────────────────────────
+#     合计                             46      45.89    987.19    93.8%
+#
+# 其中**参数完全相同**的重复：`cli:_assemble` 的 24 次里 **15 次**（`holdout=12`
+# 那一档 —— `CL1`/`CL2`/`CL3`/`CL5`/`CL7` 与 `cli_split_kernel` 的 `_assemble`
+# 入参**逐字相同**，`remove` 只影响建完**之后**挑哪几项待删，不进建造）；
+# `batch_kernel` 的 6 次里 **3 次**（`(视图)` / `(L0)` / `(检索)` 各建一份）。
+#
+# ⇒ 建一次、**每份发一个深拷贝**。实测 `copy.deepcopy(内核)` 是建造的
+#   **0.0046 倍**（0.22 s vs 45.5 s，`outputs/_probe_deepcopy_cost.py`）。
+#
+# ⚠️ **为什么不直接共享同一个对象**：判据跑查询会经 `kernel.query` → `expand`
+#    **就地改内核**（`retriever.py:713` 自注「唯一写动作」），流程 A–E 也改。
+#    共享 = 让后面的消费者拿到一个**已经被前面的消费者改过**的树 —— 而那正是
+#    本仓库的中心反模式（退化与正常长得一样）。
+#    实测形状：`cli d` 单独跑**必须红**，理由就是「A 没先跑 ⇒ 没有带权记录」；
+#    共享内核会让这条护栏**静默变绿**。**必须拷。**
+#
+# ⚠️ 判据（能红的那条）在 `run_tests.test_reusable_build` —— 它验的是
+#    ① 拷贝与**现建**的那份逐字同构；② 拷贝**不是**同一个对象（改一个不动另一个）。
+#    ② 才是这条缓存真正危险的地方，所以它单独占一条断言。
+
+#: 缓存：`tag -> (nodes, edges, pristine)`。
+#: ⚠️ **同时持有 `nodes` / `edges` 的引用**，取用时按 `is` 比对 —— 这样 `id()` 被
+#:    回收复用**不会**造成「拿错语料的那份」。同一次 `main()` 里 `loaded` 只有一份，
+#:    所以正常路径上恒命中；换一份语料（新对象）⇒ 恒未命中 ⇒ 重算。
+_BUILD_CACHE: dict[tuple, tuple] = {}
+
+
+def reusable_build(tag: tuple, nodes: Any, edges: Any,
+                   produce: Callable[[], tuple]) -> tuple:
+    """`produce()` 建一次；之后每次返回一份**新的深拷贝**。
+
+    `tag` 必须把「哪份装配」说全（方向 + 初始项集的选择），否则两种装配会撞键。
+    """
+    ent = _BUILD_CACHE.get(tag)
+    if ent is not None and ent[0] is nodes and ent[1] is edges:
+        return copy.deepcopy(ent[2])
+    res = produce()
+    _BUILD_CACHE[tag] = (nodes, edges, copy.deepcopy(res))
+    return res
+
+
+def build_cache_stats() -> dict:
+    """读数：缓存里有几个键（`run_tests` 用它钉住「确实命中过」）。"""
+    return {"键数": len(_BUILD_CACHE), "键": sorted(map(str, _BUILD_CACHE))}
+
+
+def clear_build_cache() -> None:
+    """清空 —— 只在测试里用（`main()` 一趟一个进程，不必清）。"""
+    _BUILD_CACHE.clear()
 
 
 # --- 「不可分等价类」—— `B17` 的**外生** oracle ------------------------------

@@ -3669,6 +3669,127 @@ def test_versioning() -> None:
        big.last_replay == big.versions, f"重放 {big.last_replay} / 版本 {big.versions}")
 
 
+def test_reusable_build() -> None:
+    """★ 「同一份装配只建一次，每个消费者各拿一份**深拷贝**」——
+    `_fixtures.reusable_build`。
+
+    ## 为什么有这条缓存
+
+    一次 `run_checks --no-probes` 里**内核建造占了墙钟的绝大部分**，而其中一大块是
+    **参数完全相同的装配被建了不止一遍**（实测 `snap-email-eu` 1005 项，
+    `outputs/_measure_build_duplication.py`）：
+
+        cli:_assemble       24 次里 **15 次**入参逐字相同（`holdout=12` 那一档；
+                            `only=` **不进装配**，`remove` 只影响建完之后挑哪几项待删）
+        batch_kernel         6 次里 **3 次**（`(视图)`/`(L0)`/`(检索)` 各建一份）
+
+    而 `copy.deepcopy(内核)` 实测是建造的 **0.0046 倍**（0.22 s vs 45.5 s）
+    ⇒ 建一次、发拷贝。
+
+    ## ⚠️ 这条缓存的危险处**不是慢，是共享**
+
+    判据跑查询会经 `kernel.query` → `expand` **就地改内核**（`retriever.py:713`
+    自注「唯一写动作」），流程 A–E 也改。而 `cli d`（`CL3`）**必须红**的理由正是
+    「A 没先跑 ⇒ 没有带权记录」—— **共享会让那条护栏静默变绿**。
+    所以「拷贝**不是**同一个对象」单独占一条断言，不并进「指纹相同」。
+
+        `RB1`  拷贝 ≡ **现建**的那份（指纹逐字相同）⇒ 缓存没引入结构差异
+        `RB2`  拷贝**不是**同一个对象：改一个，另一个**一个字节都不动**
+        `RB3`  缓存**真的命中**：第二次调用不产生新的建造
+        `RB4`  消费者改过自己那份**之后**再取，拿到的**仍是 pristine**
+               —— 这一条守的是「缓存里存的是**拷贝**，不是**发出去的那个对象**」
+        `RB·对照` 把 `deepcopy` 去掉 ⇒ `RB2` **必须红**（两次拿到同一个对象）
+    """
+    from ldv.checks import _fixtures as F
+    from ldv.core import persist as P
+    from ldv.core.kernel import Kernel
+
+    loaded = F.load()
+    if loaded is None:
+        PASS.append("装配缓存（跳过：语料目录不在）")
+        return
+    nodes, edges, _ = loaded
+    all_items = F.items(nodes)
+    ids = sorted(all_items)
+    probe_item = dict(all_items[ids[0]])
+
+    def produce():
+        return F.build_keyset(nodes)
+
+    # --- 建造计数：证明缓存**真的**省掉了一次建 -------------------------------
+    counts = {"n": 0}
+    orig_build = Kernel.build
+
+    def counted(self, *a, **k):
+        counts["n"] += 1
+        return orig_build(self, *a, **k)
+
+    F.clear_build_cache()
+    Kernel.build = counted
+    try:
+        tag = ("test", "keyset")
+        k1, _p1 = F.reusable_build(tag, nodes, edges, produce)
+        n_first = counts["n"]
+        k2, _p2 = F.reusable_build(tag, nodes, edges, produce)
+        n_second = counts["n"]
+        k_fresh, _pf = F.build_keyset(nodes)          # 参照：**不走缓存**
+    finally:
+        Kernel.build = orig_build
+
+    ok("★ [RB1] 拷贝与**现建**的那份**指纹逐字相同**（缓存没引入结构差异）",
+       P._fingerprint(k2) == P._fingerprint(k_fresh),
+       "指纹相同" if P._fingerprint(k2) == P._fingerprint(k_fresh)
+       else "**对不上** —— 缓存发出的是另一份结构")
+
+    # --- RB2：改一个，另一个不许动 -------------------------------------------
+    fp1_before = P._fingerprint(k1)
+    fp2_before = P._fingerprint(k2)
+    k1.insert("__probe__", probe_item)
+    ok("★ [RB1·前提] 那次改动**真的**改了 `k1` —— 否则下面那条恒真、测不出东西",
+       P._fingerprint(k1) != fp1_before, f"插入前后指纹{'变了' if P._fingerprint(k1) != fp1_before else '**没变**'}")
+
+    ok("★ [RB2] 改 `k1` ⇒ `k2` **一个字节都不动**（两份是独立对象，不是同一份）",
+       k1 is not k2 and P._fingerprint(k2) == fp2_before,
+       f"`k1 is k2` = {k1 is k2}；k2 指纹{'没动' if P._fingerprint(k2) == fp2_before else '**跟着变了**'}")
+
+    ok("★ [RB3] 缓存**真的命中**：第二次调用**不产生新的建造**",
+       n_second == n_first, f"第一次后 {n_first} 次建｜第二次后 {n_second} 次建")
+
+    # --- RB4：有人改过之后**再取**，拿到的仍必须是 pristine --------------------
+    # ⚠️ 这一条守的是「缓存里存的是**拷贝**，不是**发出去的那个对象**」。
+    #    只测 RB1/RB2 抓不到它：那两条都在「还没有人改过」的时刻取样。
+    k3, _p3 = F.reusable_build(tag, nodes, edges, produce)
+    ok("★ [RB4] 消费者改过自己那份**之后**再取 ⇒ 拿到的**仍是 pristine**"
+       "（⇒ 缓存里存的是拷贝，不是发出去的那个对象）",
+       P._fingerprint(k3) == P._fingerprint(k_fresh),
+       "指纹相同" if P._fingerprint(k3) == P._fingerprint(k_fresh)
+       else "**被污染了** —— 缓存存的是发出去的那个对象")
+
+    # --- 对照：把 `deepcopy` 去掉 ⇒ RB2 必须红 -------------------------------
+    def shared(tag, nodes, edges, produce_):        # noqa: ANN001 —— 故意是错的那版
+        ent = F._BUILD_CACHE.get(tag)
+        if ent is not None and ent[0] is nodes and ent[1] is edges:
+            return ent[2]                            # ← **没有** deepcopy
+        res = produce_()
+        F._BUILD_CACHE[tag] = (nodes, edges, res)
+        return res
+
+    F.clear_build_cache()
+    s1, _ = shared(("test", "shared"), nodes, edges, produce)
+    s2, _ = shared(("test", "shared"), nodes, edges, produce)
+    ok("★ [RB·对照] 去掉 `deepcopy` ⇒ 两次拿到**同一个对象** ⇒ `RB2` **必须红**",
+       s1 is s2, f"`s1 is s2` = {s1 is s2}")
+
+    fp_s2 = P._fingerprint(s2)
+    s1.insert("__probe2__", probe_item)
+    ok("★ [RB·对照] 共享版：改 `s1` ⇒ **`s2` 跟着变** —— 这就是「必须拷」的理由"
+       "（`cli d` 那条护栏正是这样被静默拆掉的）",
+       P._fingerprint(s2) != fp_s2,
+       f"`s2` 指纹{'跟着变了' if P._fingerprint(s2) != fp_s2 else '**没变**（对照没生效）'}")
+
+    F.clear_build_cache()
+
+
 def test_lock_scope() -> None:
     """★ `§10.2 D` 的 **P8**：锁沿**路径**局部化。
 
@@ -5259,7 +5380,8 @@ def main() -> int:
                test_cover_leak_baseline, test_cover_oracle_transparency,
                test_b3_reduction_premise, test_reach_cache_premise,
                test_reach_cache_transparency, test_tree_premise,
-               test_deletion_path, test_persistence, test_versioning, test_lock_scope,
+               test_deletion_path, test_persistence, test_versioning,
+               test_reusable_build, test_lock_scope,
                test_query_hit_items, test_spec_paths, test_maintain,
                test_view_oracles, test_influence_channels, test_views,
                test_multilevel, test_retriever, test_cli_paths):

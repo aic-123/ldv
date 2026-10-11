@@ -87,6 +87,7 @@ from .checks._fixtures import (
     make_reach_root,
     make_sequence_root,
     reach_queries,
+    reusable_build,
 )
 from .core.tri import Tri
 from .checks._framework import Report
@@ -189,18 +190,33 @@ MAINT_INIT = 6
 
 
 def batch_kernel(which: str, nodes, edges):
-    """一次建完的内核 + 插件 + 查询集 + 「只建根」的构造器。"""
+    """一次建完的内核 + 插件 + 查询集 + 「只建根」的构造器。
+
+    ★ **同一份装配只建一次**（2026-10-11）：本函数对同一个 `which` 会被调 **4 次**
+    —— `run_one` 一次，`(视图)` / `(L0)` / `(检索)` 各一次。四次是**同一份装配**
+    ⇒ 后三次是纯重复（实测 6 次里 3 次）。
+
+    ⚠️ **不能返回同一个对象**：`run_one` 的判据跑查询会经 `kernel.query` → `expand`
+       **就地改内核**。共享 = 让 `(视图)` 拿到一个已经被 `run_one` 展开过的树。
+       ⇒ 建一次，每个调用者各拿一份**深拷贝**（`_fixtures.reusable_build`）。
+    """
+    if which not in ("keyset", "reach", "sequence"):
+        raise ValueError(which)
+
+    def _produce() -> tuple:
+        if which == "keyset":
+            return build_keyset(nodes)
+        if which == "reach":
+            return build_reach(nodes, edges)
+        return build_sequence(nodes, edges)
+
+    kernel, plugin = reusable_build(("batch", which), nodes, edges, _produce)
     if which == "keyset":
-        kernel, plugin = build_keyset(nodes)
         return kernel, plugin, keyset_queries(nodes), make_keyset_root(nodes)
     if which == "reach":
-        kernel, plugin = build_reach(nodes, edges)
         return (kernel, plugin, reach_queries(nodes, edges), make_reach_root(nodes, edges))
-    if which == "sequence":
-        kernel, plugin = build_sequence(nodes, edges)
-        # 同样用「外生挑的项集合」当 ground truth
-        return (kernel, plugin, reach_queries(nodes, edges), make_sequence_root(nodes, edges))
-    raise ValueError(which)
+    # 同样用「外生挑的项集合」当 ground truth
+    return (kernel, plugin, reach_queries(nodes, edges), make_sequence_root(nodes, edges))
 
 
 def maintenance_kernel(which: str, nodes, edges):
