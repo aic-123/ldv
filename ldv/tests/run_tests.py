@@ -3800,6 +3800,9 @@ def test_lock_scope() -> None:
       3. **与扇出无关**（对照：扇出锁的集合**随扇出变** ⇒ 红）
       4. ★ **互斥**（barrier 探针）：真锁绿、**空锁红**（已知答案）
       5. ★ **对照**：全局锁 / 扇出锁 ⇒ 判据 1、2 红（真耦合，见下）
+      6. ★ **反向判据**：`LockedKernel` 与 `Kernel` 跑出来**逐字相同**（加锁不改语义）
+      7. ★ **两处 O(1) 短临界区的链路**（2026-10-11 补）：`_new` 真的进过 `_alloc`、
+         `_LockedLedger.append` 真的进过 `_lk`；两条各配一个「错一处」对照 ⇒ 计数 0 ⇒ 红
     """
     from ldv.checks._fixtures import load
     from ldv.core.kernel import Kernel as _K
@@ -3916,6 +3919,80 @@ def test_lock_scope() -> None:
        == [(d.did, d.rank, d.payload, d.parent) for d in k0.all_directions()]
        and k.stats() == k0.stats(),
        f"方向 {len(k.all_directions())} vs {len(k0.all_directions())}")
+
+    # --- ⑦ 两处 O(1) 短临界区：**链路**验过（2026-10-11 补） -------------------
+    #
+    # 判据 ①②③ 守的是**作用域**（锥），探针 ④ 守的是 `PathLocks` 的**互斥**。
+    # 而 `core/locking.py` 说「结构锁之外还有两处 O(1) 短临界区，它们**不在锥上**」——
+    # 那两处（`LockedKernel._alloc` 管编号分配、`_LockedLedger._lk` 管账本只追加）
+    # **原来没有任何判据**。
+    #
+    # ⚠️ 为什么**不**用 barrier 探针测它们：那两处各是一把**普通 `threading.Lock`**，
+    #    探「它互斥吗」是**同义反复**（`threading.Lock` 的定义就是互斥）。
+    #    会**静默退化**的是**链路** —— 把 `_new` 里那句 `with self._alloc`、
+    #    或 `_LockedLedger.append` 里那句 `with self._lk` 删掉，**锁对象还在**，
+    #    于是作用域判据 ①②③ 与互斥探针 ④ **全都照样绿**。
+    #    ⇒ 判据 = **计数锁**：把锁换成一个会记账的等价物，跑一遍真装配，
+    #      要求它**真的被进过**；每条各配一个「错一处」的对照 ⇒ 计数 0 ⇒ 红。
+    from ldv.core.direction import Ledger as _Ledger
+
+    class _Counting:
+        """等价于 `threading.Lock`，外加**进过几次**。"""
+        __slots__ = ("_lk", "n")
+
+        def __init__(self) -> None:
+            import threading as _th
+            self._lk = _th.Lock()
+            self.n = 0
+
+        def __enter__(self):  # type: ignore[no-untyped-def]
+            self.n += 1
+            return self._lk.__enter__()
+
+        def __exit__(self, *exc):  # type: ignore[no-untyped-def]
+            return self._lk.__exit__(*exc)
+
+    class _NoAlloc(LockedKernel):
+        """**错一处**：编号分配不进临界区（`_new` 直接走基类）。"""
+
+        def _new(self, **kw):  # type: ignore[no-untyped-def]
+            return _K._new(self, **kw)
+
+    class _BareLedger(_Ledger):
+        """**错一处**：账本只追加，但**不进临界区**（没有 `_lk`）。"""
+
+    def _probe(mk):  # type: ignore[no-untyped-def]
+        """装计数锁、跑一遍真装配，读**两处各被进过几次**。"""
+        kk = mk()
+        kk._alloc = _Counting()
+        if hasattr(kk.ledger, "_lk"):
+            kk.ledger._lk = _Counting()
+        plug = KeysetPlugin()
+        kk.build(plug.merge([]))
+        for nid in ids:
+            kk.insert(nid)
+        return (getattr(getattr(kk, "_alloc", None), "n", 0),
+                getattr(getattr(kk.ledger, "_lk", None), "n", 0))
+
+    a_ok, l_ok = _probe(lambda: LockedKernel(KeysetPlugin(), items(nodes)))
+    ok("★ [P8] **两处 O(1) 短临界区：链路验过**（不是只写在文档里）—— "
+       "`_new` 真的进过 `_alloc`、`_LockedLedger.append` 真的进过 `_lk`",
+       a_ok > 0 and l_ok > 0, f"_alloc 进过 {a_ok} 次｜_lk 进过 {l_ok} 次")
+
+    a_bad, _ = _probe(lambda: _NoAlloc(KeysetPlugin(), items(nodes)))
+    ok("★★ [P8] **已知答案对照**：`_new` **绕过** `_alloc` 的版本 ⇒ 同一条判据红",
+       a_bad == 0, f"_alloc 进过 {a_bad} 次")
+
+    def _bare() -> LockedKernel:
+        kk = LockedKernel(KeysetPlugin(), items(nodes))
+        kk.ledger = _BareLedger()
+        return kk
+
+    _, l_bad = _probe(_bare)
+    ok("★★ [P8] **已知答案对照**：账本**不进临界区**的版本 ⇒ 同一条判据红",
+       l_bad == 0, f"_lk 进过 {l_bad} 次")
+    print(f"    · 短临界区链路：`_alloc` 进过 {a_ok} 次｜`_lk` 进过 {l_ok} 次"
+          f"（对照：`_new` 绕过 `_alloc` ⇒ {a_bad}｜账本不进临界区 ⇒ {l_bad}）")
 
 
 def _spec_mechanical_mismatch(doc: dict, which: str, nodes, edges) -> list[str]:
