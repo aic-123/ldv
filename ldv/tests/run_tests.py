@@ -3558,6 +3558,117 @@ def _mutex_broken(locks, key: str = "D0", timeout: float = 0.4) -> bool:
     return bool(both)
 
 
+def test_versioning() -> None:
+    """★ `§10.2 D` 决策表那一行「每隔 k 版存一份（混合）」——
+    访问版本 i 是 **O(i/k + k)**，不是 **Θ(i)**。
+
+    四条判据，每条各配一个**已知答案**的对照（对照实现见 `core/versioning.py` 末尾）：
+
+      `V1` **重放等价**：∀i，`at(i)` 与「从空内核纯重放 `_ops[:i]`」**指纹逐字相同**。
+           快照是**缓存**、账是**真相** ⇒ 缓存漂移 ⇒ 红。
+           对照 `_StaleSnapshot`（快照存错一处）⇒ 必须红。
+      `V2` **账不落后**：`at(最新)` 等于**当前内核** ⇒ 账完整（没漏记变更）。
+           对照 `_DroppedOp`（执行了但没进账）⇒ 必须红。
+      `V3` **快照生效**：用默认 `every`，`max_i 重放步数 < every` ⇒ 代价**与 i 无关**。
+           对照 `_NoSnapshots`（不存快照）⇒ 必须红。
+      `V4` **反向判据（防恒真）**：`every = 1` ⇒ 重放恒 0；`every > 版本数` ⇒
+           重放 = 版本数。⇒ 证明 `V3` 的上界**不是恒真**（配置一变它就破）。
+
+    ⚠️ `V1` 与 `V3` 必须**分开**：`_NoSnapshots` 在 `V1` 上**一个字节都不差**，
+       只在 `V3` 上红 —— 「对」与「快」是两件事，合成一条会互相掩护。
+    """
+    from ldv.checks._fixtures import items as items_of
+    from ldv.checks._fixtures import load
+    from ldv.core import persist as P
+    from ldv.core.versioning import (
+        DEFAULT_EVERY, VersionStore, replay_ops,
+        _DroppedOp, _NoSnapshots, _StaleSnapshot,
+    )
+    from ldv.plugins.keyset import KeysetPlugin
+
+    loaded = load()
+    if loaded is None:
+        PASS.append("版本访问（跳过：语料目录不在）")
+        return
+    nodes, _edges, _ = loaded
+    all_items = items_of(nodes)
+    ids = sorted(all_items)
+    known = {i: all_items[i] for i in ids[:6]}
+
+    def scenario(cls, every):
+        """一条**混着 build / insert / 后添**的操作序列 —— 版本数与 `every`
+        都要够大，否则 `V3` 测不出东西（`versions ≤ every` 时上界恒成立）。"""
+        plug = KeysetPlugin()
+        st = cls(plug, known, every=every)
+        st.build(plug.merge([]))
+        for i in ids[:6]:
+            st.insert(i)
+        for i in ids[6:12]:
+            st.insert(i, all_items[i])
+        return st, plug
+
+    def replays(st):
+        out = []
+        for i in range(st.versions + 1):
+            st.at(i)
+            out.append(st.last_replay)
+        return out
+
+    def mismatches(st, plug):
+        return [i for i in range(st.versions + 1)
+                if P._fingerprint(st.at(i))
+                != P._fingerprint(replay_ops(plug, known, st._ops, i))]
+
+    # --- 基线 ---------------------------------------------------------------
+    st, plug = scenario(VersionStore, DEFAULT_EVERY)
+    ok("★ [V3·前提] 版本数 > every —— 否则「重放步数 < every」**恒真**，这条测不出东西",
+       st.versions > DEFAULT_EVERY, f"versions {st.versions} / every {DEFAULT_EVERY}")
+
+    bad = mismatches(st, plug)
+    ok("★ [V1] `at(i)` 与「从空内核重放 `_ops[:i]`」指纹**逐字相同**"
+       f"（{st.versions + 1} 个版本全对 ⇒ 快照没漂移）", not bad, f"不符 {bad[:5]}")
+
+    ok("★ [V2] `at(最新)` 等于**当前内核**（账完整记下了每一次变更）",
+       P._fingerprint(st.at(st.versions)) == P._fingerprint(st.kernel),
+       f"版本 {st.versions}｜快照点 {st.snapshot_versions()}")
+
+    rs = replays(st)
+    ok(f"★ [V3] 重放步数 ≤ every−1 = {DEFAULT_EVERY - 1}（**与 i 无关**）",
+       max(rs) < DEFAULT_EVERY, f"最大重放 {max(rs)}｜versions {st.versions}")
+    print(f"    · 版本 {st.versions} 个｜快照点 {st.snapshot_versions()}"
+          f"｜最大重放 {max(rs)} < every {DEFAULT_EVERY}")
+
+    # --- 对照（每条判据各有一个「错一处」）-----------------------------------
+    stale, plug_s = scenario(_StaleSnapshot, DEFAULT_EVERY)
+    stale_bad = mismatches(stale, plug_s)
+    ok("★ [V1·对照] 快照存错一处 ⇒ `V1` **必须红**（证明 V1 真的在看快照，不是恒真）",
+       bool(stale_bad), f"红在版本 {stale_bad[:5]}")
+
+    drop, _ps = scenario(_DroppedOp, DEFAULT_EVERY)
+    ok("★ [V2·对照] 执行了但**没进账** ⇒ `at(最新)` 追不上内核 ⇒ `V2` **必须红**",
+       P._fingerprint(drop.at(drop.versions)) != P._fingerprint(drop.kernel),
+       f"账长 {drop.versions}（内核里已有结构）")
+
+    nosnap, plug_n = scenario(_NoSnapshots, DEFAULT_EVERY)
+    rs_n = replays(nosnap)
+    ok("★ [V3·对照] 不存快照 ⇒ 重放 = i（退化回 Θ(i)）⇒ `V3` **必须红**；"
+       "⚠️ 而它在 `V1` 上**完全合格** —— 「对」与「快」是两件事",
+       max(rs_n) >= DEFAULT_EVERY and not mismatches(nosnap, plug_n),
+       f"最大重放 {max(rs_n)}（应 ≥ every {DEFAULT_EVERY}）")
+
+    # --- V4 反向判据 ---------------------------------------------------------
+    one, _p1 = scenario(VersionStore, 1)
+    one_max = max(replays(one))
+    ok("★ [V4] 反向：`every = 1` ⇒ 每版都快照 ⇒ 重放**恒 0**",
+       one_max == 0, f"最大重放 {one_max}")
+
+    big, _p2 = scenario(VersionStore, st.versions + 1)
+    big.at(big.versions)
+    ok("★ [V4] 反向：`every > 版本数` ⇒ 一个快照点都落不到 ⇒ 重放 = 版本数"
+       "（退回「只存账 + 重放」）—— 证明 `V3` 的上界**不是恒真**",
+       big.last_replay == big.versions, f"重放 {big.last_replay} / 版本 {big.versions}")
+
+
 def test_lock_scope() -> None:
     """★ `§10.2 D` 的 **P8**：锁沿**路径**局部化。
 
@@ -5148,7 +5259,7 @@ def main() -> int:
                test_cover_leak_baseline, test_cover_oracle_transparency,
                test_b3_reduction_premise, test_reach_cache_premise,
                test_reach_cache_transparency, test_tree_premise,
-               test_deletion_path, test_persistence, test_lock_scope,
+               test_deletion_path, test_persistence, test_versioning, test_lock_scope,
                test_query_hit_items, test_spec_paths, test_maintain,
                test_view_oracles, test_influence_channels, test_views,
                test_multilevel, test_retriever, test_cli_paths):
