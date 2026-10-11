@@ -4915,7 +4915,8 @@ def test_retriever() -> None:
     ok("★★ [T] `步骤 T3` **不自立终止依据**（`基线§4 T3 ①`）—— ⚠️ 这一条本身是"
        "**构造性恒真**（`scanned` 由 `order` 构造 ⇒ `ran == all_blocks` 必然）⇒ "
        "它**不是守卫**，只是钉住「将来别往循环体里偷塞早停」；"
-       "★ 本层**当前收益 = 0**（顺序无处可达 —— `基线§4 T3 ②`，`§13 13.0`）",
+       "★ 本层**访问量零变化**（顺序无处可达 —— `基线§4 T3 ②`，`§13 13.0`）；"
+       "★★ **收益 = 影响**（`基线§14.6`）—— 那个 0 是**读数**，不是收益",
        ran == all_blocks and ran == set(map(frozenset, r.recognition.q)),
        f"跑过 {len(ran)} / 块 {len(all_blocks)} / |Q| {len(r.recognition.q)}")
 
