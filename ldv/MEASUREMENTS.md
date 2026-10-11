@@ -3844,3 +3844,55 @@ verify_quotes     引文 252 条｜全覆盖 252｜有缺口 0
           run_checks 断言 97 · 红 0 · 跳 4 · RC=0
           test_injections 70/70 —— ⚠️ **未受影响**：新判据**不在** `run_checks` 的组里，
           与 `test_persistence` / `D1–D6` 同处（持久化/版本是同一类能力，自带对照）
+
+---
+
+### 结果三十二：曝光模型 α 的标定 —— **公开数据里没有「竖直列表 + 位次随机化」的点击日志**（2026-10-11）
+
+`§8.1.1` 的翻案条件写得很死：「拿到**竖直**列表 + **位次随机化**的点击日志」。本轮去找了。
+**找不到** —— 下面是检索到的两类数据，以及**各自缺哪一半**。
+
+#### ① 有随机化、但**几何不对**：Open Bandit Dataset（ZOZOTOWN）
+
+ZOZO 官方 `data.html` 逐字：
+
+    position: the position of an item being recommended (1, 2, or 3 correspond to
+              **left, center, and right position** of the ZOZOTOWN recommendation interface)
+    propensity_score: the probability of an item being recommended at each position
+
+⇒ 位次**真的被随机化**（`random` 策略 + 已知 propensity）✓，
+  但位次是**左 / 中 / 右三个并排槽位** ✗ —— 而本设计的 `show()` 摆的是**竖直**方向列表。
+  ⇒ 它量的是**另一种界面几何**，标定不了本设计（这正是 `§8.1.1` 已经写下的那句话）。
+
+#### ② 几何对、但**没有随机化**：竖直列表的自然日志
+
+    Yahoo! LTR Challenge / MSLR-WEB30K / Istella   搜索结果（竖直 5~10 位）· 自然日志
+    KuaiSearch（快手电商搜索，2026）                 竖直列表 · `impressed_item_ids` 是**自然曝光**
+    KuaiRec（快手）                                 **全曝光**（用户实际看到的全部）· 自然 feed
+    MIND / Adressa / Globo / Taobao UserBehavior   竖直 · 自然日志
+
+⇒ 全是**自然日志** —— 位次效应**不可识别**（没有干预 ⇒ 位次与 item 质量混杂）。
+  ⚠️ KuaiRec 的「全曝光」看着最接近，但它**只解决「有没有被看到」**，
+     **不解决「在第几位被看到」** —— 位次仍是自然的。
+
+#### ③ 为什么这个组合**拿不到**（不是「没找」）
+
+    位次随机化 = 故意把差的结果摆前面 ⇒ **伤体验** ⇒ 工业界只在**小流量实验**里做
+    ⇒ 那批日志在**内部**：
+      · Wang 等 2018（WSDM，Bing personal search）—— 内部数据，不公开
+      · arXiv 2305.13931 —— 「a public dataset **and internal** carousel advertisement
+        click dataset」，两半各取一半
+
+⇒ **公开 ≠ 随机化**，而**随机化 ≠ 竖直**。两个条件**没有在同一个公开数据集上同时成立**。
+
+#### ④ 结论与边界
+
+    α **保持 1.0**（保守）。翻案条件**未满足**，且**不是「还没找」** ——
+    是「公开数据里这个组合**不存在**」（上面两类各自的缺口都写明了）。
+
+    ⚠️ **放宽条件的两条路**（都不做，写在这里备查）：
+      ① 用**自然日志 + PBM/EM 估计**位次效应（Wang 等 2018 的做法）——
+         那是**估计**（带模型假设），不是**测量**；且它要求「同一 query 下
+         同一 item 出现在多个位次」的配对观察，自然日志里**稀少**。
+      ② 拿 Open Bandit 的**横向** α 当**上界 / 量级带**（现在就是这么用的，结果十三）——
+         但横向槽位的位次效应**不等于**竖直列表的（扫视模式不同）。
