@@ -1100,6 +1100,45 @@ def a7_branches(
     return {"①": b1, "②": b2, "块数": len(q_new), "Q_ext": len(q_ext)}
 
 
+# ⚠️ **标题只写一遍**（`A8_TITLE` 同一条理由）：判据的**标题**是「跑过」与「跳过」
+#    之间的第一道可分性 —— 两处各写一遍的话，写着写着就会不一样，而
+#    「跳过的标题与跑过的标题不同」正是让读者把「跳过」读成「另一条判据」的形状。
+A7_TITLE = "视图传播 E′：传播后仍稳定，且只许细分（不许用重算冒充）"
+
+
+def a7_skip(rep: Report, why: str) -> None:
+    """`§A7` 报**跳过** —— 用**同一个标题**，只有 `why` 说明为什么。
+
+    ⚠️ 与 `a8_skip` 同形，理由也一样：语料小到构造不出判据要的那个**前提**
+    时，必须报「跳过（附理由）」而不是崩、也不是悄悄按别的东西判。
+    """
+    rep.add("A7", A7_TITLE, Tri.UNEXPANDED, why)
+
+
+def a7_old_q(spec: ViewSpec) -> tuple[frozenset[str], ...] | None:
+    """`§A7` 要的那次**结构变动**：把 `spec.universe` 里**最后长出来**的方向拿掉
+    ⇒ 那就是「变动前」的划分。
+
+    ⚠️ 选哪个方向是**任意**的（只要确定）—— 判据不依赖这个选择。
+       实测四种选法（单个 / 最大块 / 全部叶）下「传播稳定」全为真、
+       「重算 ⊑ `Q_ext`」全为假（`outputs/_probe_a7b.py`）。
+
+    ⚠️ **返回 `None` ⇒ 这次结构变动不存在**，调用方要报**跳过**，不许硬凑：
+
+        `restrict_spec` 是**拿掉** ⇒ `universe` 只有一个方向时，拿掉任何一个都会
+        拿光整个 `universe` ⇒ `ValueError`。而「拿掉一个方向」正是这条判据
+        要的那个**前提**：没有「变动前」，就没有「从旧结果出发」，也就没有传播。
+
+    ⚠️ **生产路径与 `test_injections` 必须调这**一个**函数** —— 抄一份的做法
+       实测已经漂过（`§A8` 那份副本原样保留了写死的 `universe[-13:]`，
+       而生产那边已经改成按比例缩放了）。
+    """
+    if len(spec.universe) < 2:
+        return None
+    return coarsest_stable_refinement(
+        restrict_spec(spec, frozenset({spec.universe[-1]})))
+
+
 def a7_propagate(
     old_q: Sequence[frozenset[str]],
     spec: ViewSpec,
@@ -1135,7 +1174,7 @@ def a7_propagate(
 
     ⚠️ **旧 `Q` 为空 ⇒ 跳过**（没有「从旧结果出发」这回事，那是重算）。
     """
-    title = "视图传播 E′：传播后仍稳定，且只许细分（不许用重算冒充）"
+    title = A7_TITLE
     if not old_q:
         rep.add("A7", title, Tri.UNEXPANDED,
                 "没有旧视图 ⇒ 没有「传播」这回事（那是重算）—— 判不了，不是通过")
@@ -1235,6 +1274,50 @@ def a8_branches(
             "只传播会": m.shrink_if_propagated, "同构": m.propagate_equal}
 
 
+#: `§A8` 那条断言的标题 —— **单独提出来**，因为「判不了 ⇒ 跳过」那条路也要用同一句。
+#: 两处各写一遍会漂，而漂了之后「跳过」与「判过」在输出里就分不清了。
+A8_TITLE = "认识维护：交付物必须是 `csr`（不然 `§A3` 的可判性会退化——实测 12 块即超上限）"
+
+#: 两个夹具各「拿掉几个方向」的**比例** —— 见 `a8_fixture_drops`。
+A8_LIGHT_FRACTION = 0.08
+A8_HEAVY_FRACTION = 0.52
+
+
+def a8_fixture_drops(n_universe: int) -> tuple[int, int] | None:
+    """`§A8` 两个夹具各拿掉几个方向。返回 `None` = **构造不出来**（语料太小）。
+
+    ## 为什么不能写死 2 / 13
+
+    那两个数是在 **25 个方向**的语料上挑的。`restrict_spec(spec, drop)` 是**拿掉**
+    `drop`，所以 `universe[-13:]` 在 `|U| <= 13` 的语料上会把**整个** `universe`
+    都拿掉 ⇒ 抛 `ValueError("投影之后 `universe` 空了 —— 那不是一份声明")`
+    ⇒ `run_checks` **整趟崩** —— 而崩比红更糟：红是判据说话，崩是**判据没了**
+    （`(视图)` 之后的四组与汇总行一个都不打印）。实测：`arxiv-taxonomy`(13) /
+    `gh-langs`(13) / `edge-zero`(11) / `edge-tiny`(5) / `edge-single`(1)
+    五份语料**全部**崩在那一行。
+
+    ⇒ 改成按比例缩放。**25 个方向上仍然是 2 与 13**（逐字不变）：
+
+        0.08 × 25 = 2.0 → 2        0.52 × 25 = 13.0 → 13
+
+    ⚠️ 语料小到两个夹具**退化成同一个**时返回 `None` —— 那时「甲/乙」是同一个种子，
+       而这条判据的**全部意义**就是「不论传播看起来多划算，交付物都得是 `csr`」；
+       只配一个种子会把它读成「超预算才要重建」（那是**上一版错的那个政策**，
+       见 `a8_maintenance` 的 docstring）。⇒ 那种语料上报**跳过**，不报通过。
+    """
+    light = max(1, round(n_universe * A8_LIGHT_FRACTION))
+    heavy = max(light + 1, round(n_universe * A8_HEAVY_FRACTION))
+    heavy = min(heavy, n_universe - 1)          # 至少留一个方向
+    if light >= heavy:
+        return None
+    return light, heavy
+
+
+def a8_skip(rep: Report, why: str) -> None:
+    """`§A8` 判不了时**报跳过** —— 与「通过」分开（跳过 ≠ 通过）。"""
+    rep.add("A8", A8_TITLE, Tri.UNEXPANDED, why)
+
+
 def a8_maintenance(
     fixtures: Sequence[tuple[str, Sequence[frozenset[str]] | None]],
     spec: ViewSpec,
@@ -1261,7 +1344,7 @@ def a8_maintenance(
 
     ⚠️ **`overrides` 是对照口子**（`test_injections` 用），生产路径不传。
     """
-    title = "认识维护：交付物必须是 `csr`（不然 `§A3` 的可判性会退化——实测 12 块即超上限）"
+    title = A8_TITLE
     ov = dict(overrides or {})
     rows: list[str] = []
     bad: list[str] = []

@@ -110,10 +110,14 @@ from .checks.abstraction import (
     a4_category,
     a5_ledger,
     a6_roundtrip,
+    a7_old_q,
     a7_propagate,
+    a7_reading,
+    a7_skip,
     a8_maintenance,
     a8_reading,
-    a7_reading,
+    a8_fixture_drops,
+    a8_skip,
     build_views,
     ledger_entries,
     load_spec_file,
@@ -561,28 +565,66 @@ def view_report(loaded, targets: list[str]) -> Report:
     #   再把它传播回来。⚠️ 选哪个方向是任意的（只要确定），而判据不依赖这个选择 ——
     #   实测四种选法（单方向 / 最大块 / 全部叶）下「传播稳定」全为真、
     #   「重算 ⊑ Q_ext」全为假（`outputs/_probe_a7b.py`）。
-    old_q = coarsest_stable_refinement(restrict_spec(spec, frozenset({spec.universe[-1]})))
-    a7_propagate(old_q, spec, rep)
+    #
+    #  ⚠️ **但「拿掉一个」在 `|U| < 2` 的语料上不存在**（2026-10-11 实测崩过）：
+    #     `restrict_spec` 是**拿掉** ⇒ `universe[-1:]` 在只有一个方向的语料上会拿掉
+    #     **整个** `universe` ⇒ 抛 `ValueError` ⇒ **整趟崩**（红是判据说话，
+    #     崩是判据没了）。⇒ 与 `§A8` 同形的修法：前提不成立就报**跳过**，不构造夹具
+    #     （挑法本身收进 `a7_old_q`，与 `test_injections` 共用一份，免得再漂）。
+    #     ⚠️ **不要**改成「传空 `old_q` 让 `a7_propagate` 自己报跳过」——那样报出来的
+    #     理由是「没有旧视图（那是重算）」，与真正的原因（**这一档语料没有「变动前」**）
+    #     不是一回事；两种不同的「判不了」长得一样，就是本仓库一直在防的形状。
+    old_q = a7_old_q(spec)
+    if old_q is None:
+        a7_skip(rep, f"`universe` 只有 {len(spec.universe)} 个方向 ⇒ 拿掉任何一个都会"
+                     f"拿光整个 `universe`（`restrict_spec` 是**拿掉**）⇒ 构造不出"
+                     f"「变动前」的结构 ⇒ 没有「传播」这回事"
+                     f"（§10 停止条件：**跳过 ≠ 通过**）")
+    else:
+        a7_propagate(old_q, spec, rep)
 
     # ★ `§A8`（`§A7` §7.4 的**持续**那一半）—— **两个夹具**，两条分支都要跑到：
-    #    甲 只拿掉 2 个方向 ⇒ 只传播 shrink 0.480 ≤ 预算 ⇒ 政策应当**选传播**
-    #    乙 拿掉 13 个方向 ⇒ 只传播 shrink 0.920 > 预算 ⇒ 政策应当**选重建**
+    #    甲 只拿掉少数几个方向 ⇒ 只传播 shrink ≤ 预算 ⇒ 政策应当**选传播**
+    #    乙 拿掉过半方向     ⇒ 只传播 shrink > 预算 ⇒ 政策应当**选重建**
     #  ⚠️ 只配甲的话「重建」那条分支**一次都没被验过**，而它正是这条判据存在的理由。
     #  ⚠️ 夹具的「拿掉几个」是**从实测挑出来的**（`outputs/_probe_recognition_drift.py`
     #     的同族测量）：挑法本身不判，判的是「超预算就必须重建」。
-    a8_fixtures = [
-        ("甲·传播在预算内", coarsest_stable_refinement(
-            restrict_spec(spec, frozenset(spec.universe[-2:])))),
-        ("乙·传播严重退化", coarsest_stable_refinement(
-            restrict_spec(spec, frozenset(spec.universe[-13:])))),
-    ]
-    a8_maintenance(a8_fixtures, spec, rep)
+    #
+    #  ⚠️ **但「挑法」不许写死 2 / 13**（2026-10-11 实测崩过）：那两个数是在 25 个方向
+    #     的语料上挑的，而 `restrict_spec` 是**拿掉** ⇒ `universe[-13:]` 在 `|U| <= 13`
+    #     的语料上会拿掉**整个** `universe` ⇒ 抛异常 ⇒ **整趟崩**（红是判据说话，
+    #     崩是判据没了）。⇒ 改成按比例缩放，见 `a8_fixture_drops`。
+    #     25 个方向上缩放结果仍是 2 与 13 ⇒ **随仓库那份语料的行为逐字不变**。
+    drops = a8_fixture_drops(len(spec.universe))
+    if drops is None:
+        a8_fixtures = None
+        a8_skip(rep, f"`universe` 只有 {len(spec.universe)} 个方向 ⇒ 构造不出"
+                     f"「甲（拿掉少）/ 乙（拿掉多）」两个**不同**的夹具；"
+                     f"只配一个的话「超预算必须重建」那条分支一次都没被验过"
+                     f"（§10 停止条件：**跳过 ≠ 通过**）")
+    else:
+        _light, _heavy = drops
+        a8_fixtures = [
+            ("甲·传播在预算内", coarsest_stable_refinement(
+                restrict_spec(spec, frozenset(spec.universe[-_light:])))),
+            ("乙·传播严重退化", coarsest_stable_refinement(
+                restrict_spec(spec, frozenset(spec.universe[-_heavy:])))),
+        ]
+        a8_maintenance(a8_fixtures, spec, rep)
 
     prof = view_profile(vs)
     rep.note(f"{why}；方向 `{which}`")
     rep.note(render_views(vs, prof, which))
-    rep.note(render_propagation(a7_reading(old_q, spec), spec))
-    rep.note(render_maintenance(a8_reading(a8_fixtures, spec), spec))
+    if old_q is None:
+        rep.note("E′ 传播（`§A7`）：**本趟未跑** —— 语料太小，"
+                 "构造不出「变动前」的结构（见上面那条跳过）")
+    else:
+        rep.note(render_propagation(a7_reading(old_q, spec), spec))
+    if a8_fixtures is None:
+        rep.note("认识的持续维护（`§A8`）：**本趟未跑** —— 语料太小，"
+                 "构造不出两个**不同**的夹具（见上面那条跳过）")
+    else:
+        rep.note(render_maintenance(a8_reading(a8_fixtures, spec), spec))
     return rep
 
 

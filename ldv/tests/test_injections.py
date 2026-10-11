@@ -69,6 +69,7 @@ from ldv.checks._fixtures import (  # noqa: E402
     build_reach,
     build_sequence,
     coverage_of,
+    find_corpus,
     keyset_queries,
     load,
     items as make_items,
@@ -88,7 +89,9 @@ from ldv.checks.abstraction import (  # noqa: E402
     a4_category,
     a5_ledger,
     a6_roundtrip,
+    a7_old_q,
     a7_propagate,
+    a8_fixture_drops,
     a8_maintenance,
     build_views,
     reading_ctx,
@@ -147,6 +150,21 @@ def _rep() -> Report:
     return Report(plugin="注入", expects=())
 
 
+class CannotBuild(Exception):
+    """**这份注入在本语料上做不出来** —— 既不是「实现坏了」，也不是「判据不红」。
+
+    三种「不是绿」要分得开（`跳过 ≠ 通过`；`崩比红更糟`）：
+
+        `Tri.NO`         判据**开了火并红了** ⇒ 注入有效（这是我们要的）
+        `CannotBuild`    夹具**在本语料上做不出来** ⇒ 问不出「能不能红」
+        其它异常          崩 —— 连判据都没跑起来
+
+    ⚠️ 作者原来用 `AssertionError` 表达第二件事（消息里写着「做不出来 /
+       报错，不静默跳过」），但驱动把**任何**异常都读成「基线抛异常」
+       ⇒ 「判不了」与「崩」长得一模一样。这个类把作者的本意**写进类型**。
+    """
+
+
 def _tmp_source(body: str) -> Path:
     fh = tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, encoding="utf-8")
     fh.write(body)
@@ -196,19 +214,55 @@ def inj_b1_maintenance(nodes, edges, injected: bool) -> Report:
 
 # ═══ B2 ══════════════════════════════════════════════════════════════════════
 
+def _corpus_token(nodes: Any) -> str:
+    """从**本语料**的键集里取一个 `type=…` 取值 —— 注入「收窄」时用它。
+
+    ⚠️ **为什么不能写死**：收窄用的 token 必须是本语料键集里**真有**的取值，
+       否则它对任何查询都不成立 ⇒ 注入**不红** —— 而「注入不红」与
+       「判据不敏感」长得一模一样。
+
+       实测（2026-10-11，**单变量对照**：只换这一个 token，其余不动）：
+
+            语料                写死 `type=概念`   换成本语料的 `type=…`
+            pypi-deps           `是`（不红）       `否`（红）  `type=Database`
+            gh-langs            `是`（不红）       `否`（红）  `type=C`
+            arxiv-taxonomy      `是`（不红）       `否`（红）  `type=Computer Science`
+            crossref-journals   `是`（不红）       `否`（红）  任一 `type=…`
+
+       ⇒ 判据 `B2` 本身**在判**（换成真 token 立刻红）；缺的那份红来自**夹具**。
+
+    ⚠️ 取法必须**确定**（不许 `set` 迭代序）：按字典序取第一个。
+    """
+    keys: set[str] = set()
+    for nid in sorted(nodes):
+        keys |= set(nodes[nid].as_item().get("keys", ()))
+    toks = sorted(k for k in keys if k.startswith("type="))
+    if not toks:
+        raise CannotBuild(
+            "本语料键集里没有 `type=…` 取值 ⇒ 造不出「收窄合并结果」的注入")
+    return toks[0]
+
+
 class _MergeTooNarrow(KeysetPlugin):
-    """合并注入：把合并结果收窄 —— 于是粗方向会拒掉细方向收下的东西。"""
+    """合并注入：把合并结果收窄 —— 于是粗方向会拒掉细方向收下的东西。
+
+    ⚠️ 收窄用的 token 从**本语料**取（`_corpus_token`）—— 原来写死 `type=概念`，
+       换语料后那个 token 不在键集里 ⇒ 注入不红（详见 `_corpus_token` 的实测表）。
+    """
+
+    def __init__(self, token: str) -> None:
+        self._token = token
 
     def merge(self, ds):
         req, forb = super().merge(ds)
-        return (req | {"type=概念"}, forb)
+        return (req | {self._token}, forb)
 
 
 def inj_b2(nodes, edges, injected: bool) -> Report:
     kernel, good = build_keyset(nodes)
+    plug = _MergeTooNarrow(_corpus_token(nodes)) if injected else good
     rep = _rep()
-    b2_merge_covers(_MergeTooNarrow() if injected else good, kernel,
-                    keyset_queries(nodes), rep)
+    b2_merge_covers(plug, kernel, keyset_queries(nodes), rep)
     return rep
 
 
@@ -284,18 +338,24 @@ def inj_b4_stay_unaccounted(nodes, edges, injected: bool) -> Report:
 
 
 class _DecodeLossy(KeysetPlugin):
-    """解码注入：往返时**丢**掉 require —— 于是解码结果不再覆盖原方向。"""
+    """解码注入：往返时**丢**掉 require —— 于是解码结果不再覆盖原方向。
+
+    ⚠️ 补进去的那个 token 同 `_MergeTooNarrow`：从**本语料**取（原来写死 `type=概念`）。
+    """
+
+    def __init__(self, token: str) -> None:
+        self._token = token
 
     def decode(self, blob: bytes):
         req, forb = super().decode(blob)
-        return (frozenset(), forb | ({"type=概念"} if req else frozenset()))
+        return (frozenset(), forb | ({self._token} if req else frozenset()))
 
 
 def inj_b5(nodes, edges, injected: bool) -> Report:
     kernel, good = build_keyset(nodes)
+    plug = _DecodeLossy(_corpus_token(nodes)) if injected else good
     rep = _rep()
-    b5_decode_covers(_DecodeLossy() if injected else good, kernel,
-                     keyset_queries(nodes), rep)
+    b5_decode_covers(plug, kernel, keyset_queries(nodes), rep)
     return rep
 
 
@@ -373,7 +433,11 @@ def inj_b9(nodes, edges, injected: bool) -> Report:
     if injected:
         from ldv.core.direction import Event
 
-        saved = kernel.ledger._events[1]                        # noqa: SLF001
+        events = kernel.ledger._events                          # noqa: SLF001
+        if len(events) < 2:
+            # 这份语料上账本只有 ≤1 条 ⇒ 没有「第二条」可改 ⇒ 做不出注入
+            raise CannotBuild(f"账本只有 {len(events)} 条事件 ⇒ 改不出「第二条」")
+        saved = events[1]                                       # noqa: SLF001
         kernel.ledger._events[1] = Event(                       # noqa: SLF001
             seq=saved.seq, kind=saved.kind, did=saved.did,
             detail={**saved.detail, "改写": True},
@@ -460,6 +524,9 @@ def inj_b13_two_parents(nodes, edges, injected: bool) -> Report:
     kernel, _ = build_keyset(nodes)
     if injected:
         parents = [d for d in kernel.all_directions() if kernel.children_of(d)]
+        if len(parents) < 2:
+            # 只有一个内部父 ⇒ 挂不出「第二个父」⇒ 做不出注入（同 `run_tests` 的守卫）
+            raise CannotBuild(f"内部父方向只有 {len(parents)} 个 ⇒ 造不出「第二个父」")
         p1, p2 = parents[0], parents[1]
         victim = kernel.children_of(p2)[0]
         kernel._children[p1.did] = tuple(kernel._children[p1.did]) + (victim.did,)  # noqa: SLF001
@@ -1339,7 +1406,7 @@ def inj_a2(nodes: Any, edges: Any, injected: bool) -> Report:
     vs = build_views(kernel, spec, cover, plugin)
     if injected:
         if len(vs.q) < 2:
-            raise AssertionError(f"基线 `Q` 只有 {len(vs.q)} 块 ⇒ 「合并两块」做不出来")
+            raise CannotBuild(f"基线 `Q` 只有 {len(vs.q)} 块 ⇒ 「合并两块」做不出来")
         vs = replace(vs, q=partition_of([vs.q[0] | vs.q[1]] + list(vs.q[2:])))
     return _view_report(vs)
 
@@ -1390,7 +1457,7 @@ def inj_a3_not_coarsest(nodes: Any, edges: Any, injected: bool) -> Report:
     spec, kernel, plugin, cover = _view_chain(nodes, edges, head=6)
     vs = build_views(kernel, spec, cover, plugin)
     if len(vs.q) >= len(spec.universe):
-        raise AssertionError(
+        raise CannotBuild(
             f"受限 spec 上基线 `Q` 已经是离散划分（{len(vs.q)} 块 / "
             f"{len(spec.universe)} 个方向）⇒ 离散注入与基线重合，红不了")
     if injected:
@@ -1420,7 +1487,7 @@ def _median_witness(ctx: ReadingCtx) -> tuple[list[str], list[str]]:
         for A, B in itertools.combinations(group, 2):
             if abs(float(f(A, ctx)) - float(f(B, ctx))) > 1e-9:
                 return sorted(A), sorted(B)
-    raise AssertionError("真链路上找不到中位数的见证 ⇒ 这条注入做不出来（报错，不静默跳过）")
+    raise CannotBuild("真链路上找不到中位数的见证 ⇒ 这条注入做不出来（报错，不静默跳过）")
 
 
 def inj_a4(nodes: Any, edges: Any, injected: bool) -> Report:
@@ -1488,7 +1555,7 @@ def inj_a5(nodes: Any, edges: Any, injected: bool) -> Report:
     vs = build_views(kernel, spec, cover, plugin)
     entries = _a5_account(kernel, spec)
     if not entries:
-        raise AssertionError("真链路上结构停留项为空 ⇒ 造不出一份非空的账（基线就绿不了）")
+        raise CannotBuild("真链路上结构停留项为空 ⇒ 造不出一份非空的账（基线就绿不了）")
     if injected:
         entries = [("ZZ", entries[0][1], "编的")] + entries[1:]
     return _view_report(vs, kernel=kernel, entries=entries)
@@ -1500,7 +1567,7 @@ def inj_a5_bad_item(nodes: Any, edges: Any, injected: bool) -> Report:
     vs = build_views(kernel, spec, cover, plugin)
     entries = _a5_account(kernel, spec)
     if not entries:
-        raise AssertionError("真链路上结构停留项为空 ⇒ 造不出一份非空的账")
+        raise CannotBuild("真链路上结构停留项为空 ⇒ 造不出一份非空的账")
     if injected:
         entries = [(entries[0][0], "这个项不存在", "编的")] + entries[1:]
     return _view_report(vs, kernel=kernel, entries=entries)
@@ -1512,13 +1579,13 @@ def inj_a5_unwarranted(nodes: Any, edges: Any, injected: bool) -> Report:
     vs = build_views(kernel, spec, cover, plugin)
     entries = _a5_account(kernel, spec)
     if not entries:
-        raise AssertionError("真链路上结构停留项为空 ⇒ 造不出一份非空的账")
+        raise CannotBuild("真链路上结构停留项为空 ⇒ 造不出一份非空的账")
     if injected:
         did = entries[0][0]
         mine = set(kernel.members_of(kernel.direction(did)))
         other = sorted(set(kernel.items) - mine)
         if not other:
-            raise AssertionError(f"`{did}` 的成员集就是整个语料 ⇒ 造不出「不在它上面」的项")
+            raise CannotBuild(f"`{did}` 的成员集就是整个语料 ⇒ 造不出「不在它上面」的项")
         entries = [(did, other[0], "编的")] + entries[1:]
     return _view_report(vs, kernel=kernel, entries=entries)
 
@@ -1557,26 +1624,41 @@ def inj_a6(nodes: Any, edges: Any, injected: bool) -> Report:
 def _a7_old_q(spec: ViewSpec) -> tuple[frozenset[str], ...]:
     """`§A7` 要的那次**结构变动**：把 `spec.universe` 里**最后长出来**的方向拿掉。
 
-    ⚠️ 选哪个方向是**任意**的（只要确定）—— 判据不依赖这个选择。
-       实测四种选法（单个 / 最大块 / 全部叶）下「传播稳定」全为真、
-       「重算 ⊑ `Q_ext`」全为假（`outputs/_probe_a7b.py`）。
+    ⚠️ 挑法**不在这里写** —— 调 `abstraction.a7_old_q`（生产路径用的同一个）。
+       抄一份的做法实测已经漂过（`§A8` 那份副本原样保留了写死的 `universe[-13:]`，
+       而生产那边已经改成按比例缩放了）。**它改了这里跟着改。**
     """
-    return coarsest_stable_refinement(
-        restrict_spec(spec, frozenset({spec.universe[-1]})))
+    old_q = a7_old_q(spec)
+    if old_q is None:
+        # 2026-10-11：**抛 `CannotBuild`**，不是 `AssertionError`。理由见那个类的注释：
+        # 驱动把任何异常都读成「基线抛异常」，而这里其实是「本语料做不出来」。
+        raise CannotBuild(
+            f"`universe` 只有 {len(spec.universe)} 个方向 ⇒ 拿掉任何一个都会拿光整个"
+            f" `universe`（`restrict_spec` 是**拿掉**）⇒ 构造不出「变动前」的结构")
+    return old_q
+
 
 
 def _a8_fixtures(spec: ViewSpec) -> list[tuple[str, Any]]:
     """`§A8` 要的**两个**种子 —— 与 `run_checks.view_report` **同一条挑法**。
 
     ⚠️ 与生产路径分开写会漂移（本仓库记过的形状：`reach` 的根口径分岔过一次）。
-       这里**逐字照抄**那份挑法，并由驱动里那条「基线=是」顺带守住 ——
-       两边若漂到「夹具不再触发它该触发的东西」，注入的**红**就会消失（而不是报错）。
+       2026-10-11 起**不再是「逐字照抄」**，而是**调同一个助手**
+       （`abstraction.a8_fixture_drops`）—— 抄一份的做法实测已经漂过：生产那边
+       写死的 `universe[-13:]` 在 `|U| <= 13` 的语料上会拿掉整个 `universe` 并崩，
+       而这份副本原样保留了那个写法。**改成调同一个函数，它改了这里跟着改。**
     """
+    drops = a8_fixture_drops(len(spec.universe))
+    if drops is None:
+        raise CannotBuild(
+            f"`universe` 只有 {len(spec.universe)} 个方向 ⇒ `a8_fixture_drops` 挑不出"
+            f"两个互不相同的种子")
+    light, heavy = drops
     return [
         ("甲·传播在预算内", coarsest_stable_refinement(
-            restrict_spec(spec, frozenset(spec.universe[-2:])))),
+            restrict_spec(spec, frozenset(spec.universe[-light:])))),
         ("乙·传播严重退化", coarsest_stable_refinement(
-            restrict_spec(spec, frozenset(spec.universe[-13:])))),
+            restrict_spec(spec, frozenset(spec.universe[-heavy:])))),
     ]
 
 
@@ -1714,15 +1796,30 @@ def inj_a7_recompute(nodes: Any, edges: Any, injected: bool) -> Report:
 
 
 def _ml_chain(nodes, edges):
-    """这一组注入的公共装配：**生产口径**的 spec / kernel / cover / plugin。"""
+    """这一组注入的公共装配：**生产口径**的 spec / kernel / cover / plugin。
+
+    ⚠️ **`load_spec_file` 必须带 `(find_corpus(), corpus)`** —— 与 `run_checks` 里
+       那三处**同一个调法**（2026-10-11 实测修）。原来这里是**不带参数**的
+       `load_spec_file()`，那等于「只找位置、不认语料」⇒ 永远拿**仓内那份**声明
+       （指纹 `{'项数': 36, '边数': 47}`）⇒ 换任何一份别的语料，
+       `spec_for` 都因指纹不符返回 `None` ⇒ `run_multilevel(spec=None, …)` 当场
+       `AttributeError: 'NoneType' object has no attribute 'partition'`。
+       症状**不是红**：本文件把异常逐条捕获成「基线抛异常」，所以 11 条注入
+       （`M0`/`M1`/`M2`/`M3`/`M5`/`M6`/`T4`/`T5`/`T6`/`T7`/`M1·反侧`）会**一起**
+       报成「抛异常」，而真因是**装配拿错了声明**。
+
+    ⚠️ 抄 `run_checks` 的调法而不是「自己再写一遍找法」—— 本仓库记过的形状：
+       两处「长得一样」的代码各自演化，症状是**检查报绿**。
+    """
     from ldv.checks.abstraction import load_spec_file, spec_for
     from ldv.checks.coverage import corpus_fingerprint
     from ldv.run_checks import batch_kernel
 
     loaded = load()
-    doc = load_spec_file()
+    corpus = corpus_fingerprint(nodes, edges)
+    doc = load_spec_file(find_corpus(), corpus)
     which = str(doc.get("方向") or "keyset")
-    spec, _why = spec_for(doc, which, corpus_fingerprint(nodes, edges))
+    spec, _why = spec_for(doc, which, corpus)
     kernel, plugin, _q, _mk = batch_kernel(which, nodes, edges)
     cover = coverage_of(which, nodes, edges)
     return spec, kernel, plugin, cover
@@ -2065,9 +2162,15 @@ def inj_t4(nodes, edges, injected: bool) -> Report:
     from ldv.run_checks import batch_kernel, corpus_fingerprint, load_spec_file
     from ldv.retriever import as_bar, retrieve
 
-    doc = load_spec_file()
+    # ⚠️ `load_spec_file` 必须带 `(find_corpus(), corpus)` —— 与 `run_checks` 里
+    #    那三处、以及本文件的 `_ml_chain` **同一个调法**。不带参数等于「只找位置、
+    #    不认语料」⇒ 永远拿**仓内那份**声明 ⇒ 换任何别的语料，`spec_for` 都因指纹
+    #    不符返回 `None` ⇒ 下面 `retrieve(..., spec=None)` 当场 `AttributeError`。
+    #    症状**不是红**：本文件把异常逐条捕获成「基线抛异常」（`T4`–`T7` 一起中招）。
+    _corpus = corpus_fingerprint(nodes, edges)
+    doc = load_spec_file(find_corpus(), _corpus)
     which = str(doc.get("方向") or "")
-    spec, _why = spec_for(doc, which, corpus_fingerprint(nodes, edges))
+    spec, _why = spec_for(doc, which, _corpus)
     kernel, plugin, queries, _mk = batch_kernel(which, nodes, edges)
     r = retrieve(kernel, plugin, {which: as_bar(queries[0])}, spec=spec)
     if injected:
@@ -2103,9 +2206,15 @@ def inj_t5(nodes, edges, injected: bool) -> Report:
     from ldv.retriever import as_bar, retrieve
     from ldv import flow
 
-    doc = load_spec_file()
+    # ⚠️ `load_spec_file` 必须带 `(find_corpus(), corpus)` —— 与 `run_checks` 里
+    #    那三处、以及本文件的 `_ml_chain` **同一个调法**。不带参数等于「只找位置、
+    #    不认语料」⇒ 永远拿**仓内那份**声明 ⇒ 换任何别的语料，`spec_for` 都因指纹
+    #    不符返回 `None` ⇒ 下面 `retrieve(..., spec=None)` 当场 `AttributeError`。
+    #    症状**不是红**：本文件把异常逐条捕获成「基线抛异常」（`T4`–`T7` 一起中招）。
+    _corpus = corpus_fingerprint(nodes, edges)
+    doc = load_spec_file(find_corpus(), _corpus)
     which = str(doc.get("方向") or "")
-    spec, _why = spec_for(doc, which, corpus_fingerprint(nodes, edges))
+    spec, _why = spec_for(doc, which, _corpus)
     kernel, plugin, queries, _mk = batch_kernel(which, nodes, edges)
     for q0 in queries[:3]:                      # ★ 先攒记录（流程 A 本来就记）
         flow.run_query(kernel, q0)
@@ -2124,6 +2233,15 @@ def inj_t5(nodes, edges, injected: bool) -> Report:
     return rep
 
 
+def _opposite_advice(a: str) -> str:
+    """把一条建议翻到**相反**的一档 —— 对没见过的档也要有定义。
+
+    ⚠️ 见 `inj_t6` 里的注释：写死的映射表撞上第五档就 `KeyError`。
+       「说不出来」不该是 `KeyError` —— 那与「实现坏了」长得一样。
+    """
+    return "值得往下" if "不必" in a else "不必往下"
+
+
 def inj_t6(nodes, edges, injected: bool) -> Report:
     """`T6` —— 注入「**建议与该块的事实不符**」（`基线§14.8`）。
 
@@ -2139,16 +2257,27 @@ def inj_t6(nodes, edges, injected: bool) -> Report:
     from ldv.run_checks import batch_kernel, corpus_fingerprint, load_spec_file
     from ldv.retriever import as_bar, retrieve
 
-    doc = load_spec_file()
+    # ⚠️ `load_spec_file` 必须带 `(find_corpus(), corpus)` —— 与 `run_checks` 里
+    #    那三处、以及本文件的 `_ml_chain` **同一个调法**。不带参数等于「只找位置、
+    #    不认语料」⇒ 永远拿**仓内那份**声明 ⇒ 换任何别的语料，`spec_for` 都因指纹
+    #    不符返回 `None` ⇒ 下面 `retrieve(..., spec=None)` 当场 `AttributeError`。
+    #    症状**不是红**：本文件把异常逐条捕获成「基线抛异常」（`T4`–`T7` 一起中招）。
+    _corpus = corpus_fingerprint(nodes, edges)
+    doc = load_spec_file(find_corpus(), _corpus)
     which = str(doc.get("方向") or "")
-    spec, _why = spec_for(doc, which, corpus_fingerprint(nodes, edges))
+    spec, _why = spec_for(doc, which, _corpus)
     kernel, plugin, queries, _mk = batch_kernel(which, nodes, edges)
     r = retrieve(kernel, plugin, {which: as_bar(queries[0])}, spec=spec)
     if injected:
         # 「说的和事实不一样」的可观测形态：每条建议都翻成**另一档**（与事实相反）。
+        # ⚠️ 这张表原来**写死四档**。换语料后实测撞上第五档
+        #    `'不必往下（分不开）'` ⇒ `KeyError` ⇒ 驱动读成「注入后抛异常」。
+        #    「崩」与「红」是两件事，但**都不是**「这条注入有效」。
+        #    表里那四档**照旧**（随仓库那份语料上逐字不变），表外走兜底。
         flip = {"值得往下": "不必往下", "不必往下": "值得往下",
                 "往下有现成通道": "不必往下", "看具体方向": "值得往下"}
-        r = replace(r, advice=tuple((b, flip[a]) for b, a in r.advice))
+        r = replace(r, advice=tuple(
+            (b, flip.get(a) or _opposite_advice(a)) for b, a in r.advice))
     rep = Report(plugin="(检索)", expects=RETRIEVER_CODES)
     t6_advice(rep, r, kernel)
     return rep
@@ -2172,9 +2301,15 @@ def inj_t7(nodes, edges, injected: bool) -> Report:
     from ldv.retriever import as_bar, deepen, retrieve
     from ldv import flow
 
-    doc = load_spec_file()
+    # ⚠️ `load_spec_file` 必须带 `(find_corpus(), corpus)` —— 与 `run_checks` 里
+    #    那三处、以及本文件的 `_ml_chain` **同一个调法**。不带参数等于「只找位置、
+    #    不认语料」⇒ 永远拿**仓内那份**声明 ⇒ 换任何别的语料，`spec_for` 都因指纹
+    #    不符返回 `None` ⇒ 下面 `retrieve(..., spec=None)` 当场 `AttributeError`。
+    #    症状**不是红**：本文件把异常逐条捕获成「基线抛异常」（`T4`–`T7` 一起中招）。
+    _corpus = corpus_fingerprint(nodes, edges)
+    doc = load_spec_file(find_corpus(), _corpus)
     which = str(doc.get("方向") or "")
-    spec, _why = spec_for(doc, which, corpus_fingerprint(nodes, edges))
+    spec, _why = spec_for(doc, which, _corpus)
     kernel, plugin, queries, _mk = batch_kernel(which, nodes, edges)
     for q0 in queries[:3]:
         flow.run_query(kernel, q0)
@@ -2386,30 +2521,84 @@ def main() -> int:
 
     cases: list[tuple[str, str, Callable]] = [(c, c, fn) for c, fn in CASES.items()]
     cases += [(label, code, fn) for label, (code, fn) in EXTRA_CASES.items()]
+
+    # ⚠️ **三类要分得开**（`跳过 ≠ 通过`；`崩比红更糟`）：
+    #
+    #     ✗ 没通过   基线绿、注入没红 ⇒ 判据**开了火却没红** —— 这才是「这条注入没用」
+    #     ∅ 判不了   基线**不是**绿的 ⇒ 本语料压根不开火这条判据 ⇒ 问不出「能不能红」
+    #     ⚡ 崩      夹具/实现抛异常 ⇒ 连判据都没跑起来
+    #                （`CannotBuild` 不算崩：那是夹具**明说**「这份料上做不出来」）
+    #
+    # 原来三类**都**进 `failures`、都印 `✗` —— 「判不了」与「真没通过」长得一模一样。
+    # 本仓库对这件事有明文（`§10` 停止条件：**跳过 ≠ 通过**；`B11` 那条修正：
+    # **判不了 ≠ 红**）⇒ 换语料跑时，这个混淆会把「这份料太小」读成「判据坏了」。
+    #
+    # ⚠️ **但随仓库那份语料上 `∅` 不成立**：那份是**基准**，70 条本来就该全开火。
+    #    所以跑的是它时 `∅` 降级回 `✗` —— 否则一条真回归会被读成「判不了」而放过。
+    shipped = Path(__file__).resolve().parents[1] / "corpus" / "nodes"
+    on_shipped = find_corpus() == shipped
+
+    nope: list[str] = []      # ✗ 真没通过
+    cannot: list[str] = []    # ∅ 本语料判不了
+    broke: list[str] = []     # ⚡ 崩
+
     for label, code, fn in cases:
         try:
             base = _result(fn(nodes, edges, False), code)
+        except CannotBuild as exc:
+            cannot.append(f"{label}: 夹具在本语料上做不出来 —— {exc}")
+            print(f"  ∅ {label}  夹具做不出来：{exc}")
+            continue
         except Exception as exc:  # noqa: BLE001
-            failures.append(f"{label}: 基线就抛异常 {type(exc).__name__}: {exc}")
-            print(f"  ✗ {label}  基线抛异常：{type(exc).__name__}: {exc}")
+            broke.append(f"{label}: 基线就抛异常 {type(exc).__name__}: {exc}")
+            print(f"  ⚡ {label}  基线抛异常：{type(exc).__name__}: {exc}")
             continue
         try:
             shot = _result(fn(nodes, edges, True), code)
+        except CannotBuild as exc:
+            cannot.append(f"{label}: 夹具在本语料上做不出来 —— {exc}")
+            print(f"  ∅ {label}  夹具做不出来：{exc}")
+            continue
         except Exception as exc:  # noqa: BLE001
-            failures.append(f"{label}: 注入后抛异常 {type(exc).__name__}: {exc}")
-            print(f"  ✗ {label}  注入后抛异常：{type(exc).__name__}: {exc}")
+            broke.append(f"{label}: 注入后抛异常 {type(exc).__name__}: {exc}")
+            print(f"  ⚡ {label}  注入后抛异常：{type(exc).__name__}: {exc}")
             continue
 
-        ok = (base is Tri.YES) and (shot is Tri.NO)
-        why = ""
         if base is not Tri.YES:
-            why += f"基线不是绿的（{base}）"
+            why = f"基线不是绿的（{base}）"
+            if on_shipped:
+                # 基准语料上「判不了」不成立 —— 它本来就该全开火 ⇒ 是回归，不是前提。
+                nope.append(f"{label}: {why}")
+                print(f"  ✗ {label}  基线={base}  注入={shot}"
+                      f"   ← {why}（**随仓库那份语料上不该判不了**）")
+            else:
+                cannot.append(f"{label}: {why}")
+                print(f"  ∅ {label}  基线={base}  注入={shot}"
+                      f"   ← 本语料判不了（{why}；跳过 ≠ 通过）")
+            continue
+        if shot is Tri.UNEXPANDED:
+            # ⚠️ **注入后判不了 ≠ 注入没红**（`§10` 停止条件：跳过 ≠ 通过；
+            #    `B11` 那条修正：**判不了 ≠ 红**）。
+            #    注入可能把语料推到「这条判据**没有内容**」的形态 —— 例：4 项语料上
+            #    `B15` 注入后结构塌成 1 个方向，「同构」无从谈起（判据自己印了这句话）。
+            #    这时**问不出**「判据能不能红」，与「判据开了火却没红」是两件事：
+            #    后者才是「这条注入没用」。
+            #    ⚠️ 基准语料上不该出现这种形态 ⇒ 那里仍算回归（与上面 `∅` 同一个闸门）。
+            why = f"注入后判不了（{shot}）—— 判不了 ≠ 红"
+            if on_shipped:
+                nope.append(f"{label}: {why}")
+                print(f"  ✗ {label}  基线={base}  注入={shot}"
+                      f"   ← {why}（**随仓库那份语料上不该判不了**）")
+            else:
+                cannot.append(f"{label}: {why}")
+                print(f"  ∅ {label}  基线={base}  注入={shot}   ← {why}")
+            continue
         if shot is not Tri.NO:
-            why += ("；" if why else "") + f"注入后没变红（{shot}）"
-        print(f"  {'✓' if ok else '✗'} {label}  基线={base}  注入={shot}"
-              + (f"   ← {why}" if why else ""))
-        if not ok:
-            failures.append(f"{label}: {why}")
+            why = f"注入后没变红（{shot}）"
+            nope.append(f"{label}: {why}")
+            print(f"  ✗ {label}  基线={base}  注入={shot}   ← {why}")
+            continue
+        print(f"  ✓ {label}  基线={base}  注入={shot}")
 
     print()
     n += len(cases)
@@ -2421,29 +2610,46 @@ def main() -> int:
                       ("度量·健全性（维护路径）", metric_soundness),
                       ("度量·覆盖不漏", metric_cover_leak),
                       ("度量·细化量", metric_progress)):
+        n += 1
         try:
             m_base = fn(nodes, edges, False)
             m_shot = fn(nodes, edges, True)
         except Exception as exc:  # noqa: BLE001
-            failures.append(f"{label}: 抛异常 {type(exc).__name__}: {exc}")
-            print(f"  ✗ {label}  抛异常：{type(exc).__name__}: {exc}")
+            broke.append(f"{label}: 抛异常 {type(exc).__name__}: {exc}")
+            print(f"  ⚡ {label}  抛异常：{type(exc).__name__}: {exc}")
             continue
-        m_ok = m_base and not m_shot
-        why = ""
         if not m_base:
-            why += "基线就不一致（度量本来该说一致）"
+            why = "基线就不一致（度量本来该说一致）"
+            if on_shipped:
+                nope.append(f"{label}: {why}")
+                print(f"  ✗ {label}  基线一致=False   ← {why}（**随仓库那份语料上不该如此**）")
+            else:
+                cannot.append(f"{label}: {why}")
+                print(f"  ∅ {label}  基线一致=False   ← 本语料上度量的前提不成立（{why}）")
+            continue
         if m_shot:
-            why += ("；" if why else "") + "注入后读数没变（度量对缺陷不敏感）"
-        print(f"  {'✓' if m_ok else '✗'} {label}  基线一致={m_base}  "
-              f"注入后仍一致={m_shot}" + (f"   ← {why}" if why else ""))
-        if not m_ok:
-            failures.append(f"{label}: {why}")
-        n += 1
+            why = "注入后读数没变（度量对缺陷不敏感）"
+            if on_shipped:
+                nope.append(f"{label}: {why}")
+                print(f"  ✗ {label}  基线一致=True  注入后仍一致=True"
+                      f"   ← {why}（**随仓库那份语料上不该如此**）")
+            else:
+                cannot.append(f"{label}: {why}")
+                print(f"  ∅ {label}  基线一致=True  注入后仍一致=True"
+                      f"   ← 本语料上这个注入没碰到它量的东西（{why}）")
+            continue
+        print(f"  ✓ {label}  基线一致=True  注入后仍一致=False")
 
+    failures = nope + broke + cannot
     if failures:
-        print(f"═══ {len(failures)}/{n} 条没通过 ═══")
-        for f in failures:
-            print(f"  · {f}")
+        print(f"═══ 真没通过 {len(nope)} · 判不了 {len(cannot)} · 崩 {len(broke)}"
+              f"（共 {n} 条）═══")
+        for f in nope:
+            print(f"  ✗ {f}")
+        for f in broke:
+            print(f"  ⚡ {f}")
+        for f in cannot:
+            print(f"  ∅ {f}")
         return 1
     print(f"═══ {n}/{n} 条：基线绿、注入红 ═══")
     return 0

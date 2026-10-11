@@ -37,6 +37,7 @@ from pathlib import Path
 from typing import Any
 
 from ..core import selfopt
+from ..core.tri import Tri
 from ._framework import Report
 
 HERE = Path(__file__).resolve().parent
@@ -142,7 +143,7 @@ def b14_exogenous_boundary(rep: Report, extra_sources: list[Path] | None = None)
 
     loaded = load()
     if loaded is None:
-        rep.add("B14", "外生边界", Tri_UNEXPANDED("没有语料，跑不了行为侧"))
+        rep.add("B14", "外生边界", Tri.UNEXPANDED, "没有语料，跑不了行为侧")
         return
     nodes, _, _ = loaded
     kernel, _ = build_keyset(nodes)
@@ -160,7 +161,13 @@ def b14_exogenous_boundary(rep: Report, extra_sources: list[Path] | None = None)
     if after is not None and after.fingerprint_exogenous() != params.fingerprint_exogenous():
         bad.append("自优化后外生项指纹变了")
     if after is not None and after.fingerprint_endogenous() == params.fingerprint_endogenous():
-        rep.add("B14", "外生边界", Tri_UNEXPANDED, "内生项没被改动，这一轮没验到东西")
+        # ⚠️ 这里原来传的是 `Tri_UNEXPANDED`（**函数对象本身**，少了一对括号）——
+        #    它不是 `Tri` 成员 ⇒ `Report.counts` 的 `out[str(a.result)] += 1` 抛
+        #    `KeyError: '<function Tri_UNEXPANDED at 0x…>'` ⇒ `run_checks` **整趟崩**。
+        #    触发条件实测是「语料只有 1 个方向」（自优化没得改 ⇒ 内生指纹不变）——
+        #    随仓库那份 36 项语料永远走不到，所以它一直没露。
+        #    「红是判据说话，崩是判据没了」—— 见 `run_checks` 里同形的另一处记录。
+        rep.add("B14", "外生边界", Tri.UNEXPANDED, "内生项没被改动，这一轮没验到东西")
         return
 
     rep.add("B14", "外生边界：usage 侧不许改外生项",
@@ -172,12 +179,12 @@ def b14_exogenous_boundary(rep: Report, extra_sources: list[Path] | None = None)
 # --- 小的三态糖 -------------------------------------------------------------
 
 def Tri_NO(bad: list) -> Any:
-    from ..core.tri import Tri
-
     return Tri.NO if bad else Tri.YES
 
 
-def Tri_UNEXPANDED(reason: str) -> Any:
-    from ..core.tri import Tri
-
-    return Tri.UNEXPANDED
+# ⚠️ 这里原来还有一个 `Tri_UNEXPANDED(reason)` 糖函数。**已删** —— 它的名字与
+#    `Tri.UNEXPANDED` 只差一个点，而调用点写漏了括号时**不报错**：那个函数对象会被
+#    原样塞进 `Assertion.result`，直到 `Report.counts` 才炸（`KeyError`），
+#    而那时 `run_checks` 已经跑完三组插件、正要去打印 —— 症状是**整趟崩**、
+#    后面的组与汇总行全都不出现。一个只为了少打五个字符、却能造成这种失效的糖，
+#    不值得留。直接用 `Tri.UNEXPANDED`，理由走 `rep.add(..., detail=...)`。

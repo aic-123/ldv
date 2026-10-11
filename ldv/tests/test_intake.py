@@ -219,14 +219,34 @@ def count_via_markdown(nodes_dir: Path) -> tuple[int, int]:
     return len(nodes), sum(len(v) for v in edges.values())
 
 
-def count_via_raw(raw_dir: Path) -> tuple[int, int, dict] | None:
+#: 路 2 认得的唯一形状：`list[{id, referenced_works}]`（OpenAlex 的原始响应）。
+#: ⚠️ **认不出就是「判不了」，不是崩、也不是红** —— 见 `count_via_raw`。
+RAW_SHAPE_HINT = "`[{id, referenced_works}]`（OpenAlex 原始响应的形状）"
+
+
+def count_via_raw(raw_dir: Path) -> tuple[int, int, dict] | None | str:
     """**路 2**：直接读原始 JSON，自己数。**不碰 markdown，也不碰 `loader`。**
 
-    ⚠️ **返回 `None` = 这份语料的原始件不是 JSON ⇒ 路 2 判不了**（2026-10-10 加）。
+    三种返回，**三种不同的话**（混起来就是「空转与通过长得一模一样」）：
+
+        `(节点数, 边数, 附加读数)`   数出来了
+        `None`                      `raw/` 里**一个 `*.json` 都没有** ⇒ 判不了
+        `str`                       **有 JSON，但形状不是** `RAW_SHAPE_HINT`
+                                    ⇒ 判不了，**字符串是原因**
+
+    ⚠️ **`None` = 这份语料的原始件不是 JSON ⇒ 路 2 判不了**（2026-10-10 加）。
        三份 SNAP 语料的原始件是 `.gz`（`email-Eu-core.txt.gz` / `cit-HepTh.txt.gz`）
        ⇒ 这里**一个 `*.json` 都找不到** ⇒ 改之前返回 `(0, 0, …)`，
        而 `0` 与「真的没有节点」在只看数字时**长得一模一样** ⇒ 判据 ① 必然红，
        而且红得**指向语料**（看起来像「这份语料是空的」），其实指向**本函数认不出的格式**。
+
+    ⚠️ **`str` = 有 JSON 但形状不认识**（2026-10-11 加）。2026-10-10 那条只堵住了
+       「一个 `*.json` 都没有」，**没堵住「有 JSON、形状是另一个工具的」**：实测
+       喂 GitHub Search 的响应（`dict`）或 Crossref 的响应（`dict`）会
+       **`TypeError: string indices must be integers`** —— 那是**崩**，
+       而崩比红更糟（红是判据说话，崩是判据没了：这一条之后的 ①② 全都不跑）。
+       本文件叫「**外部**语料验收」，它**不许**假设所有外部语料都是同一个工具接的
+       （见模块开头）—— 所以这里把「形状不认识」也收成**判不了**。
 
     ★ **「判不了」不是「红」** —— 它走 `SKIP`，与 `PASS` 分开计。
       ⚠️ 那也**不是通过**：本模块开头那句「跳过 ≠ 通过」照样管着它，
@@ -237,13 +257,23 @@ def count_via_raw(raw_dir: Path) -> tuple[int, int, dict] | None:
         return None
     recs: dict[str, dict] = {}
     for f in files:
-        for r in json.loads(f.read_text(encoding="utf-8")):
-            recs[r["id"].rsplit("/", 1)[-1]] = r
+        try:
+            data = json.loads(f.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            return (f"① 路 2（原始 JSON）：`{f.name}` **读不成 JSON**"
+                    f"（{type(exc).__name__}）⇒ 形状无从判断 ⇒ **判不了**")
+        if not isinstance(data, list) or not all(
+                isinstance(r, dict) and "id" in r for r in data):
+            return (f"① 路 2（原始 JSON）：`{f.name}` 的形状不是 {RAW_SHAPE_HINT}"
+                    f"（顶层是 {type(data).__name__}）⇒ 本函数认不出 ⇒ **判不了**。"
+                    f"⚠️ 「认不出」不是「这份料是空的」—— 别把它读成 ① 红")
+        for r in data:
+            recs[str(r["id"]).rsplit("/", 1)[-1]] = r
     ids = set(recs)
     n_edges = 0
     dropped = 0
     for r in recs.values():
-        refs = {x.rsplit("/", 1)[-1] for x in r.get("referenced_works") or []}
+        refs = {str(x).rsplit("/", 1)[-1] for x in (r.get("referenced_works") or [])}
         n_edges += len(refs & ids)
         dropped += len(refs) - len(refs & ids)
     return len(recs), n_edges, {"原始 JSON 文件数": len(files), "丢弃外部引用": dropped}
@@ -401,7 +431,15 @@ def main() -> int:
     n1, e1 = count_via_markdown(d)
     got2 = count_via_raw(raw)
     print(f"  路 1（markdown 往返）：节点 {n1} · 边 {e1}")
-    if got2 is None:
+    if isinstance(got2, str):
+        # ⚠️ **有 JSON 但形状不是本函数认得的那种** ⇒ 判不了（**不是红、不是崩**）。
+        #    与下面的 `None`（一个 `*.json` 都没有）**分开报** —— 两种「判不了」的
+        #    原因不同，共用一句话就等于没说原因。
+        SKIP.append(got2)
+        print(f"  ⊘ {got2}")
+        print("     ⚠️ 于是「两条独立数法」这一条**本趟没有内容** —— "
+              "**别把这一趟读成「① 过了」，也别读成「① 红了」**")
+    elif got2 is None:
         # ⚠️ **判不了 ≠ 红，也 ≠ 通过。** 它单独计数（`SKIP`），并且逐字印出**为什么** ——
         #    否则「这一条本趟没有内容」与「这一条过了」在只看最后那行汇总时长得一模一样。
         why2 = (f"① 路 2（原始 JSON）：`{raw}` 里**一个 `*.json` 都没有** ⇒ "

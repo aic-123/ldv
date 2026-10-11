@@ -69,6 +69,31 @@ def raises(name: str, fn) -> None:
     FAIL.append(name + "  —— 该抛异常却没抛")
 
 
+def need_at_least(seq, n: int, what: str) -> bool:
+    """**夹具前提守卫** —— `seq` 不够 `n` 个就记一条**跳过**并返回 `False`。
+
+    ⚠️ 为什么这份套件需要它（2026-10-11 在 7 份新语料上实测）：
+
+       这一套的夹具全是**按随仓库那份 36 项语料挑的** —— `ids[:2]` 先建 2 维护 n−2、
+       `ids[10]` 当探针项、`ids[0..3]` 造两条关系、两个有子的父方向……
+       换一份更小的语料，前提不成立 ⇒ 逐条 `IndexError` ⇒ **整趟测试崩**。
+       而 **崩比红更糟**：红是判据说话，崩是判据没了 —— `main()` 里的函数
+       一个接一个跑，崩在中间就等于**后面的测试函数一条都不跑**，
+       而汇总行也不会打印。读输出的人看到的是一个截断的日志，不是一条红。
+
+    ⚠️ 于是每个用**固定下标**取夹具元素的测试**自己守前提**，并逐字说明
+       「跳过了什么、为什么」。**跳过 ≠ 通过** —— 它明说这一趟没查这一条。
+
+    ⚠️ 反过来说：**不许**把它当成「小语料就一律放行」。守卫只挡
+       「前提根本不成立」那一种；前提成立而判据说话时，照旧红。
+    """
+    if len(seq) >= n:
+        return True
+    PASS.append(f"{what}（**跳过**：只有 {len(seq)} 个，这份夹具要 ≥{n} 个 —— "
+                f"它是按随仓库那份 36 项语料挑的）")
+    return False
+
+
 def _cone_invariant_bad(kernel) -> list[tuple[str, list[str], list[str]]]:
     """`_path` 的**不变量**违约清单（2026-10-08 起）。
 
@@ -1456,6 +1481,14 @@ def test_stay_at_parent() -> None:
     nodes, edges, _ = loaded
     ids = sorted(nodes)
 
+    # ⚠️ 这份夹具是**按随仓库那份语料（36 项）挑的**：先建 2、维护 34，且下面用 `ids[10]`
+    #    当探针项。换一份小语料时 `ids[10]` 直接 `IndexError` ⇒ **整趟测试崩**
+    #    （不是红 —— 红是判据说话，崩是判据没了：后面的测试函数一个都不跑）。
+    #    实测：`edge-single`(1 项) 与 `edge-tiny`(4 项) 两份语料都崩在这一行。
+    #    ⇒ 语料不够大就**整条报跳过**，并把「跳过了什么」写出来 —— 跳过 ≠ 通过。
+    if not need_at_least(ids, 11, "留在父方向（先建 2、维护 n−2，`ids[10]` 当探针）"):
+        return
+
     def _build(init: list[str]) -> Kernel:
         return build_incremental(make_builder("sequence", nodes, edges), nodes, init, ids[2:])
 
@@ -2412,20 +2445,30 @@ def test_tree_premise() -> None:
        worst_fan > 1, f"扇出 max = {worst_fan}")
 
     # --- ④ 注入：把入度改成 2（造 DAG）⇒ B13 必须红 -------------------------
+    # ⚠️ 这段要**两个**内部父方向：把 `p2` 的一个子挂到 `p1` 底下 ⇒ 那个子的语义入度
+    #    变成 2。与 `test_stay_at_parent` 同一类问题：**夹具的前提是按随仓库那份
+    #    36 项语料挑的**。语料小到内部父方向少于两个时 `parents[1]` 直接
+    #    `IndexError` ⇒ **整趟测试崩**（红是判据说话，崩是判据没了 —— 后面的测试
+    #    函数一个都不跑）。实测：`edge-single`(1 项) 崩在这一行。
+    #    ⇒ 前提不成立就报**跳过**，并把「跳过了什么」写出来 —— 跳过 ≠ 通过。
     k, _ = build_keyset(nodes)
     parents = [d for d in k.all_directions() if k.children_of(d)]
-    p1, p2 = parents[0], parents[1]
-    victim = k.children_of(p2)[0]
-    k._children[p1.did] = tuple(k._children[p1.did]) + (victim.did,)  # noqa: SLF001
-    deg, _fan = sem_deg(k)
-    ok("★ [树性] 注入生效：语义入度真的变成了 2",
-       max(deg.values()) == 2, f"实测 max = {max(deg.values())}")
-    rep = Report(plugin="keyset", expects=("B13",))
-    b13_rank_well_founded(k, rep)
-    ok("★★ [树性] **`B13` 对 DAG 必须报「否」**"
-       " —— 改之前它对 DAG 照样报「是」，`§10.2 D` 的前提因此没被守",
-       rep.assertions[0].result is Tri.NO,
-       f"B13 = {rep.assertions[0].result}；{rep.assertions[0].detail[:60]}")
+    if len(parents) < 2:
+        PASS.append(f"[树性] 注入入度 = 2 造 DAG（**跳过**：只有 {len(parents)} 个"
+                    f"内部父方向，这份夹具要 ≥2 —— 它是按随仓库那份 36 项语料挑的）")
+    else:
+        p1, p2 = parents[0], parents[1]
+        victim = k.children_of(p2)[0]
+        k._children[p1.did] = tuple(k._children[p1.did]) + (victim.did,)  # noqa: SLF001
+        deg, _fan = sem_deg(k)
+        ok("★ [树性] 注入生效：语义入度真的变成了 2",
+           max(deg.values()) == 2, f"实测 max = {max(deg.values())}")
+        rep = Report(plugin="keyset", expects=("B13",))
+        b13_rank_well_founded(k, rep)
+        ok("★★ [树性] **`B13` 对 DAG 必须报「否」**"
+           " —— 改之前它对 DAG 照样报「是」，`§10.2 D` 的前提因此没被守",
+           rep.assertions[0].result is Tri.NO,
+           f"B13 = {rep.assertions[0].result}；{rep.assertions[0].detail[:60]}")
 
     # --- ⑤ 反向判据：还原成树 ⇒ B13 必须绿（防「永远红」） -------------------
     k2, _ = build_keyset(nodes)
@@ -3445,19 +3488,30 @@ def test_persistence() -> None:
            "未漂移 ⇒ 两条路都对")
 
     # --- ⑧ 权威边自相矛盾 ⇒ 当场报错，不静默取一个 ---------------------------
+    # ⚠️ 这段要**两个**有子的父方向（把一个父的子挪到另一个父底下 ⇒ 那个子两个父）。
+    #    与 `test_tree_premise` ④ 同一类问题：**夹具前提是按随仓库那份 36 项语料挑的**。
+    #    语料小到有子的父少于两个时 `parents[1]` 直接 `IndexError` ⇒ **整趟测试崩**
+    #    （红是判据说话，崩是判据没了 —— 后面的测试函数一个都不跑）。
+    #    实测：`edge-single`(1 项) 崩在这一行。
+    #    ⇒ 前提不成立就报**跳过**，并把「跳过了什么」写出来 —— 跳过 ≠ 通过。
     k, plug = _persist_build(_K, "keyset", nodes, edges)
     data = P.to_dict(k)
     parents = [p for p, kids in data["子"].items() if kids]
-    victim = data["子"][parents[1]][0]
-    data["子"][parents[0]] = list(data["子"][parents[0]]) + [victim]
-    raised = False
-    try:
-        P.from_dict(json.loads(json.dumps(data)), plug)
-    except P.PersistenceError:
-        raised = True
-    ok("★★ [P6] **权威边不是树**（同一个子两个父）⇒ `from_dict` 当场报错，"
-       "不静默取一个 —— 「静默取一个」与「这份存档本来是好的」在读回的结构上长得一样",
-       raised, "改 `子` 之后 DAG 存档")
+    if len(parents) < 2:
+        PASS.append(f"[P6] 权威边自相矛盾（同一个子两个父）⇒ `from_dict` 报错"
+                    f"（**跳过**：只有 {len(parents)} 个有子的父方向，这份夹具要 ≥2 —— "
+                    f"它是按随仓库那份 36 项语料挑的）")
+    else:
+        victim = data["子"][parents[1]][0]
+        data["子"][parents[0]] = list(data["子"][parents[0]]) + [victim]
+        raised = False
+        try:
+            P.from_dict(json.loads(json.dumps(data)), plug)
+        except P.PersistenceError:
+            raised = True
+        ok("★★ [P6] **权威边不是树**（同一个子两个父）⇒ `from_dict` 当场报错，"
+           "不静默取一个 —— 「静默取一个」与「这份存档本来是好的」在读回的结构上长得一样",
+           raised, "改 `子` 之后 DAG 存档")
 
     # --- ⑨ 格式号不符 ⇒ 报错 -------------------------------------------------
     bad_fmt = dict(P.to_dict(k))
@@ -3711,6 +3765,10 @@ def test_reusable_build() -> None:
     nodes, edges, _ = loaded
     all_items = F.items(nodes)
     ids = sorted(all_items)
+    # ⚠️ 与上面几处同一类前提：这段要用**至少一个项**当探针（`all_items[ids[0]]`）。
+    #    语料里一个项都没有时直接 `IndexError` ⇒ 整趟崩。实测：`edge-single`(0 项)。
+    if not need_at_least(ids, 1, "装配缓存（要至少一个项当探针）"):
+        return
     probe_item = dict(all_items[ids[0]])
 
     def produce():
@@ -4604,90 +4662,100 @@ def test_views() -> None:
     ok("★ [E] `§A1` 视图集合为空 ⇒ **跳过**（不是过）",
        _result(_rep, "A1") is Tri.UNEXPANDED)
 
-    # --- ③ `§A1` **不被** `B16` 蕴含 ----------------------------------------
-    #
-    # 这是这一层最容易做成「换个写法」的地方：若「具体化」=「把成员的覆盖并起来」，
-    # `§A1` 就**恒同真**（`B16` 全绿 ⇒ 它全绿），一条不提供独立信息的判据。
-    # 它的实际内容是「**合并**（§I2）之后还盖不盖得住」——
-    # 合并是**另一个函数**，它可能把覆盖收窄到装不下某个成员。
     nodes, edges, _ = load()
     kernel, plug = build_keyset(nodes)
     cover = coverage_of("keyset", nodes, edges)
     dirs = [d for d in kernel.all_directions() if kernel.members_of(d)][:4]
     ids = [d.did for d in dirs]
-    spec4 = ViewSpec(universe=tuple(ids), partition=(frozenset(ids),),
-                     relation=frozenset({(ids[0], ids[1]), (ids[2], ids[3])}))
-
-    class _MergeUnionsReq(KeysetPlugin):
-        """注入：`合并` 取 `req` 的**并**（正确做法是取**交**）⇒ 覆盖被**收窄**。"""
-
-        def merge(self, ds):  # noqa: ANN001, ANN201
-            if not ds:
-                return frozenset(), frozenset()
-            req = frozenset().union(*[frozenset(d.payload[0]) for d in ds])
-            forb = frozenset().union(*[frozenset(d.payload[1]) for d in ds])
-            return (req, forb)
-
-    rep_good, rep_bad = Report(plugin="(合成)"), Report(plugin="(合成)")
-    a1_soundness(build_views(kernel, spec4, cover, plug), rep_good)
-    a1_soundness(build_views(kernel, spec4, cover, _MergeUnionsReq()), rep_bad)
-    b16_rep = Report(plugin="(合成)")
-    from ldv.checks.coverage import b16_members_covered
-    b16_members_covered(kernel, cover, b16_rep, path="§A1 独立性对照")
-    ok("★★ [E] `§A1` 的**独立性**：规范构造下 过；`合并` 取错（并而非交）⇒ **红**",
-       _result(rep_good, "A1") is Tri.YES and _result(rep_bad, "A1") is Tri.NO)
-    ok("★★ [E] 而**同一个注入下 `B16` 仍然是绿的** ⇒ `§A1` **不是** `B16` 的换写法"
-       "（它的内容是「合并之后还盖得住」，不是「成员 ⊆ 自己的覆盖」）",
-       _result(b16_rep, "B16") is Tri.YES)
-
-    # --- ④ 全链路：真内核 + 合成 spec ----------------------------------------
-    spec4b = ViewSpec(universe=tuple(ids),
-                      partition=(frozenset(ids[:2]), frozenset(ids[2:])),
-                      relation=frozenset({(ids[0], ids[2])}))
-    vs = build_views(kernel, spec4b, cover, plug)
-    rep = Report(plugin="(视图)", expects=VIEW_CODES)
-    a1_soundness(vs, rep)
-    a2_stable(spec4b, vs.q, rep)
-    a3_coarsest(spec4b, vs.q, rep)
-    # ⚠️ 这里**故意**给空的读数声明：要验的正是「一条读数都没声明 ⇒ **跳过**，
-    #    **不许默认成 distributive**」（设计稿 §10 停止条件 2）。
-    a4_category(view_parts(vs.q, lambda d: subtree_of(kernel, d)),
-                reading_ctx(kernel, spec4b), [], rep)
-    a5_ledger(ledger_entries(kernel, spec4b), vs,
-              lambda did, item: warranted_of(kernel, did, item),
-              frozenset(kernel.items), rep)
-    with tempfile.TemporaryDirectory() as _td:
-        a6_roundtrip(vs, kernel, cover, plug, rep, path=Path(_td) / "views.json")
-    ok("★ [E] 全链路（真内核 + 合成 spec）：`build_views` 出来的 `Q` 上 "
-       "`§A1`/`§A2`/`§A3`/`§A6` 全绿",
-       all(_result(rep, c) is Tri.YES for c in ("A1", "A2", "A3", "A6")),
-       "；".join(a.line() for a in rep.assertions))
-    ok("★★ [E] 而 `§A4`/`§A5` 在这条链路上**跳过**（没声明读数、账为空）—— "
-       "**跳过不是红，但也不是过**：判据的适用范围由「它在这条方向上有没有内容」"
-       "决定。默认成「过」的话，「空转」与「通过」就再也分不开了",
-       all(_result(rep, c) is Tri.UNEXPANDED for c in ("A4", "A5")),
-       "；".join(a.line() for a in rep.assertions))
-    prof = view_profile(vs)
-    print(f"    · 全链路读数：{prof['方向数']} 个方向 ⇒ {prof['视图数']} 张视图，"
-          f"最大一块 {prof['最大块']}｜具体化 {prof['具体化']} vs 成员 {prof['成员']}")
-
-    # --- ⑤ 外生 spec 的门禁：三种跳过 + 「声明了却坏了」是**报错** --------------
     corpus = {"项数": len(nodes), "边数": sum(len(v) for v in edges.values())}
-    s, why = spec_for({}, "keyset", corpus)
-    ok("★ [E] 外生项**未声明** ⇒ 跳过（不是猜一个）", s is None and "未声明" in why)
-    s, why = spec_for({"语料": {"项数": 1, "边数": 1}, "方向": "keyset"}, "keyset", corpus)
-    ok("★ [E] 指纹对不上 ⇒ 跳过，且说清是**换了语料**", s is None and "另一份语料" in why)
-    s, why = spec_for({"语料": corpus, "方向": "reach"}, "keyset", corpus)
-    ok("★ [E] 声明写的是**别的方向** ⇒ 跳过", s is None and "另一条方向" in why)
-    raises("★★ [E] **声明了却坏了**（`P` 不是划分）⇒ **报错**，不是跳过 ——"
-           "「写错了」与「还没写」必须分得开，否则写错的声明看起来像没写",
-           lambda: spec_for({"语料": corpus, "方向": "keyset", "universe": ["a", "b"],
-                             "partition": [["a"]], "relation": []}, "keyset", corpus))
-    s, why = spec_for({"语料": corpus, "方向": "keyset",
-                       "universe": list(ids), "partition": [list(ids)],
-                       "relation": [[ids[0], ids[1]]]}, "keyset", corpus)
-    ok("★ [E] 声明**齐全** ⇒ 解得出 spec（跳过的那三种之外还有一条能过的路）",
-       s is not None and len(s.universe) == len(ids))
+    # ⚠️ ③④⑤ 的前提是 `ids` 至少 4 个（见上面 ③ 的说明）。前提不成立就
+    #    **只跳这三段** —— ⑥（合成 spec 的闸门）与 ⑦（committed 声明）的前提
+    #    不在语料上，**照跑**。整段 `return` 会把它们一起吞掉，而「被吞掉的绿」
+    #    与「没跑过的绿」在只看汇总时长得一样（本仓库从头到尾在防的形状）。
+    if need_at_least(ids, 4,
+                     "§A1 独立性对照 + 全链路 + `spec_for` 门禁"):
+        # --- ③ `§A1` **不被** `B16` 蕴含 ----------------------------------------
+        #
+        # 这是这一层最容易做成「换个写法」的地方：若「具体化」=「把成员的覆盖并起来」，
+        # `§A1` 就**恒同真**（`B16` 全绿 ⇒ 它全绿），一条不提供独立信息的判据。
+        # 它的实际内容是「**合并**（§I2）之后还盖不盖得住」——
+        # 合并是**另一个函数**，它可能把覆盖收窄到装不下某个成员。
+        #
+        # ⚠️ ③④ 要 **4 个有成员的方向**（造两条边 `(ids[0],ids[1])` / `(ids[2],ids[3])`）。
+        #    与 `test_stay_at_parent` 同一类问题：**夹具前提按随仓库那份 36 项语料挑的**，
+        #    小语料上 `ids[3]` 直接 `IndexError` ⇒ 整趟崩（实测 `edge-single`）。⇒ 守前提。
+        spec4 = ViewSpec(universe=tuple(ids), partition=(frozenset(ids),),
+                         relation=frozenset({(ids[0], ids[1]), (ids[2], ids[3])}))
+
+        class _MergeUnionsReq(KeysetPlugin):
+            """注入：`合并` 取 `req` 的**并**（正确做法是取**交**）⇒ 覆盖被**收窄**。"""
+
+            def merge(self, ds):  # noqa: ANN001, ANN201
+                if not ds:
+                    return frozenset(), frozenset()
+                req = frozenset().union(*[frozenset(d.payload[0]) for d in ds])
+                forb = frozenset().union(*[frozenset(d.payload[1]) for d in ds])
+                return (req, forb)
+
+        rep_good, rep_bad = Report(plugin="(合成)"), Report(plugin="(合成)")
+        a1_soundness(build_views(kernel, spec4, cover, plug), rep_good)
+        a1_soundness(build_views(kernel, spec4, cover, _MergeUnionsReq()), rep_bad)
+        b16_rep = Report(plugin="(合成)")
+        from ldv.checks.coverage import b16_members_covered
+        b16_members_covered(kernel, cover, b16_rep, path="§A1 独立性对照")
+        ok("★★ [E] `§A1` 的**独立性**：规范构造下 过；`合并` 取错（并而非交）⇒ **红**",
+           _result(rep_good, "A1") is Tri.YES and _result(rep_bad, "A1") is Tri.NO)
+        ok("★★ [E] 而**同一个注入下 `B16` 仍然是绿的** ⇒ `§A1` **不是** `B16` 的换写法"
+           "（它的内容是「合并之后还盖得住」，不是「成员 ⊆ 自己的覆盖」）",
+           _result(b16_rep, "B16") is Tri.YES)
+
+        # --- ④ 全链路：真内核 + 合成 spec ----------------------------------------
+        spec4b = ViewSpec(universe=tuple(ids),
+                          partition=(frozenset(ids[:2]), frozenset(ids[2:])),
+                          relation=frozenset({(ids[0], ids[2])}))
+        vs = build_views(kernel, spec4b, cover, plug)
+        rep = Report(plugin="(视图)", expects=VIEW_CODES)
+        a1_soundness(vs, rep)
+        a2_stable(spec4b, vs.q, rep)
+        a3_coarsest(spec4b, vs.q, rep)
+        # ⚠️ 这里**故意**给空的读数声明：要验的正是「一条读数都没声明 ⇒ **跳过**，
+        #    **不许默认成 distributive**」（设计稿 §10 停止条件 2）。
+        a4_category(view_parts(vs.q, lambda d: subtree_of(kernel, d)),
+                    reading_ctx(kernel, spec4b), [], rep)
+        a5_ledger(ledger_entries(kernel, spec4b), vs,
+                  lambda did, item: warranted_of(kernel, did, item),
+                  frozenset(kernel.items), rep)
+        with tempfile.TemporaryDirectory() as _td:
+            a6_roundtrip(vs, kernel, cover, plug, rep, path=Path(_td) / "views.json")
+        ok("★ [E] 全链路（真内核 + 合成 spec）：`build_views` 出来的 `Q` 上 "
+           "`§A1`/`§A2`/`§A3`/`§A6` 全绿",
+           all(_result(rep, c) is Tri.YES for c in ("A1", "A2", "A3", "A6")),
+           "；".join(a.line() for a in rep.assertions))
+        ok("★★ [E] 而 `§A4`/`§A5` 在这条链路上**跳过**（没声明读数、账为空）—— "
+           "**跳过不是红，但也不是过**：判据的适用范围由「它在这条方向上有没有内容」"
+           "决定。默认成「过」的话，「空转」与「通过」就再也分不开了",
+           all(_result(rep, c) is Tri.UNEXPANDED for c in ("A4", "A5")),
+           "；".join(a.line() for a in rep.assertions))
+        prof = view_profile(vs)
+        print(f"    · 全链路读数：{prof['方向数']} 个方向 ⇒ {prof['视图数']} 张视图，"
+              f"最大一块 {prof['最大块']}｜具体化 {prof['具体化']} vs 成员 {prof['成员']}")
+
+        # --- ⑤ 外生 spec 的门禁：三种跳过 + 「声明了却坏了」是**报错** --------------
+        s, why = spec_for({}, "keyset", corpus)
+        ok("★ [E] 外生项**未声明** ⇒ 跳过（不是猜一个）", s is None and "未声明" in why)
+        s, why = spec_for({"语料": {"项数": 1, "边数": 1}, "方向": "keyset"}, "keyset", corpus)
+        ok("★ [E] 指纹对不上 ⇒ 跳过，且说清是**换了语料**", s is None and "另一份语料" in why)
+        s, why = spec_for({"语料": corpus, "方向": "reach"}, "keyset", corpus)
+        ok("★ [E] 声明写的是**别的方向** ⇒ 跳过", s is None and "另一条方向" in why)
+        raises("★★ [E] **声明了却坏了**（`P` 不是划分）⇒ **报错**，不是跳过 ——"
+               "「写错了」与「还没写」必须分得开，否则写错的声明看起来像没写",
+               lambda: spec_for({"语料": corpus, "方向": "keyset", "universe": ["a", "b"],
+                                 "partition": [["a"]], "relation": []}, "keyset", corpus))
+        s, why = spec_for({"语料": corpus, "方向": "keyset",
+                           "universe": list(ids), "partition": [list(ids)],
+                           "relation": [[ids[0], ids[1]]]}, "keyset", corpus)
+        ok("★ [E] 声明**齐全** ⇒ 解得出 spec（跳过的那三种之外还有一条能过的路）",
+           s is not None and len(s.universe) == len(ids))
 
     # --- ⑥ 闸门自己：`cap` 必须在**时间与内存上**都拦得住 --------------------
     #
@@ -4925,11 +4993,18 @@ def test_multilevel() -> None:
     if loaded is None:
         return
     nodes, edges, _ = loaded
-    doc = load_spec_file()
-    if not doc:
-        return
-    spec, _why = spec_for(doc, str(doc.get("方向") or ""), corpus_fingerprint(nodes, edges))
-    if spec is None:
+    # ⚠️ 必须带 `(find_corpus(), corpus)` —— 与 `run_checks` 里那三处、以及
+    #    `test_injections._ml_chain` **同一个调法**（长注释见那里）。不带参数等于
+    #    「只找位置、不认语料」⇒ 永远拿**仓内那份**声明 ⇒ 换任何别的语料，
+    #    `spec_for` 都因指纹不符返回 `None`。
+    #    ⚠️ 原来那两处 `return` 是**静默**的 —— 整组 `§M0`–`§M6` 一条都不跑，
+    #    而退出码照样 0：「空转」与「通过」长得一模一样。改成**记一条跳过**。
+    _corpus = corpus_fingerprint(nodes, edges)
+    doc = load_spec_file(find_corpus(), _corpus)
+    spec, _why = spec_for(doc, str(doc.get("方向") or ""), _corpus)
+    if not doc or spec is None:
+        PASS.append(f"`§M0`–`§M6` 真语料（**跳过**：这份语料没有对得上的外生声明"
+                    f" —— {_why}）")
         return
     which = str(doc["方向"])
 
@@ -5175,12 +5250,15 @@ def test_retriever() -> None:
     if loaded is None:
         return
     nodes, edges, _ = loaded
-    doc = load_spec_file()
-    if not doc:
-        return
+    # ⚠️ 同上：必须带 `(find_corpus(), corpus)`；静默 `return` 改成**记一条跳过**
+    #    （否则整组 `T1`–`T3` 一条不跑而退出码照样 0）。
+    _corpus = corpus_fingerprint(nodes, edges)
+    doc = load_spec_file(find_corpus(), _corpus)
     which = str(doc.get("方向") or "")
-    spec, _why = spec_for(doc, which, corpus_fingerprint(nodes, edges))
-    if spec is None:
+    spec, _why = spec_for(doc, which, _corpus)
+    if not doc or spec is None:
+        PASS.append(f"`T1`–`T3` 真语料（**跳过**：这份语料没有对得上的外生声明"
+                    f" —— {_why}）")
         return
 
     kernel, plugin, queries, _mk = batch_kernel(which, nodes, edges)

@@ -101,6 +101,24 @@ def b11_propensity_complete(kernel: Any, plugin: Any, rep: Report) -> None:
     res = kernel.query(probe)
     shown = kernel.show(res.yes)
     if len(shown) < 2:
+        # ⚠️ **「判不了」与「实现坏了」不许长得一样**（2026-10-11 实测）。
+        #    判据 (b) 的**前提**是「展示列表至少 2 项」—— 没有两个位次，就谈不上
+        #    「第 1 位和第 N 位的倾向是否不同」。前提不成立时分两种，要分得开：
+        #
+        #      方向总数 < 2  ⇒ 前提**根本不可能**成立（这是**语料侧**的事）
+        #                      ⇒ 报**跳过**。报红是在**指控实现坏了**，而实现没坏。
+        #      方向够多而列表塌到 1 项 ⇒ 那是**实现侧**的「不该发生」⇒ 照旧报红。
+        #
+        #    ⚠️ 这条在随仓库那份 36 项语料上**走不到**（25 个方向 ⇒ `shown` 25 项），
+        #       所以它**不会**改那份基线；它只在「一个方向」的边界语料上生效
+        #       （实测 `edge-single`：1 个方向 ⇒ 原来报红）。
+        if len(kernel.all_directions()) < 2:
+            rep.add("B11", "倾向完备 + 位置敏感", Tri.UNEXPANDED,
+                    f"`kernel` 只有 {len(kernel.all_directions())} 个方向 ⇒ "
+                    f"展示列表最多 1 项 ⇒ 位次敏感**判不了**"
+                    f"（判不了 ≠ 红：红是说实现坏了）"
+                    f"（§10 停止条件：**跳过 ≠ 通过**）")
+            return
         bad.append(f"展示列表只有 {len(shown)} 个方向 —— 判不出位次敏感（不该发生）")
     else:
         first = kernel.record_usage(kernel.direction(shown[0]), {"outcome": 1.0})
