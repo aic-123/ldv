@@ -4559,20 +4559,24 @@ def test_multilevel() -> None:
 
     ⚠️ **产物是第 0 层**（视图层）。「折叠**不止一层**」**不是**这一组要断言的东西 ——
        本设计的产物就是 L0，**一层就够**（实测真折 0 层）。
-       见 `m1_shrink` 的 docstring。
+       见 `m1_view_layer` 的 docstring。
+
+    ⚠️ `§M1` 的判据 2026-10-10 **换了**：`shrink ≤ 阈值` → `Q₀ == csr(spec)`。
+       旧那条判的是**语料**（三份新语料上它是唯一的红，而 `§A3` 同时实测
+       「已是最粗」⇒ 可证的不可能）⇒ 收缩比降为**读数**。
 
     ## 分六段，每段都要有已知答案
 
         ① 合成对照   七条各自的「该绿时绿、该红时红」（`known_answer_controls`）
-        ② 真跑一遍   在 committed 规格上跑 ⇒ 七条全过、**视图层真的在缩**
+        ② 真跑一遍   在 committed 规格上跑 ⇒ 七条全过、**视图层就是 `csr`**
         ③ 商的结构   `quotient_spec` 的 `universe` / `relation` / `partition` 三件事
         ④ `§M4` vs `§A3`  **同时观察**两条（否则「分得开」这句话是空的）
         ⑤ 同一个数   `§M4` 与 `§A3` 用的 `n_cand` 必须是**同一个函数**算的
         ⑥ 标题来源   真跑时印的 == 跳过时印的（一处定义、两处用）
 
     ⚠️ ④ 是前作核验 §3.3 明写的验收条件：`§A3` 跳过 = 「这一层判不了」（读数层面），
-       `§M4` 红 = 「这一层压根不该这么设计」（设计层面，阻止交付）。
-       两者在只看布尔值时**长得一模一样** ⇒ 必须**同时**观察到才算验过。
+       而 `§M4` **不判**（2026-10-10 降级为读数）—— 它把「这一趟走的是哪条 oracle」
+       印出来。两者在只看布尔值时**长得一模一样** ⇒ 必须**同时**观察到才算验过。
     """
     from ldv.checks._framework import Report
     from ldv.checks.abstraction import load_spec_file, spec_for
@@ -4654,13 +4658,22 @@ def test_multilevel() -> None:
        all(a.result is Tri.YES for a in rep.assertions)
        and len(rep.assertions) == len(MULTILEVEL_CODES),
        f"{[(a.code, str(a.result)) for a in rep.assertions]}")
-    ok("★★ [M] **视图层真的在缩**（`§M1`）—— 这是这一组唯一的**产物**判据。"
-       "⚠️ 旧断言是「折叠**不止一层**」，那一条是**反需求**的：产物就是第 0 层，"
-       "「一层就够」（见 `m1_shrink` 的 docstring）",
-       levels[0].shrink <= MIN_SHRINK_RATIO
-       and len(levels[0].q) < len(levels[0].spec.universe),
+    ok("★★ [M] **视图层就是 `csr(spec)`**（`§M1`）—— L0 是**产物** ⇒ 它必须是最粗"
+       "稳定细化，不许是别的划分（传播结果 / 更粗的 / 更细的都不许）。"
+       "⚠️ 旧断言是「收缩比 ≤ 阈值」：那条判的是**语料**（分子由结构决定、分母由键集"
+       "决定 ⇒ 系统无自由度），三份新语料上它是唯一的红，而 `§A3` 同时实测「已是最粗」"
+       "⇒ **可证的不可能**。收缩比已降为**读数**（见 `m1_view_layer` 的 docstring）",
+       partition_of(levels[0].q)
+       == partition_of(coarsest_stable_refinement(levels[0].spec)),
        f"L0：|U| = {len(levels[0].spec.universe)} ⇒ |Q| = {len(levels[0].q)}"
-       f"，收缩比 {levels[0].shrink:.3f} ≤ {MIN_SHRINK_RATIO}")
+       f"，`Q₀ == csr` ✓（收缩比 {levels[0].shrink:.3f} 只作读数）")
+    ok("★ [M] **刹车与判据 `§M1` 解耦**：末层停因若写作 `M1 收缩比`，"
+       "它的收缩比必须**真的**超阈值 —— 刹车按 `MIN_SHRINK_RATIO` 停，"
+       "而 `§M1` 判的是 `Q₀ == csr`（两件事，混起来会让「红」指不出病因）",
+       levels[-1].stopped != "M1 收缩比"
+       or levels[-1].shrink > MIN_SHRINK_RATIO,
+       f"末层 {levels[-1].stopped!r}，收缩比 {levels[-1].shrink:.3f} "
+       f"vs 刹车阈值 {MIN_SHRINK_RATIO}")
     ok("★★ [M] `render_levels` 第一行说的是**产物是什么**（「模糊掌握」层）—— "
        "只印层数的话，「这东西做出来干什么用的」在输出里**读不出来**",
        "模糊掌握" in render_levels(levels).splitlines()[0],

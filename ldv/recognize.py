@@ -45,6 +45,22 @@
       与流程 B 的事（`§1` 表）。它只把**已建成的结构**重新编码成认识。
     **不改外生项。** `P` / `E` 仍只能由人声明（`§K9`）；本入口**消费**声明，不生产它。
 
+## ⚠️ 汇总行与退出码（2026-10-10 改）
+
+一条方向的结局有**三种**（`OUTCOMES`），汇总行**分开印**，退出码看**有没有落地**：
+
+    写入 / 只印（dry-run）  ⇒ **落地了**（维护跑了；dry-run 只是没写文件）
+    跳过                    ⇒ 外生声明判不了 ⇒ 本方向**没跑**
+
+    **一条都没落地 ⇒ 退出码 1**（「跳过 ≠ 通过」）。
+    有落地但也有跳过 ⇒ 退出码 0，而汇总行**明说跳了几条**。
+
+⚠️ 改之前这里是：`run_one` 两种结局都返回 `True`，汇总行印**命令行传的条数**
+  （`len(which)`），退出码恒 0 ⇒ 三份新语料上实测「3 条里只成功 1 条」，
+  汇总行照样印「维护了 3 条方向」。
+  ⇒ 「跳过与通过长得一模一样」在**汇总行**上的又一例：跳过的细节印在中间，
+    而**汇总是人看的那一行**。
+
 ## 为什么它是个**独立入口**（而不是塞进 `cli`）
 
 `cli` 每条方向**当场**建内核、跑 A/B/D，**不落盘结构**（`core/persist.py` 也没接线）
@@ -72,15 +88,32 @@ DIRECTIONS = ("keyset", "reach", "sequence")
 #: 视图列表在落盘字典里的**键名**。一处定义（`to_dict` 用的就是它）。
 VIEWS_KEY = "视图"
 
+#: `run_one` 的**三种结局**。**不许压成布尔** —— 「跳过」与「写成」在只看
+#: `True/False` 时**长得一模一样**，而这正是本仓库记过四次的形状
+#: （`Tri` 就是为它立的）。⚠️ 这里原来就压成了布尔，后果见 `run_one` 的 docstring。
+#:
+#:     `写入`  真的落了盘（`views.json`）
+#:     `只印`  `--dry-run`：维护跑了、**没写文件** —— 它**不是跳过**
+#:     `跳过`  外生声明判不了（方向不符 / 声明不在）⇒ 本方向**没跑**
+OUTCOMES = ("写入", "只印", "跳过")
 
-def run_one(which: str, nodes, edges, *, dry_run: bool) -> tuple[bool, str]:
+
+def run_one(which: str, nodes, edges, *, dry_run: bool) -> tuple[str, str]:
+    """跑一条方向 —— 返回 `(结局, 文本)`，结局取 `OUTCOMES` 里的一个。
+
+    ⚠️ **结局不许压成布尔**（2026-10-10 改）：这里原来两种结局都返回 `True`，
+       而汇总行印的是**命令行传的条数** ⇒ 实测三份新语料上「3 条里只成功 1 条」
+       照样印「维护了 3 条方向」且**退出码 0**。
+       「跳过」与「写成」在只看布尔值时**长得一模一样** —— 本仓库记过四次的形状，
+       这次它出在**汇总行**上（跳过的细节印在中间，而汇总是人看的那一行）。
+    """
     nodes_dir = find_corpus()
     corpus = corpus_fingerprint(nodes, edges)
     doc = load_spec_file(nodes_dir, corpus)
     spec, why = spec_for(doc, which, corpus)
     if spec is None:
-        return True, (f"═══ 方向 {which} ═══\n  ⊘ {why}\n"
-                      f"     ⇒ **本方向没跑**（跳过 ≠ 通过）")
+        return "跳过", (f"═══ 方向 {which} ═══\n  ⊘ {why}\n"
+                        f"     ⇒ **本方向没跑**（跳过 ≠ 通过）")
     kernel, plugin, _queries, _mk = batch_kernel(which, nodes, edges)
     cover = coverage_of(which, nodes, edges)
     path = view_persist.default_path(nodes_dir)
@@ -120,7 +153,7 @@ def run_one(which: str, nodes, edges, *, dry_run: bool) -> tuple[bool, str]:
             f"　⚠️ 无论如何**交付 `csr`** —— 更细的划分会让 `§A3` 判不了")
     if dry_run:
         lines.append("  （`--dry-run` —— **没写文件**）")
-        return True, "\n".join(lines)
+        return "只印", "\n".join(lines)
 
     vs = build_views(kernel, spec, cover, plugin)
     assert len(vs.q) == q_csr, (
@@ -132,7 +165,7 @@ def run_one(which: str, nodes, edges, *, dry_run: bool) -> tuple[bool, str]:
     #    打印出来是 `None` 与 `0`，而**文件其实是好的** ⇒ 又是一次「两处各写一份」。
     lines.append(f"  ✔ 已写入 {p}（读回格式串 {back.get(view_persist.FORMAT_KEY)!r}｜"
                  f"{len(back.get(VIEWS_KEY) or [])} 张视图｜q {len(back.get('q') or [])} 块）")
-    return True, "\n".join(lines)
+    return "写入", "\n".join(lines)
 
 
 def _propagated(seed_q: object, spec) -> list:
@@ -154,12 +187,25 @@ def main(argv: list[str]) -> int:
     print(f"语料 {find_corpus()}｜项 {len(nodes)}｜方向 {which}"
           + ("｜**dry-run**" if dry else ""))
     print()
+    counts = {k: 0 for k in OUTCOMES}
     for name in which:
-        _ok, text = run_one(name, nodes, edges, dry_run=dry)
+        outcome, text = run_one(name, nodes, edges, dry_run=dry)
+        counts[outcome] += 1
         print(text)
         print()
+    landed = counts["写入"] + counts["只印"]
     print("═══ 汇总 ═══")
-    print(f"  维护了 {len(which)} 条方向｜交付物一律 `csr`｜退出码 0")
+    print(f"  请求 {len(which)} 条方向 ⇒ 写入 {counts['写入']} · "
+          f"只印（dry-run）{counts['只印']} · **跳过 {counts['跳过']}**"
+          f"｜交付物一律 `csr`")
+    if not landed:
+        print(f"  ✗ **一条都没落地**（{counts['跳过']} 条全跳过）—— "
+              f"「跳过 ≠ 通过」⇒ **退出码 1**")
+        return 1
+    if counts["跳过"]:
+        print(f"  ⚠️ 上面这行**不是**「{len(which)} 条全过」："
+              f"{counts['跳过']} 条**跳过**（原因见各自那一段）")
+    print(f"  退出码 0（{landed} 条落地）")
     return 0
 
 

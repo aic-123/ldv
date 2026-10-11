@@ -29,36 +29,40 @@
 | 编号 | 守谁 | 守的东西 | 红形态 |
 |---|---|---|---|
 | `§M0` | **L0** | 视图关系**无自环** | 去掉 `A ≠ B` 过滤 ⇒ 出现 `(V, V)` |
-| `§M1` | **L0** | 视图层**真的在缩**（收缩比 ≤ 阈值） | 喂离散划分（块数 == 方向数） |
-| `§M4` | **L0** | 验证代价 `n_cand ≤ cap`（**折叠之前**判） | 一层 `Bell(K) > 200000` |
+| `§M1` | **L0** | 视图层**就是 `csr(spec)`**（交付物必须是最粗稳定细化） | 从 `q0` 缝喂一个**不是 `csr`** 的划分（离散 / `{U}` / 别的稳定划分） |
+| `§M4` | **L0** | 验证代价 `n_cand ≤ cap`（**读数**，2026-10-10 降级） | —— 不判，只报 |
 | `§M2` | 折叠 | 层数不超过 `MAX_LEVELS` | 调用方把 `max_levels` 抬到声明值之上 |
 | `§M3` | 折叠 | 总代价有界（`Σ|U_k| ≤ 2·|U_0|`） | 手造一个「每层不缩」的层叠 |
-| `§M5` | 折叠 | 终止**只由 `§M1` / `§M2` 触发** | 末层 `stopped` 为空（跑到不动点） |
+| `§M5` | 折叠 | 终止**只由收缩比 / 层数触发**（刹车，不是判据） | 末层 `stopped` 为空（跑到不动点） |
 | `§M6` | 折叠 | 顶层账 **⊇** 各层丢掉的并（账必须**被携带**） | 折叠时不携带账 |
 
 ⚠️ **「折叠不产出第二层」不等于「契约可以不要」。** `fold_until` 仍在跑，它的刹车、
    它的账、它的出口都还是**承诺** ⇒ 后四条照旧守。**但它们守的是机制，不是产物。**
    （⚠️ 旧标题里的「且不止一层」是**反需求**的：它把「折叠没折下去」写成红，
-   而产物恰恰就是第 0 层。已删 —— 见 `m1_shrink` / `m5_termination`。）
+   而产物恰恰就是第 0 层。已删 —— 见 `m1_view_layer` / `m5_termination`。）
 
-⚠️ **七条里有四条的红形态在契约层** —— `§M3` / `§M6` / `§M5` 与 `§M1` 的 `bad` 那一支。
+⚠️ **七条里有五条对生产输出恒真** —— `§M1` / `§M2` / `§M3` / `§M5` / `§M6`。
    它们是**守卫**，不是会开火的判据（与删除路径的 `D2`/`D3` 同一处境）：
-   `fold_until` 的每一层都缩一半以上 ⇒ `Σ|U_k| < 2|U_0|` 是**几何级数的推论**；
-   账 `ledger_k = ∪_{j≤k} lost_j` **按构造相等** ⇒ `§M6` 恒真；
-   而它的循环**只有两个出口**，都带非空 `stopped` ⇒ `§M5` 的正向半**不可达**；
-   一超阈值就**立刻停** ⇒ 超阈值的层只可能是末层 ⇒ `§M1` 的 `bad` **恒空**。
-   四条对 `fold_until` 的输出**恒真**。它们守的是**契约**：另一个实现若允许
-   「不缩的层继续折」/「跑到不动点就停」/「不携带账」，它们就会开火。
-   所以注入是**手造层叠**。
+
+       `§M1`  生产路径喂进去的 `q0` **就是** `csr(spec)` ⇒ 恒真（见 `m1_view_layer`）
+       `§M2`  它判的是**声明的** `MAX_LEVELS`，而 `fold_until` 自己就按它停
+       `§M3`  `fold_until` 的每一层都缩一半以上 ⇒ `Σ|U_k| < 2|U_0|` 是**几何级数的推论**
+       `§M5`  而它的循环**只有两个出口**，都带非空 `stopped` ⇒ 末层停因为空**不可达**
+       `§M6`  账 `ledger_k = ∪_{j≤k} lost_j` **按构造相等**
+
+   它们守的是**契约**：另一个实现若允许「不缩的层继续折」/「跑到不动点就停」/
+   「不携带账」/「把传播结果当交付」，它们就会开火。
    这一条必须写在这里 —— 否则「恒真」与「没在判」长得一模一样。
    ⚠️ **同一个事实在 `test_injections.py` 的 L0 节首也写着一份**（两处都是散文，
-   漂移了没有任何东西看得出来）⇒ **改一处要改两处**。能**真跑红**的是另外四条：
-   `§M0`（塞自环）/ `§M1`（喂离散划分）/ `§M2`（拆掉 `MAX_LEVELS`）/ `§M4`（一层 11 块）。
+   漂移了没有任何东西看得出来）⇒ **改一处要改两处**。注入分两路：
+   **手造层叠**的是 `§M3` / `§M5` / `§M6`；从**真路径的缝**喂坏输入的是
+   `§M0`（塞自环）/ `§M1`（`q0` 缝）/ `§M2`（`max_levels` 缝）。
 
-⚠️ **`§M4` 与 `§A3` 必须分得开**：
-   `§A3` 跳过 = 「**这一层判不了**」（读数层面）；`§M4` 红 = 「**这一层压根不该这么设计**」
-   （设计层面，阻止交付）。两者在只看布尔值时**长得一模一样** ⇒ `§M4` 在**折叠之前**判，
-   且注入必须**同时观察到**「`§M4` 红 + `§A3` 仍跳过」，否则「分得开」这句话是空的。
+⚠️ **`§M4` 与 `§A3` 的分工**（2026-10-10 `§M4` 降级为**读数**之后）：
+   `§A3` 会**跳过**（「这一层判不了」），而 `§M4` 现在**不判** —— 它把 `n_cand`
+   与「`§A3` 这趟走的是**哪条** oracle」**印出来**（`render_m4`）。
+   ⚠️ 这两件事在只看布尔值时**长得一模一样** ⇒ 它们必须**同时**被观察到
+   （`test_multilevel` ④ 段），否则「分得开」这句话是空的。
 """
 
 from __future__ import annotations
@@ -74,6 +78,7 @@ from ..core.views import (
     ViewSpec,
     coarsest_stable_refinement,
     fold_until,
+    partition_of,
     quotient_spec,
 )
 from ._framework import Report
@@ -103,11 +108,12 @@ def _title_m2(n: int) -> str:
 #:    （而「印错了数」与「印对了数」在只看红绿时长得一模一样）。
 TITLES: dict[str, str] = {
     "M0": "视图层：`E` 无自环（自环让「稳定」退化成恒真）",
-    "M1": "视图层：`shrink = |Q₀|/|U₀| ≤ 阈值`"
-          "（视图层**真的在缩** —— 这一层就是产物）",
+    "M1": "视图层：`Q₀ == csr(spec)`（这一层是产物 ⇒ 必须是**最粗稳定细化**；"
+          "收缩比只作**读数**）",
     "M2": _title_m2(MAX_LEVELS),
     "M3": "折叠：总代价 `Σ|U_k| ≤ 2·|U_0|`（几何递减的推论 —— 守卫）",
-    "M5": "折叠：终止只由 `§M1`（收缩比）/ `§M2`（层数）触发 —— 守卫",
+    "M5": "折叠：终止只由**收缩比**（刹车 `MIN_SHRINK_RATIO`，标签 `M1 收缩比`）"
+          "/ **层数**（`MAX_LEVELS`）触发 —— 守卫",
     "M6": "折叠：顶层账 ⊇ 各层丢掉的并（账必须**被携带**，不许现推）",
 }
 
@@ -140,54 +146,95 @@ def m0_no_self_loop(levels: Sequence[Level], rep: Report) -> None:
 
 # --- §M1 ----------------------------------------------------------------------
 
-def m1_shrink(levels: Sequence[Level], rep: Report,
-              min_ratio: float = MIN_SHRINK_RATIO) -> None:
-    """`§M1` —— **视图层真的在缩**：`shrink(L0) = |Q₀| / |U₀| ≤ min_ratio`。
+def m1_view_layer(levels: Sequence[Level], rep: Report) -> None:
+    """`§M1` —— **视图层就是 `csr(spec)`**：`Q₀ == coarsest_stable_refinement(spec)`。
 
-        `inner` = 除**末层**外的每一层（末层是终止层，按定义会超阈值）
-        `len(levels) == 1` 时 `inner` 就是那一层本身 —— **它不豁免**
+    ## ⚠️ 这是**守卫**（读之前先读这句）
 
-    ## 为什么末层豁免
+    生产路径上交给 `fold_until` 的 `q0` **就是** `csr(spec)`
+    （`run_multilevel` 的默认口径），而 `fold_until` 把 L0 **原样**交出来
+    ⇒ 这一条对生产输出**恒真**，红形态只能从 `q0` 那条缝**注入**
+    （`test_injections.inj_m1` 喂一个离散划分）。理由与 `§M3` / `§M5` / `§M6` 相同。
 
-    `fold_until` 的终止条件**就是**「这一层缩不动了」⇒ 末层按定义会超阈值。
-    把它算进去的话 `§M1` 在**任何**输入上都红 —— 一条常驻的红等于没人再看红。
+    它守的是**契约**，而且这条契约**已经立过**：`core/views.maintain`（`§A8`）那段
+    逐字写着「**交付物必须是 `csr`，不是传播结果**」，理由是**量的结果**——
+    交付一个更细的划分会让 `§A3`（视图最粗）的候选数从 4140 涨到 4213597
+    ⇒ **从可判退化成判不了**，而本仓库的规矩是「跳过 ≠ 通过」。
+    `§M1` 就是那句话在**多层这条缝**上的同一句：
+    **L0 是产物 ⇒ 它必须是最粗稳定细化，不许是别的划分。**
 
-    ## ⚠️ 旧的「且层数 ≥ 2」已删（2026-10-08）—— 它把两件事混成了一件
+    ## ⚠️ 旧形式（`shrink = |Q₀|/|U₀| ≤ 0.5`）已删（2026-10-10）—— 它判的是**语料**
 
-        ① 「视图层没缩够」  ← **真判据**：`|Q₀| == |U₀|` ⇒ 这一层没兑现「粗」
-        ② 「折叠没折下去」  ← **反需求**：本设计的产物就是第 0 层，**一层就够**
+    三份新语料（SNAP，形状互补）上**唯一的红**就是它，而那是**可证的不可能**：
 
-    而 `len(levels) == 1` 这个**读数**恰好**只**由 ① 造成 —— `fold_until` 的循环在
-    `shrink > min_ratio` 时**立刻返回**，所以「只有一层」⇔「`L0` 没缩够」。
-    ⇒ 判据直接写成 ① 本身**更强也更准**：它指着那一层的两个数（`|U₀|` / `|Q₀|`），
-      而不是绕道去数层数。红形态**不变**（同一个条件），只是说法对了。
+        语料              |U₀|  |Q₀|   shrink   阈值   `§A3` 的裁决
+        ─────────────────────────────────────────────────────────────────
+        36 项（仓内）       25     8    0.320    0.5   ——
+        snap-email-eu       83    42    0.506    0.5   已是最粗
+        snap-hepth          15     8    0.533    0.5   已是最粗
+        snap-hepth-dag      15     8    0.533    0.5   已是最粗（暴力枚举 4140 个粗化）
+        全量 3907           79     8    0.101    0.5   ——
 
-    ⚠️ 旧 docstring 还写着「`Q == P`（第一层就不缩）」—— 那句**把两个极端写反了**：
+    `§A3` 在三份新语料上都**实测**「**已是最粗**」⇒ `|Q₀|` 已达**理论下界**
+    （§3 定理：`csr` 唯一且最粗）⇒ `shrink` **不可能更小** ⇒ 旧形式在这三份上
+    **永远不可能满足**。
 
-        `Q == P` = `{U}` = **1 块**   ⇒ `shrink = 1/|U|` ⇒ **缩得最狠**
-        `|Q| == |U|` = 离散            ⇒ `shrink = 1.0`   ⇒ **一点没缩**
+        `shrink` 的**分子**由**结构**决定（最粗稳定划分，系统无自由度）
+                  **分母**由**键集**决定（`type` 取值数 ⇒ 方向数）
+        ⇒ 这个比值**同时受两者影响**，系统**没有任何自由度**去改善它
+        ⇒ 旧形式判的是「**语料**」，不是「**实现**」
 
-    （同一条更正在 `test_injections.inj_m1` 里也有一份；实现按 `|Q|/|U|` 的定义走。）
+    ⚠️ 这正是 `core/views.py` 那条注释**自己预言过**的：METIS 论文 p.365 那句
+      「Gi+1 的顶点数不可能少于 Gi 的一半」在 METIS 那边是**结构性保证**
+      （先验成立，阈值只兜病态）；ldv **没有**这条保证 ⇒ 同一个数从「兜底」
+      变成**要求**。它只在 36 项语料上实测过（收缩比 0.32），新语料把张力暴露了。
 
-    ## ⚠️ `bad` 那一支是**守卫**（对 `fold_until` 的输出恒真）
+    ⇒ 处置与 `§M4`（2026-10-10 降级为**读数**）**同一种处境、不同理由**：
+      `§M4` 是「**前提没了**」（`§A3` 有了多项式 oracle）；
+      `§M1` 是「**判的对象不对**」（判一条系统没有自由度的性质）。
+      ★ **收缩比不删** —— 它降为**读数**，由 `render_levels` **逐层印出来**
+        （与 `n_folds` / `n_cand` 同一档：进输出，**不进退出码**）。
 
-    `fold_until` 只要 `shrink > min_ratio` 就**立刻停** ⇒ 超阈值的层**只可能是末层**
-    ⇒ `levels[:-1]` 全 ≤ 阈值 ⇒ `bad` 恒空。红形态只能**手造**：另一个实现若允许
-    「不缩的层继续折」，它才开火。理由与 `§M3` 相同 —— 守的是**契约**。
+    ## ⚠️ 新形式的红形态是**对称**的（旧形式只挡得住一侧）
+
+        `Q₀` 比 `csr` **更细**（离散、或传播结果）  ⇒ 红（旧形式也挡得住这一侧）
+        `Q₀` 比 `csr` **更粗**（`{U}`、或别的粗划分）⇒ 红（**旧形式挡不住**：
+                                                     `{U}` 的 `shrink` 是 1/|U|，
+                                                     **缩得最狠**，旧形式报绿）
+
+    ## ⚠️ `stopped` 里那个 `"M1 收缩比"` 是**刹车**的名字，不是这条判据的名字
+
+    `fold_until` 的主刹车仍由 `MIN_SHRINK_RATIO` 定义，它的停因字符串仍写作
+    `"M1 收缩比"` —— **不改**：`MEASUREMENTS.md` 与两份文档里**逐字**存着
+    带这个字符串的实测输出，改名会让存档与代码对不上。
+    读的时候记着：**刹车**用收缩比（`§M5` 判它的标签），**判据**判 `csr`。
+
+    ## ★ 与 `§A3` 的重叠，写在这里不藏着
+
+    两条都问「这个划分是不是 `csr`」。留着的理由与 `§A3`/`§A2` 那一对**同构**：
+
+        `§A3`  判**盘上那份**（`views.json`，交给检索器的那个对象），按规模**挑** oracle
+        `§M1`  判**这一趟现算的 L0**，且**不挑** —— 它只用 `csr` 本身
+
+    ⇒ 覆盖面不同：`§A3` 在小规模上走的是**暴力枚举**那一支，而它
+      **一行都不走 `coarsest_stable_refinement`**（见 `coarser_stable_exists` 的 ⚠️）
+      ⇒ 「`§A3` 绿」这句话**不覆盖**「L0 是 `csr`」。
+      两条的**反例**也不同：`§A3` 分开报三种红（不是 `P` 的细化 / 自己不稳 / `P` 选粗了），
+      `§M1` 只报一件事：**交到 L0 的那份划分不是 `csr`**。
     """
-    inner = levels[:-1] if len(levels) > 1 else list(levels)
-    bad = [(i, round(lv.shrink, 3)) for i, lv in enumerate(inner)
-           if lv.shrink > min_ratio]
+    l0 = levels[0]
+    want = coarsest_stable_refinement(l0.spec)
+    got = partition_of(l0.q)
+    same = got == partition_of(want)
     rep.add("M1", TITLES["M1"],
-            Tri.NO if bad else Tri.YES,
-            (f"没缩够：{[(f'L{i}', r) for i, r in bad[:3]]}（阈值 {min_ratio}）—— "
-             f"`|Q| == |U|` ⇒ 这一层**没有兑现「粗」**，检索器拿不到模糊掌握") if bad
-            else (f"L0：`|U₀| = {len(levels[0].spec.universe)}` ⇒ "
-                  f"`|Q₀| = {len(levels[0].q)}`，收缩比 {levels[0].shrink:.3f} "
-                  f"≤ {min_ratio}"
-                  + (f"；另有 {len(inner) - 1} 个中间层也全 ≤ {min_ratio}"
-                     if len(inner) > 1 else "")
-                  + ("（只有一层：它自己就是终止层）" if len(levels) == 1 else "")))
+            Tri.YES if same else Tri.NO,
+            (f"`Q₀` **不是** `csr(spec)`：交进来的是 {len(got)} 块"
+             f"（`|U₀| = {len(l0.spec.universe)}`），而最粗稳定细化是 {len(want)} 块 —— "
+             f"L0 是**产物** ⇒ 它必须是 `csr`，不许是别的划分"
+             f"（传播结果 / 更粗的 / 更细的都不许：见 `core/views.maintain`）") if not same
+            else (f"`Q₀ == csr(spec)`：`|U₀| = {len(l0.spec.universe)}` ⇒ "
+                  f"`|Q₀| = {len(got)}`"
+                  f"（收缩比 {l0.shrink:.3f} —— **读数**，不进退出码）"))
 
 
 # --- §M2 ----------------------------------------------------------------------
@@ -216,7 +263,8 @@ def m3_cost(levels: Sequence[Level], rep: Report) -> None:
 
     ## ⚠️ 这是**守卫**，不是会开火的判据（读之前先读这句）
 
-    `fold_until` 的每一层都缩掉一半以上（`§M1` 管着）⇒
+    `fold_until` 的每一层都缩掉一半以上（**它自己的刹车**管着 —— `MIN_SHRINK_RATIO`；
+    ⚠️ **不是 `§M1`**：`§M1` 2026-10-10 起判的是 `Q₀ == csr(spec)`）⇒
 
         Σ|U_k| ≤ |U_0| · (1 + 1/2 + 1/4 + …) < 2·|U_0|
 
@@ -276,7 +324,8 @@ def render_m4(prof: dict[str, Any]) -> str:
 # --- §M5 ----------------------------------------------------------------------
 
 def m5_termination(levels: Sequence[Level], rep: Report) -> None:
-    """`§M5` —— 折叠终止**只许**由 `§M1`（收缩比）或 `§M2`（层数）触发。
+    """`§M5` —— 折叠终止**只许**由**收缩比**（`MIN_SHRINK_RATIO`，停因标签
+    写作 `"M1 收缩比"`）或**层数**（`MAX_LEVELS`）触发。
 
         末层的 `stopped` **非空**，且取值在 `{"M1 收缩比", "M2 层数"}` 里
 
@@ -286,16 +335,22 @@ def m5_termination(levels: Sequence[Level], rep: Report) -> None:
     **恒真**，红形态只能**手造**。它守的是**契约**：另一个实现若「跑到不动点就停」
     （没有刹车），它开火。理由与 `§M3` / `§M6` 相同。
 
-    ## ⚠️ 旧的「反向半：层数 > 1」已删（2026-10-08）—— 两条理由，各自都够
+    ⚠️ 两个标签 `"M1 收缩比"` / `"M2 层数"` 是**刹车**的名字，不是判据的名字：
+       主刹车由 `MIN_SHRINK_RATIO` 定义（`fold_until` 那段），**§M1 判的已经不是
+       收缩比**（2026-10-10 改成判 `Q₀ == csr`）⇒ 读到这里别把两者混起来。
+       标签**不改** —— `MEASUREMENTS.md` 与两份文档里逐字存着带它的实测输出。
+
+    ## ⚠️ 旧的「反向半：层数 > 1」已删（2026-10-08）
 
         ① 它是**反需求**：本设计的产物是第 0 层，**一层就够**。
            「第一层就停」**不是误停**，是期望的结局。
-        ② 它与 `§M1` **判同一件事**：`len(levels) < 2` ⇔ `L0` 没缩够
-           （`fold_until` 的循环在 `shrink > min_ratio` 时立刻返回）——
-           而那正是 `§M1` 现在**直接**判的。留着它会让「红」分不清是谁的
-           （本仓库的一条纪律：两条判同一件事，红就指不出病因）。
 
-    ⇒ 删掉它**没有**丢掉覆盖：那个条件仍被 `§M1` 判着，而且判得更准。
+    ⚠️ 当时还给了第二条理由「它与 `§M1` **判同一件事**」（`len(levels) < 2`
+      ⇔ `L0` 没缩够）—— 那条**已随 `§M1` 2026-10-10 改判而失效**
+      （`§M1` 现在判 `Q₀ == csr`，不判收缩比）。**删掉的结论不变**：
+      ① 自己就够；而且「`len(levels) < 2` ⇔ `L0` 没缩够」这件事现在是**读数**
+      （`n_folds` / `shrink` 逐层印在 `render_levels` 里）——
+      让读数进退出码正是本仓库挡过两次的形状。
     """
     legal = {"M1 收缩比", "M2 层数"}
     last = levels[-1].stopped
@@ -395,26 +450,36 @@ def known_answer_controls() -> list[str]:
     if judge(m0_no_self_loop, [bad]) is not Tri.NO:
         fails.append("§M0 自环没被抓住（去掉 A≠B 过滤的对照实现应当是红的）")
 
-    # ── `§M1`：视图层缩够了绿；视图层**不缩**（`|Q₀| == |U₀|`，离散）红 ────
-    ok_levels = [Level(spec=CONTROL_SPEC, q=(frozenset({"a", "b"}), frozenset({"c", "d"})),
-                       shrink=0.5, n_cand=1),
+    # ── `§M1`：视图层**就是 `csr(spec)`** ⇒ 绿；不是 ⇒ 红（**两侧都要挡**） ──
+    #    ⚠️ `csr(CONTROL_SPEC)` 是 **2 块** = `({a,c},{b,d})` —— 这个期望值是
+    #       **实测**出来的，不是手推的：手推会写成 `({a,c},{b},{d})`（按
+    #       「`E⁻¹(x)` 的**精确集合**」劈），而 Paige–Tarjan 劈的是
+    #       「`E⁻¹(x)` 命中了**哪些块**」⇒ `b` 与 `d` 同一签名、`a` 与 `c` 同一签名。
+    #       两条**独立实现**（`coarsest_stable_refinement` / `..._signature`）逐块一致。
+    _CSR = (frozenset({"a", "c"}), frozenset({"b", "d"}))
+    ok_levels = [Level(spec=CONTROL_SPEC, q=_CSR, shrink=0.5, n_cand=1),
                  Level(spec=CONTROL_SPEC, q=(frozenset({"a", "b", "c", "d"}),),
-                       shrink=1.0, n_cand=1, stopped="M1 收缩比")]
-    # ⚠️ 「不缩」= **离散**（4 块 / 4 元素 ⇒ `shrink = 1.0`），
-    #    **不是** `Q == P`（1 块 / 4 元素 ⇒ `shrink = 0.25`，那是**缩得最狠**）。
-    #    前作核验 §3.2 把这两个极端写反了 —— 见 `test_injections.inj_m1` 的 ⚠️。
+                       shrink=0.25, n_cand=1, stopped="M1 收缩比")]
+    if judge(m1_view_layer, ok_levels) is not Tri.YES:
+        fails.append("§M1 视图层**就是** `csr` 被判红")
+    # 红侧 ①：比 `csr` **更细**（离散）—— 旧形式也挡得住这一侧
     flat = [Level(spec=CONTROL_SPEC, q=tuple(frozenset({x}) for x in ("a", "b", "c", "d")),
                   shrink=1.0, n_cand=1, stopped="M1 收缩比")]
-    if judge(m1_shrink, ok_levels) is not Tri.YES:
-        fails.append("§M1 视图层缩够了被判红")
-    if judge(m1_shrink, flat) is not Tri.NO:
-        fails.append("§M1 视图层没缩够（`|Q₀| == |U₀|`，离散）没被抓住")
+    if judge(m1_view_layer, flat) is not Tri.NO:
+        fails.append("§M1 「比 `csr` 更细」（离散划分）没被抓住")
+    # 红侧 ②：比 `csr` **更粗**（`{U}`）—— ★ **旧形式在这一侧报绿**：
+    #    `{U}` 的 `shrink = 1/|U|` = 0.25，是全表**缩得最狠**的一层。
+    #    ⇒ 旧形式是**不对称**的（只挡「没缩够」），新形式两侧都挡。
+    too_coarse = [Level(spec=CONTROL_SPEC, q=(frozenset({"a", "b", "c", "d"}),),
+                        shrink=0.25, n_cand=1, stopped="M1 收缩比")]
+    if judge(m1_view_layer, too_coarse) is not Tri.NO:
+        fails.append("§M1 「比 `csr` 更粗」（`{U}`）没被抓住 —— "
+                     "旧形式在这一侧报绿，新形式必须挡住")
     # ★ 「一层就够」是本设计的**产物**，所以「只有一层」本身不许是红 ——
-    #   红的是「那一层没缩够」。这两件事在只数层数时长得一模一样。
-    one_ok = [Level(spec=CONTROL_SPEC, q=(frozenset({"a", "b"}), frozenset({"c", "d"})),
-                    shrink=0.5, n_cand=1, stopped="M2 层数")]
-    if judge(m1_shrink, one_ok) is not Tri.YES:
-        fails.append("§M1 只有一层但**缩够了**（`max_levels = 1` 那一侧）被判红 —— "
+    #   新判据里**根本没有「层数」这个输入**（`m1_view_layer` 只看 `levels[0]`）。
+    one_ok = [Level(spec=CONTROL_SPEC, q=_CSR, shrink=0.5, n_cand=1, stopped="M2 层数")]
+    if judge(m1_view_layer, one_ok) is not Tri.YES:
+        fails.append("§M1 只有一层但 `Q₀ == csr` 被判红 —— "
                      "「一层就够」是产物，不许当成红")
 
     # ── `§M2`：默认层数绿；把 `max_levels` 抬过声明值红 ───────────────────
@@ -444,8 +509,8 @@ def known_answer_controls() -> list[str]:
         fails.append("§M4 读数：`Bell(11)=678570 > 200000` 没被判成「超上限」")
 
     # ── `§M5`：合法停因绿；停因为空（跑到不动点）红 ────────────────────────
-    #    ⚠️ 旧的第三例（`flat`：只折一层 ⇒ 红）已删 —— 那条判的是 `§M1` 的事，
-    #       而且「一层就够」是本设计的产物。见 `m5_termination` 的 docstring。
+    #    ⚠️ 旧的第三例（`flat`：只折一层 ⇒ 红）已删 —— 那条判的是**收缩比**的事
+    #       （现在是读数），而且「一层就够」是本设计的产物。见 `m5_termination` 的 docstring。
     if judge(m5_termination, ok_levels) is not Tri.YES:
         fails.append("§M5 合法停因被判红")
     if judge(m5_termination, [replace(ok_levels[0], stopped=""),
@@ -484,9 +549,10 @@ def run_multilevel(spec: ViewSpec, kernel: object, cover: Callable[[object], fro
        它必须能被调用方替换，否则尺度就被偷偷内生化（违反 `§K9`）。
 
     `q0` 默认 `csr(spec)`（生产口径）。⚠️ **留这个缝是为了注入**：
-       `§M1` 的红形态是「**视图层**不缩」，而那要 `q0` = **离散划分**
-       （`|Q₀| == |U₀|` ⇒ `shrink = 1.0`；⚠️ **不是** `q0 == spec.partition`，
-       那是 1 块 ⇒ 缩得**最狠**）；
+       `§M1` 的红形态是「**交到 L0 的那份划分不是 `csr`**」—— 两侧都算：
+       **更细**的一侧用 `q0` = **离散划分**（`|Q₀| == |U₀|` ⇒ `shrink = 1.0`），
+       **更粗**的一侧用 `q0` = `spec.partition`（1 块 ⇒ `shrink = 0.25`，
+       ★ 那一侧**旧形式报绿**，见 `m1_view_layer`）；
        `§M4` 的红形态要一个 11 块以上的 `q0`。生产路径**不传**它。
 
     ⚠️ `§M2` 判的是**声明的** `MAX_LEVELS`，不是这里的 `max_levels` 形参 ——
@@ -525,7 +591,9 @@ def run_multilevel(spec: ViewSpec, kernel: object, cover: Callable[[object], fro
                         next_partition, answer,
                         max_levels=max_levels, min_shrink_ratio=min_shrink_ratio)
     m0_no_self_loop(levels, rep)
-    m1_shrink(levels, rep, min_ratio=min_shrink_ratio)
+    # ⚠️ `§M1` **不吃** `min_shrink_ratio`：它判的是 `Q₀ == csr`，不是收缩比。
+    #    那个形参只喂给 `fold_until` 的**刹车**（`§M5` 判刹车留下的标签）。
+    m1_view_layer(levels, rep)
     # ⚠️ `§M2` 用**声明的** `MAX_LEVELS` 判，不用形参 —— 见 docstring。
     m2_levels(levels, rep, max_levels=MAX_LEVELS)
     m3_cost(levels, rep)
@@ -578,7 +646,7 @@ def render_levels(levels: Sequence[Level]) -> str:
     if len(levels) == 1:
         # ⚠️ 停因**照抄 `l0.stopped`**，不许在这里推断「是不是没缩够」——
         #    只有一层也可能是**层数上限先到**（`max_levels = 1`），
-        #    而那时写「撞了 `§M1`」是**假红**：两者在只印层数时长得一模一样。
+        #    而那时写「撞了**收缩比**刹车」是**假红**：两者在只印层数时长得一模一样。
         fold = (f"折叠：只跑了 1 层（停因 {l0.stopped or '—'}）"
                 f" ⇒ **真折 {n} 层** —— 视图层自己就是终止层")
     else:

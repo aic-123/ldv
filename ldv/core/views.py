@@ -436,14 +436,23 @@ def propagate_naive(
     return partition_of(blocks)
 
 
-#: 折叠的两个**外生**参数（`§M1` / `§M2`）。**必填，没有默认值** —— 与 `ViewSpec`
+#: 折叠的两个**外生**参数。**必填，没有默认值** —— 与 `ViewSpec`
 #: 同一个理由：猜一个就是替人做 `§K9` 的决定。
 #:
 #: `MIN_SHRINK_RATIO = 0.5` 的出处：METIS 论文 p.365 逐字
 #: 「the number of vertices in Gi+1 cannot be less than half the number of
 #: vertices in Gi」。**那一侧是结构性保证**（先验成立，阈值只兜病态）；
 #: ldv **没有**这条保证 ⇒ 同一个数在这里从「兜底」变成**要求**。
-#: 实测基线（36 项语料、25 个方向 ⇒ 8 张视图）收缩比约 **0.32** ⇒ 基线绿。
+#: 实测基线（36 项语料、25 个方向 ⇒ 8 张视图）收缩比约 **0.32**。
+#:
+#: ⚠️ **它只是 `fold_until` 的刹车**（2026-10-10 起）——**不是任何判据的阈值**。
+#:   曾经有一条判据拿它判「视图层真的在缩」，那一条**已删**：`shrink` 的分子由
+#:   **结构**决定（最粗稳定划分，已达下界）、分母由**键集**决定 ⇒ 系统**没有
+#:   任何自由度**去改善它 ⇒ 那条判据判的是**语料**，不是**实现**。
+#:   （实测：三份新语料上它是唯一的红，而 `§A3` 同时判「8 块已是最粗」
+#:     ⇒ `shrink` 不可能更小 ⇒ 可证的不可能。见 `checks/multilevel.m1_view_layer`。）
+#:   ⇒ 收缩比现在是**读数**（`render_levels` 逐层印出来，不进退出码），
+#:     刹车仍按这个数停（停因标签写作 `"M1 收缩比"`，**保留**以免与存档输出对不上）。
 #:
 #: ⚠️ `MAX_LEVELS` 是**兜底**，不是主刹车 —— 已核文献里直接给层数封顶只是
 #:   「configured maximum level」那种配置项。主刹车是 `MIN_SHRINK_RATIO`。
@@ -491,8 +500,9 @@ MIN_SHRINK_RATIO = 0.5
 # `mvselect2026`（**已核**）给的是纪律：「incorporating **incremental view maintenance
 #   cost directly into the optimization objective**」⇒ 维护代价要**进决策**，
 #   不能当免费的。本函数把「代价」表达成**一个质量预算**（`shrink_max`），
-#   而预算取的正是**已有的一处定义** `MIN_SHRINK_RATIO`（`§M1` 判的就是它）
-#   ⇒ **不新增参数**。
+#   而预算取的正是**已有的一处定义** `MIN_SHRINK_RATIO` ⇒ **不新增参数**。
+#   （⚠️ 那个预算参数**后来被删了** —— 见 `maintain` 的 docstring：交付物
+#     **必须**是 `csr`，与传播多细无关 ⇒ 旋钮用不上。这里留着的是**文献理由**。）
 #
 # ## ⚠️ 被否掉的那条路：**延迟 / 批量维护**
 #
@@ -530,7 +540,13 @@ class Maintenance:
 
 
 def shrink_ratio(q: Sequence[frozenset[str]], spec: ViewSpec) -> float:
-    """`shrink = |Q| / |U|` —— 与 `§M1` **同一个量**（0 最好，1.0 = 一点没缩）。"""
+    """`shrink = |Q| / |U|`（0 最好，1.0 = 一点没缩）—— **读数**，不是判据。
+
+    ⚠️ 它**不再被任何判据判**（2026-10-10）：分子由**结构**决定（最粗稳定划分，
+       已达下界）、分母由**键集**决定 ⇒ 系统**没有自由度**改善它。
+       拿它当判据等于判**语料**。见 `checks/multilevel.m1_view_layer`。
+       `fold_until` 仍用它当**刹车**（阈值 `MIN_SHRINK_RATIO`）。
+    """
     u = len(spec.universe)
     return (len(q) / u) if u else 0.0
 

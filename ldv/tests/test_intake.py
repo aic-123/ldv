@@ -11,12 +11,37 @@
 ## 这份料要证明什么（**判据先写、再跑** —— 与 `tools/intake_openalex.py` 同一句话）
 
     ① 两条**互不相干**的数法给出同一组 `(节点数, 图边数)`；
-       且 `节点数 >= 3000`、`图边数 >= 节点数`（内部引用密度 ≥ 1.0）
+       且 `节点数 >= MIN_NODES`、`图边数 >= 节点数`（内部引用密度 ≥ 1.0）
     ② `run_checks`（**判据全跑、贵的探针不跑**）的红集合 == **本语料上冻结的**基线
        （新增红 ⇒ 失败；**基线条目在本次没红 ⇒ 也失败**，说明基线过期）
        ＋ **解析自检**：抽出的红条数 == 汇总报的红数
        ＋ **不是整趟跳过**（全跳过 ⇒ 红集合必然是空的，那种空什么都没说明）
     ③ `B17` 若报「跳过」，必须同时给出「等价类全是单点」的**实测计数**
+
+## ⚠️ 这里**判的是语料**（与 `run_checks` 判**实现**不同，别混）
+
+本文件是**语料验收**：它问「这份料能不能用」（规模够不够、枚举轴是不是真的多值、
+红集合有没有变化）。⇒ 判「语料的结构性质」在这里是**正当**的。
+⚠️ 反过来，`run_checks` 里**不许**判语料 —— `§M1` 刚踩过这个坑（拿收缩比当判据，
+而那个比值的分子由结构决定、分母由键集决定 ⇒ 系统没有自由度）⇒ 2026-10-10 改判
+`Q₀ == csr`。两处的正当性不同，判据的**主语**也不同：这里主语是**料**，那里是**实现**。
+
+## ⚠️ 「判不了」的两种来源（2026-10-10 加）—— 都**报跳过**，不许崩、不许算红
+
+    **路 2（原始 JSON）认不出格式**   SNAP 的原始件是 `.gz` ⇒ 一个 `*.json` 都没有。
+      改之前 `count_via_raw` 返回 `(0, 0, …)` ⇒ 判据 ① **必然红**，
+      而且红得**指向语料**（看起来像「这份料是空的」），其实指向**本函数认不出的格式**。
+    **MANIFEST 认不出枚举轴**        轴名按接料工具而变：OpenAlex 是 `type 取值`、
+      Cora 是 `类别取值`、SNAP 是 `标签取值`。改之前**写死了**三个 OpenAlex 键名
+      ⇒ 在 SNAP 上直接 `KeyError: 'type 取值'` **崩掉**。
+
+⇒ 两处都改成：**按约定认，认不出就报「判不了（跳过）」**，并逐字印出为什么。
+  本文件叫「**外部**语料验收」—— 它**不许**假设所有外部语料都是同一个工具接的。
+
+⚠️ 接料工具自己在 MANIFEST 里记的 `两条数法`（markdown 往返 / 直接读原始文件）
+  在路 2 跑不了时**是唯一能看到的旁证** ⇒ 本文件把它**印出来**，
+  但**不拿它当判据** —— 那是「工具声称」，不是「本趟独立复算」，
+  而两者在只看绿红时**长得一模一样**。
 
 ⚠️ **2026-10-07 改**：原来 ② 里还有一条「**基线为空 ⇒ 也失败**」。
    它在当时的语料上是对的，但它让机制**无法表示一份健康语料** ——
@@ -194,10 +219,23 @@ def count_via_markdown(nodes_dir: Path) -> tuple[int, int]:
     return len(nodes), sum(len(v) for v in edges.values())
 
 
-def count_via_raw(raw_dir: Path) -> tuple[int, int, dict]:
-    """**路 2**：直接读原始 JSON，自己数。**不碰 markdown，也不碰 `loader`。**"""
-    recs: dict[str, dict] = {}
+def count_via_raw(raw_dir: Path) -> tuple[int, int, dict] | None:
+    """**路 2**：直接读原始 JSON，自己数。**不碰 markdown，也不碰 `loader`。**
+
+    ⚠️ **返回 `None` = 这份语料的原始件不是 JSON ⇒ 路 2 判不了**（2026-10-10 加）。
+       三份 SNAP 语料的原始件是 `.gz`（`email-Eu-core.txt.gz` / `cit-HepTh.txt.gz`）
+       ⇒ 这里**一个 `*.json` 都找不到** ⇒ 改之前返回 `(0, 0, …)`，
+       而 `0` 与「真的没有节点」在只看数字时**长得一模一样** ⇒ 判据 ① 必然红，
+       而且红得**指向语料**（看起来像「这份语料是空的」），其实指向**本函数认不出的格式**。
+
+    ★ **「判不了」不是「红」** —— 它走 `SKIP`，与 `PASS` 分开计。
+      ⚠️ 那也**不是通过**：本模块开头那句「跳过 ≠ 通过」照样管着它，
+        所以 `main` 会把它**逐字印出来**并说明「这一条本趟没有内容」。
+    """
     files = sorted(raw_dir.glob("*.json"))
+    if not files:
+        return None
+    recs: dict[str, dict] = {}
     for f in files:
         for r in json.loads(f.read_text(encoding="utf-8")):
             recs[r["id"].rsplit("/", 1)[-1]] = r
@@ -209,6 +247,30 @@ def count_via_raw(raw_dir: Path) -> tuple[int, int, dict]:
         n_edges += len(refs & ids)
         dropped += len(refs) - len(refs & ids)
     return len(recs), n_edges, {"原始 JSON 文件数": len(files), "丢弃外部引用": dropped}
+
+
+#: MANIFEST 里**枚举轴**的命名约定：接料工具把「某个轴的取值 → 出现次数」写成
+#: `<轴名>取值` 这么一个 **dict**。⚠️ **轴名按工具而变**，实测三种：
+#:
+#:     openalex-*      `type 取值` / `source.kind 取值` / `evidence_status 取值`
+#:     cora-labeled    `类别取值`
+#:     snap-*          `标签取值`
+#:
+#: ⇒ 这里**不许写死任何一个**：写死就等于假设「所有语料都是 OpenAlex 接的」，
+#:   而本文件的名字正是「**外部**语料验收」。2026-10-10 之前写死了三个 OpenAlex
+#:   键名，实测在 SNAP 语料上直接 `KeyError: 'type 取值'` **崩掉**。
+AXIS_SUFFIX = "取值"
+
+
+def manifest_axes(man: dict) -> dict[str, dict]:
+    """从 MANIFEST 里**认出**枚举轴：键以 `取值` 结尾、值是 dict。**不猜、不写死。**"""
+    return {k: v for k, v in man.items()
+            if k.endswith(AXIS_SUFFIX) and isinstance(v, dict)}
+
+
+def manifest_dropped(man: dict) -> dict[str, int]:
+    """接料工具记的「丢弃了多少」——键名**同样**按工具而变 ⇒ 按 `丢弃` 认。"""
+    return {k: v for k, v in man.items() if "丢弃" in k and isinstance(v, int)}
 
 
 def parse_reds(out: str) -> list[str]:
@@ -337,25 +399,59 @@ def main() -> int:
 
     # ── ① 两条独立数法 ────────────────────────────────────────────────────
     n1, e1 = count_via_markdown(d)
-    n2, e2, extra = count_via_raw(raw)
+    got2 = count_via_raw(raw)
     print(f"  路 1（markdown 往返）：节点 {n1} · 边 {e1}")
-    print(f"  路 2（原始 JSON）    ：节点 {n2} · 边 {e2}   {extra}")
-    ok("① 两条独立数法给出同一个节点数", n1 == n2, f"{n1} vs {n2}")
-    ok("① 两条独立数法给出同一个边数", e1 == e2, f"{e1} vs {e2}")
-    ok(f"① 节点数 ≥ {MIN_NODES}", n1 >= MIN_NODES, f"只有 {n1}")
+    if got2 is None:
+        # ⚠️ **判不了 ≠ 红，也 ≠ 通过。** 它单独计数（`SKIP`），并且逐字印出**为什么** ——
+        #    否则「这一条本趟没有内容」与「这一条过了」在只看最后那行汇总时长得一模一样。
+        why2 = (f"① 路 2（原始 JSON）：`{raw}` 里**一个 `*.json` 都没有** ⇒ "
+                f"这份语料的原始件不是 JSON（SNAP 是 `.gz`）⇒ **判不了**")
+        SKIP.append(why2)
+        print(f"  ⊘ {why2}")
+        print("     ⚠️ 于是「两条独立数法」这一条**本趟没有内容** —— "
+              "**别把这一趟读成「① 过了」**")
+    else:
+        n2, e2, extra = got2
+        print(f"  路 2（原始 JSON）    ：节点 {n2} · 边 {e2}   {extra}")
+        ok("① 两条独立数法给出同一个节点数", n1 == n2, f"{n1} vs {n2}")
+        ok("① 两条独立数法给出同一个边数", e1 == e2, f"{e1} vs {e2}")
+    ok(f"① 节点数 ≥ {MIN_NODES}", n1 >= MIN_NODES,
+       f"只有 {n1} —— 门槛写在 `LDV_INTAKE_MIN_NODES` 里"
+       f"（跑子切片/别的语料时按需下调，见模块开头）")
     ok("① 图边数 ≥ 节点数（内部引用密度 ≥ 1.0）", e1 >= n1, f"{e1} < {n1}")
 
     # ── 反空跑自检：先把**各分支的原始计数**摆出来，再谈别的 ────────────────
     mf = d.parent / "MANIFEST.json"
-    if mf.exists():
+    if not mf.exists():
+        SKIP.append(f"① MANIFEST（{mf} 不在）—— 枚举轴与「丢弃」计数**没得看**（跳过 ≠ 通过）")
+        print(f"  ⊘ 跳过：{mf} 不在 ⇒ 枚举轴无从核对")
+    else:
         man = json.loads(mf.read_text(encoding="utf-8"))
-        print(f"  MANIFEST：type {len(man['type 取值'])} 值 · "
-              f"source.kind {len(man['source.kind 取值'])} 值 · "
-              f"evidence_status {len(man['evidence_status 取值'])} 值 · "
-              f"丢弃外部引用 {man['丢弃的外部引用数']}")
-        for k in ("type 取值", "source.kind 取值", "evidence_status 取值"):
+        axes = manifest_axes(man)
+        dropped = manifest_dropped(man)
+        # ⚠️ 枚举轴**按约定认**（键以 `取值` 结尾、值是 dict），**不写死键名** —— 见 `AXIS_SUFFIX`。
+        print("  MANIFEST：枚举轴 "
+              + ("、".join(f"`{k}` {len(v)} 值" for k, v in axes.items()) if axes else "**0 条**")
+              + ("｜丢弃计数 " + "、".join(f"`{k}` {v}" for k, v in dropped.items())
+                 if dropped else ""))
+        if not axes:
+            SKIP.append(f"① MANIFEST 里**一条枚举轴都没有**（约定：键以 `{AXIS_SUFFIX}` 结尾、"
+                        f"值是 dict）—— 这份 MANIFEST 的键是 {sorted(man)} ⇒ **判不了**"
+                        f"（跳过 ≠ 通过）")
+            print("     ⊘ 认不出枚举轴 ⇒ 这一条**判不了**（不是红，也不是通过）")
+        for k, v in axes.items():
             ok(f"① 枚举轴 `{k}` 至少两个取值（一个取值的轴不是轴，是噪声）",
-               len(man[k]) >= 2, f"{man[k]}")
+               len(v) >= 2, f"{v}")
+        # ★ 接料工具自己记的**两条数法** —— 路 2 跑不了时它是**唯一**能看到的旁证。
+        #   ⚠️ 但它是**工具自己写的**（不是本趟独立复算）⇒ 只作**读数印出来**，
+        #       **不拿它当判据**：拿它当判据等于让「工具声称」冒充「独立复算」，
+        #       而两者在只看绿红时长得一模一样（本仓库记过四次的形状）。
+        two = man.get("两条数法")
+        if isinstance(two, dict):
+            print(f"     读数（**工具自己记的**，不是本趟独立复算）："
+                  f"{json.dumps(two, ensure_ascii=False)}"
+                  f"｜两条数法一致 {man.get('两条数法一致')}")
+            INFO.append(f"接料工具自记的两条数法：{two}｜一致 {man.get('两条数法一致')}")
 
     # ── ③ 键集方向的**分辨率下界**（只披露，不判过）──────────────────────
     nodes = load_nodes(d)
