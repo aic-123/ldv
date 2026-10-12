@@ -901,6 +901,46 @@ def retrieval_report(loaded, targets: list[str]) -> Report:
     return rep
 
 
+def _skip_evidence() -> list[tuple[str, str, bool]]:
+    """**跳过项的覆盖证据** —— 每条「跳过」配一份**合成对照**：判据在该红时会红。
+
+    ⚠️ 这**不是本趟的读数** —— 本趟那条方向上没有内容（那正是「跳过」）。
+       它证明的是**另一件事**：这条判据**会不会红**。
+       ⇒ 「没内容」与「不会红」**不许共用一行**（`跳过 ≠ 通过` 的反面）。
+
+    ⚠️ 权威的闸门在 `run_tests`（对照不符 ⇒ 测试红）。这里**只印不判** ——
+       与「注册表不符」同一档，**不进退出码**（退出码只看判据的红）。
+
+    ⚠️ **对照崩了要接住**：它跑在 `run_checks` 里，崩了会把整趟输出带走 ——
+       而**崩比红更糟**（红是判据说话，崩是判据没了）⇒ 这里逐条 `try`，
+       崩了**报成「对照不符」**（可见），不静默、也不带走整趟。
+    """
+    from .checks.abstraction import a5_known_answer
+    from .checks.equivalence import b17_known_answer
+    from .checks.refinement import b20_known_answer
+
+    def fails_of(fn: Any) -> list[str]:
+        try:
+            return list(fn())
+        except Exception as exc:  # noqa: BLE001 - 见 docstring
+            return [f"对照自身崩了：{exc!r}"]
+
+    def a5_ok() -> bool:
+        try:
+            return (a5_known_answer(False) is Tri.YES
+                    and a5_known_answer(True) is Tri.NO)
+        except Exception:  # noqa: BLE001 - 见 docstring
+            return False
+
+    return [
+        ("A5", "合成账（**两态**：指得到 ⇒ 过 / 指不到 ⇒ 红）", a5_ok()),
+        ("B17", "合成有环图（**三态**：过 / 红 / 跳过）",
+         fails_of(b17_known_answer) == []),
+        ("B20", "合成标签轴（**三态**：过 / 红 / 跳过）",
+         fails_of(b20_known_answer) == []),
+    ]
+
+
 def main(argv: list[str]) -> int:
     # ⚠️ `--cap 400` 里的 `400` **不是**方向名 —— 所以先摘掉带值的选项再取位置参数。
     cap = 0
@@ -1022,7 +1062,17 @@ def main(argv: list[str]) -> int:
     print("═══ 汇总 ═══")
     print(f"  断言 {total} 条：红 {total_red}，跳过 {skipped}")
     if skipped:
-        print(f"  跳过的是：{[a.code for r in reps for a in r.skipped]}")
+        codes = [a.code for r in reps for a in r.skipped]
+        print(f"  跳过的是：{codes}")
+        ev = [(c, d, g) for c, d, g in _skip_evidence() if c in codes]
+        print("  ── 跳过项的**覆盖证据**（合成对照 —— **不是**本趟读数）——")
+        for code, desc, good in ev:
+            print(f"     {code:4s}{desc} ⇒ {'✓ 全对' if good else '‼ 对照不符'}")
+        if any(not g for _, _, g in ev):
+            print("     ‼ 对照不符 —— 权威闸门在 `run_tests`"
+                  "（`test_equivalence` / `test_semantic_guard`）")
+        print("     ⚠️ 「跳过」= 本趟这条方向上**没有内容**；"
+              "「对照」= 这条判据**会红**。两件事，不共用一行。")
     if missing:
         print(f"  ‼ 注册表不符：{missing}")
     print(f"  退出码 {1 if total_red else 0}")

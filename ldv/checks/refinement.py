@@ -90,10 +90,10 @@ from __future__ import annotations
 
 import math
 from collections import Counter
-from typing import Any
+from typing import Any, Iterable
 
 from ..core.tri import Tri
-from ._framework import Report
+from ._framework import Report, result_of as _result
 
 #: 连续多少次「语义空转」就报错。与 `B19` 同一个数，同一个前例
 #: （SP-GiST `longValuesOK` 的 "within ten cycles"）。
@@ -242,3 +242,104 @@ def b20_semantic_refinement(prof: dict[str, Any], rep: Report,
              f"例：{prof['空转的']}") if over
             else f"{prof['已展开方向数']} 次展开中语义空转 {prof['语义空转展开']} 次，"
                  f"最长连续段 {prof['最长语义空转连续段']} < N={prof['N']}")
+
+
+# --- `B20` 的**已知答案对照**（合成树，三态各一例） ------------------------------
+#
+# ⚠️ 与 `§A1`–`§A7` 的合成对照同一条纪律：**不碰内核、不碰语料**。
+#
+# ⚠️ **为什么非有不可**：这条判据只在**标签轴**（`keyset`）上落 —— `reach` / `sequence`
+#    上它报「**跳过**」。而「跳过」与「这条判据根本不会红」在汇总里长得**一模一样**。
+#    ⇒ 用一棵**最小合成树**把「标签真的分开了 ⇒ 过」与「连续 N 层没分开 ⇒ 红」
+#    当场演一遍。
+#
+# 手推（`N = REFINEMENT_N = 10`）：
+#
+#     过·分开了     根 R 的两个子把标签切干净：
+#                   R = {x1..x4} ｜ A = {x1,x2} 全是 `p` ｜ B = {x3,x4} 全是 `q`
+#                   父 `p:2 q:2`，子 A `p:2`、子 B `q:2` ⇒ **分布不同** ⇒ 不算空转
+#                   ⇒ 最长连续段 0 < N ⇒ **过**
+#
+#     红·空转       **11 层**单链，每层成员集与标签都**完全相同**：
+#                   ⇒ 每一层「子的分布 == 父的分布」⇒ 连续 11 段 ≥ N ⇒ **红**
+#
+#     跳过·非标签轴   `judged=False`（`reach` / `sequence` 上的形态）
+#                   ⇒ 报「跳过」而不是「过」—— 判据在那里**什么都没查**
+#
+# ⚠️ 「红」那一例**不是编出来的**：它正是 `§K2` 第二半要拦的形态 ——
+#    「反复声称能分，却每一层都什么都没分开」。成员集不缩小、标签不变化
+#    ⇒ 这 11 层在**语义**上什么都没产出。
+
+
+class _StubDir:
+    """只提供 `refinement_profile` 真正用到的三样东西：`did` / `rank` / 成员集。"""
+
+    def __init__(self, did: str, members: Iterable[str], rank: int = 1) -> None:
+        self.did = did
+        self.rank = rank
+        self._members = frozenset(members)
+
+
+class _StubKernel:
+    """`B20` 合成对照的最小替身 —— 只提供 `refinement_profile` 调的那四个访问器。
+
+    ⚠️ 与 `B17` 的替身同一条纪律：**最便宜的那一档**，不冒充内核。
+    """
+
+    def __init__(self, root: _StubDir, kids: dict[str, list[_StubDir]]) -> None:
+        self.root = root
+        self._kids = kids
+        self._all = [root] + [d for v in kids.values() for d in v]
+
+    def all_directions(self) -> list[_StubDir]:
+        return list(self._all)
+
+    def children_of(self, d: _StubDir) -> list[_StubDir]:
+        return list(self._kids.get(d.did, ()))
+
+    def members_of(self, d: _StubDir) -> frozenset[str]:
+        return d._members
+
+
+def _b20_stub(kind: str) -> tuple[_StubKernel, dict[str, str]]:
+    """`split`（两个子把标签切干净）/ `flat`（11 层单链，层层同分布）。"""
+    items = ("x1", "x2", "x3", "x4")
+    root = _StubDir("R", items)
+    if kind == "flat":
+        chain = [_StubDir(f"D{i}", items, rank=i)
+                 for i in range(1, REFINEMENT_N + 2)]
+        kids = {chain[i].did: [chain[i + 1]] for i in range(len(chain) - 1)}
+        kids["R"] = [chain[0]]
+        return _StubKernel(root, kids), {i: "p" for i in items}
+    kids = {"R": [_StubDir("A", ("x1", "x2")), _StubDir("B", ("x3", "x4"))]}
+    return _StubKernel(root, kids), {"x1": "p", "x2": "p", "x3": "q", "x4": "q"}
+
+
+#: `(标签, 形态, judged, 手推的答案)`
+_B20_CASES: list[tuple[str, str, bool, Tri]] = [
+    ("过·两个子把标签切干净", "split", True, Tri.YES),
+    ("红·连续 N 层标签分布与父完全相同", "flat", True, Tri.NO),
+    ("跳过·非标签轴（`judged=False`）", "split", False, Tri.UNEXPANDED),
+]
+
+
+def b20_known_answer() -> list[str]:
+    """`B20` 的合成对照 —— 三态各一例。返回**失败清单**（空 = 全对）。
+
+    ⚠️ 同 `b17_known_answer`：三态都要对照，而且**期望值必须两两不同**
+       （三例落在同一态 ⇒ 对照证明不了什么）⇒ 这里当场自检。
+    """
+    fails: list[str] = []
+    seen: list[Tri] = []
+    for label, kind, judged, want in _B20_CASES:
+        kernel, labs = _b20_stub(kind)
+        prof = refinement_profile(kernel, labs)
+        rep = Report(plugin="(合成)")
+        b20_semantic_refinement(prof, rep, judged=judged)
+        got = _result(rep, "B20")
+        seen.append(got)
+        if got is not want:
+            fails.append(f"{label}：期望 {want}，实测 {got}")
+    if len(set(seen)) != len(seen):
+        fails.append(f"对照表退化：三例落在同一态 {seen} —— 这个对照证明不了什么")
+    return fails

@@ -55,8 +55,14 @@ _SOURCES = os.environ.get("LDV_SOURCES") or os.path.join(_WS, "sources")
 #: 不说明「它在正文里」——**要逐字核仍然得打开那一页**。
 _WEB = os.environ.get("LDV_WEBCACHE") or os.path.join(_WS, ".webcache")
 SRC_DIRS = [_PRIOR, _SOURCES, _WEB]
-#: 每个目录收哪些扩展名 —— `.html` **只对网页缓存那一份**开放（见上）。
-SRC_GLOBS = {_PRIOR: ("*.txt",), _SOURCES: ("*.txt",), _WEB: ("*.html",)}
+#: 每个目录收哪些扩展名 —— `.html` / `.md` **只对网页缓存那一份**开放（见上）。
+#: ⚠️ **`.md` 是 2026-10-12 加的**：有些网页源的正文**以 markdown 形式**留在仓库里
+#:    （GitHub 上的文档站源文件，如 `raw.githubusercontent.com/.../<tag>/docs/....md`）。
+#:    只收 `.html` ⇒ 那些引文**照样被报成「缺口」**，与「引文写错了」长得一模一样
+#:    ⇒ 读的人会去改**本来是对的**引文。
+#:    实测：`docs/与普通检索系统的质量对照.md` 里两条 Ragas 引文（v0.1.21）
+#:    在不收 `.md` 时报缺口，收了就全覆盖 —— 而引文**一字没动**。
+SRC_GLOBS = {_PRIOR: ("*.txt",), _SOURCES: ("*.txt",), _WEB: ("*.html", "*.md")}
 #: 旧数学排版的源：符号被换成码（`/:`→`.`、`/n28`→`(`、`/_`→`∨` …）。
 #: **只对这些源做符号码还原** —— 拿去改干净正文会把假绿引进来。
 SOFT_FILES = {"gist1995.txt"}
@@ -344,7 +350,12 @@ def main():
     for s in srcs.values():
         grams |= kgrams(s)
     flat = "".join(srcs.values())
-    n_web = sum(1 for n in srcs if n.lower().endswith((".html", ".htm")))
+    #: ⚠️ **从 `SRC_GLOBS[_WEB]` 现算，不另写一份** —— 两边各写一份必然漂。
+    #:    实测（2026-10-12）：`_WEB` 的 globs 加了 `*.md` 之后，`.webcache/` 里
+    #:    实际 5 份网页缓存，这里还只数 `.html` ⇒ 汇总行印 **3 份**。
+    #:    而「3」与「5」在汇总上长得一样，**没有任何提示说哪个对**。
+    _web_ext = tuple(e.lstrip("*") for e in SRC_GLOBS[_WEB])
+    n_web = sum(1 for n in srcs if n.lower().endswith(_web_ext))
     print(f"源文 {len(srcs)} 份（其中网页缓存 {n_web} 份），"
           f"k-gram（k={K}）集合 {len(grams)} 条，"
           f"判据：覆盖比 ≥ {COVER_MIN} 且无 ≥ {GAP_MIN} 字符的连续缺口\n")

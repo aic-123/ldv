@@ -130,7 +130,7 @@ from ..core.views import (
     stable,
     view_parts,
 )
-from ._framework import Report
+from ._framework import Report, result_of as _result
 
 #: 视图侧判据的编号 —— 与 `run_checks.PLUGIN_CODES` / `KERNEL_CODES` **并列**，
 #: 不是它们的一部分（视图层与插件无关，见模块开头）。
@@ -1418,13 +1418,6 @@ def known_answer_specs() -> list[dict[str, Any]]:
          "q": partition_of(p2),
          "want": {"A2": Tri.UNEXPANDED, "A3": Tri.UNEXPANDED}},
     ]
-
-
-def _result(rep: Report, code: str) -> Tri:
-    for a in rep.assertions:
-        if a.code == code:
-            return a.result
-    return Tri.UNEXPANDED
 
 
 def known_answer_controls() -> list[str]:

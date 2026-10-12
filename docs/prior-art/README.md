@@ -351,13 +351,29 @@ io.open("spgist.txt", "w", encoding="utf-8").write(s)
 |---|---|
 | `<工作区根>/.prior-art/*.txt` | `repo/docs/分层方向视图-成熟方案与跨领域文献.md`、`repo/ldv/C8-成熟方案对照.md` |
 | `<工作区根>/sources/*.txt` | `outputs/ldv-成熟答案印证.md`（13 篇：`gist1995` / `kraska2018` / `unbiased_ltr` / `hnsw` / `mlcs` / `mvselect2026` / `onesize2005` …） |
-| `<工作区根>/.webcache/*.html` | **网页来源**的引文（2026-10-07 加）：ESLint *Bulk Suppressions*、rustc *Lint Levels* |
+| `<工作区根>/.webcache/*.html` · `*.md` | **网页来源**的引文（2026-10-07 加 `.html`；**2026-10-12 加 `.md`**）：ESLint *Bulk Suppressions*、rustc *Lint Levels*、dev.to *BM25 vs. Vector Search*（`.html`）；Ragas *Context Recall* / *Context Precision*（`.md`） |
 
 ⚠️ **第三份（网页缓存）是 2026-10-07 补的，理由是「源不在范围」与「引文写错了」长得一样。**
    有些引文的源**不是 PDF**、是官方网页，而 v4 只读两份 `.txt` ⇒
    那些引文**全部**被报成「缺口」（实测：`outputs/ldv-成熟答案印证.md` 里那条 ESLint 引文
    覆盖比 **0.64**）—— 读的人会去改**本来是对的**引文。
    可用 `LDV_WEBCACHE` 覆盖路径。
+
+⚠️ **`.md` 是 2026-10-12 加的，同一个理由的第二个面。**
+   有些网页源的正文**以 markdown 形式**留在仓库里（GitHub 上的文档站源文件，
+   例 `raw.githubusercontent.com/explodinggradients/ragas/v0.1.21/docs/…md`）。
+   只收 `.html` ⇒ 那些引文**照样被报成「缺口」**。
+   实测（`docs/与普通检索系统的质量对照.md`，两条 Ragas v0.1.21 引文）：
+
+   | 跑法 | 结果 |
+   |---|---|
+   | `.webcache/` 里含 `.md`（= 现状） | `引文 6 条｜全覆盖 6｜有缺口 0` |
+   | 把 `.md` 拿掉（`LDV_WEBCACHE` 指向只有 `.html` 的目录） | `引文 6 条｜全覆盖 4｜有缺口 2`（覆盖比 0.64 / 0.49） |
+
+   ⇒ 两趟之间**引文一字没动** —— 差的全在**源侧**。这正是「源不在核验范围」
+   与「引文写错了」长得一样那条纪律的同一个面。
+   ⚠️ 同一趟还顺手修了汇总行一个**与实际不符**的读数：`n_web` 原来只数 `.html`，
+   `.md` 加进去之后实际 6 份、印出来 5 份 ⇒ 改成从 `SRC_GLOBS[_WEB]` 现算。
 
 ⚠️ **网页源带来的覆盖是*弱*的**：脚本只去标签、去 `script`/`style`、解实体，
    **不抽正文** ⇒ 页脚/导航的样板文字也算「命中」。

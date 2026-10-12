@@ -92,10 +92,10 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Iterable
 
 from ..core.tri import Tri
-from ._framework import Report
+from ._framework import Report, result_of as _result
 
 
 def _leaves(kernel: Any) -> list[Any]:
@@ -248,3 +248,107 @@ def render_absorption(prof: dict[str, Any], label: str = "") -> str:
             f"（分辨率下界）"
             f"｜判空点 {prof['判空点']} 个，其中**域内有差异（可搬）** "
             f"{prof['可搬的判空点']} 个")
+
+
+# --- `B17` 的**已知答案对照**（合成图，三态各一例） ------------------------------
+#
+# ⚠️ 与 `§A1`–`§A7` 的合成对照同一条纪律：**不碰内核、不碰语料**。
+#    这里要对照的是「这条判据会不会红」，不是「真语料上是什么数」——
+#    后者由 `run_tests.test_equivalence` 读真语料跑。**两件事分开，各自说清。**
+#
+# ⚠️ **为什么非有不可**：随仓库那份 36 项语料是 **DAG** ⇒ `reach` 的等价类（SCC）
+#    **全是单点** ⇒ 这条判据在那里报「**跳过**」。而「跳过」与「这条判据根本不会红」
+#    在汇总里长得**一模一样**（`跳过 ≠ 通过` 的反面）。
+#    ⇒ 用一张**有环**的合成小图把「非退化 ⇒ 判得了，而且该红时红」当场演一遍。
+#
+# 手推（图 `a ⇄ b`，`c` 孤立；`which="reach"`）：
+#
+#     等价类（SCC）   {a, b} ｜ {c}     ⇒ 最大 2 > 1 ⇒ **非退化**，判得了
+#
+#     过·叶排对      叶₁ = {a, b} ｜ 叶₂ = {c}
+#                    (a) 每个叶只含一个等价类 ✓                    ⇒ **过**
+#     红·叶排错      叶₁ = {a} ｜ 叶₂ = {b, c}
+#                    (a) 叶₂ 里混了两个类（{a,b} 与 {c}）⇒ **红**
+#                    （`which="reach"` 时 (b) 不判 —— 那是有意收窄的，见模块
+#                      docstring 末；所以这里**只**靠 (a) 就能红）
+#     跳过·全是单点  等价类 {a} {b} {c} ⇒ 最大 1 < 2 ⇒ 两条断言恒真 ⇒ **跳过**
+#                    （= 随仓库那份语料上的形态 —— 对照自己也要认得它）
+
+
+class _StubDir:
+    """只提供 `B17` 真正用到的两样东西：`did` 与成员集。**不冒充内核。**"""
+
+    def __init__(self, did: str, members: Iterable[str]) -> None:
+        self.did = did
+        self._members = frozenset(members)
+
+
+class _StubKernel:
+    """`B17` 合成对照的最小替身 —— 只提供它调的那三个访问器。
+
+    ⚠️ 用真内核要建一棵树、跑一遍语料，而这里要对照的是「判据会不会红」。
+       与 `§A6` 的最小替身同一条纪律：**最便宜的那一档**。
+    """
+
+    def __init__(self, root: _StubDir, kids: dict[str, list[_StubDir]]) -> None:
+        self.root = root
+        self._kids = kids
+        self._all = [root] + [d for v in kids.values() for d in v]
+
+    def all_directions(self) -> list[_StubDir]:
+        return list(self._all)
+
+    def children_of(self, d: _StubDir) -> list[_StubDir]:
+        return list(self._kids.get(d.did, ()))
+
+    def members_of(self, d: _StubDir) -> frozenset[str]:
+        return d._members
+
+
+def _b17_stub(kind: str) -> tuple[_StubKernel, dict[str, frozenset[str]]]:
+    """三种合成形态：`ok`（叶排对）/ `broken`（叶排错）/ `degenerate`（类全是单点）。"""
+    root = _StubDir("R", ("a", "b", "c"))
+    if kind == "degenerate":
+        cls = {i: frozenset({i}) for i in ("a", "b", "c")}
+        kids = {"R": [_StubDir("L1", ("a",)), _StubDir("L2", ("b",)),
+                      _StubDir("L3", ("c",))]}
+    elif kind == "broken":
+        cls = {"a": frozenset({"a", "b"}), "b": frozenset({"a", "b"}),
+               "c": frozenset({"c"})}
+        kids = {"R": [_StubDir("L1", ("a",)), _StubDir("L2", ("b", "c"))]}
+    else:
+        cls = {"a": frozenset({"a", "b"}), "b": frozenset({"a", "b"}),
+               "c": frozenset({"c"})}
+        kids = {"R": [_StubDir("L1", ("a", "b")), _StubDir("L2", ("c",))]}
+    return _StubKernel(root, kids), cls
+
+
+#: `(标签, 形态, 手推的答案)` —— `want` 是**手推**出来的，不是跑出来抄的。
+_B17_CASES: list[tuple[str, str, Tri]] = [
+    ("过·叶排对（等价类非单点）", "ok", Tri.YES),
+    ("红·叶排错（一个叶里混了两个等价类）", "broken", Tri.NO),
+    ("跳过·等价类全是单点（= 随仓库那份语料上的形态）", "degenerate", Tri.UNEXPANDED),
+]
+
+
+def b17_known_answer() -> list[str]:
+    """`B17` 的合成对照 —— 三态各一例。返回**失败清单**（空 = 全对）。
+
+    ⚠️ 三态**都**要对照：只验「该红时红」不够 —— 那样一条**永远红**的判据也会通过。
+       要的是「**该红时红、该绿时绿、该跳过时跳过**」。
+    ⚠️ 而且**期望值必须两两不同**：三例都落在同一态，这个对照就什么都没证明
+       （「空转与通过长得一模一样」在**对照表**上的形态）⇒ 这里当场自检。
+    """
+    fails: list[str] = []
+    seen: list[Tri] = []
+    for label, kind, want in _B17_CASES:
+        kernel, cls = _b17_stub(kind)
+        rep = Report(plugin="(合成)")
+        b17_leaf_is_equivalence_class(kernel, cls, rep, "reach")
+        got = _result(rep, "B17")
+        seen.append(got)
+        if got is not want:
+            fails.append(f"{label}：期望 {want}，实测 {got}")
+    if len(set(seen)) != len(seen):
+        fails.append(f"对照表退化：三例落在同一态 {seen} —— 这个对照证明不了什么")
+    return fails

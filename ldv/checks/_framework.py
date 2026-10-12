@@ -112,3 +112,20 @@ def tri_from(ok: bool | None, *, skipped_reason: str = "") -> tuple[Tri, str]:
     if ok is None:
         return Tri.UNEXPANDED, skipped_reason
     return (Tri.YES if ok else Tri.NO), ""
+
+
+def result_of(rep: Report, code: str) -> Tri:
+    """`rep` 里编号为 `code` 的那条断言的三态。**没有那条 ⇒ `UNEXPANDED`。**
+
+    ⚠️ 合成对照（`a1_known_answer` / `b17_known_answer` / `b20_known_answer` …）
+       要靠它把「跑出来的三态」取回来比对。**没有 ⇒ 未展开**是**故意**的：
+       对照要的正是「该红时红、该绿时绿」—— 一条**没注册**的断言必须被读成
+       「判不了」，不能读成「过」（`跳过 ≠ 通过` 的同一形态）。
+
+    ⚠️ 它是**一处**实现：`abstraction` / `equivalence` / `refinement` 三处的对照共用它
+       （决策规则 3：「凡『两处各写一份』的地方，第二处必须在写之前就从第一处取」）。
+    """
+    for a in rep.assertions:
+        if a.code == code:
+            return a.result
+    return Tri.UNEXPANDED

@@ -1209,6 +1209,41 @@ def test_equivalence() -> None:
        == ck.plugin.reachable(ck.direction("D4").payload),
        f"D3 {sorted(ck.direction('D3').payload)} vs D4 {sorted(ck.direction('D4').payload)}")
 
+    # ── ⑦ 合成对照：**三态各一例**（`run_checks` 的「覆盖证据」引的就是它） ──
+    #   ⚠️ 前面 ①–⑥ 都读**真语料**；这一条**不碰内核、不碰语料** —— 它问的是
+    #      「这条判据**会不会红**」，而真语料上它报「跳过」（DAG ⇒ 等价类全是单点）。
+    #      两件事分开，各自说清。
+    from ldv.checks.equivalence import b17_known_answer
+
+    b17_fails = b17_known_answer()
+    ok("★★ [E] `B17` 合成对照：过 / 红 / 跳过 **三态各一例**（随仓库那份语料是 DAG"
+       " ⇒ 这条判据在那里报「跳过」；对照证明它在有环图上**判得了、而且该红时红**）",
+       not b17_fails, "；".join(b17_fails) or "三态全对")
+
+
+def test_semantic_guard() -> None:
+    """★ `B20`：**语义变细守卫** —— 它的**合成对照**。
+
+    ⚠️ 这条判据只在**标签轴**（`keyset`）上落 ⇒ `reach` / `sequence` 上报「**跳过**」。
+       而「跳过」与「这条判据根本不会红」在汇总里长得**一模一样**
+       （`跳过 ≠ 通过` 的反面）⇒ 这里用一棵**最小合成树**把三态各演一遍：
+
+           过      两个子把标签切干净（父 `p:2 q:2` ⇒ 子 `p:2` / `q:2`）
+           红      11 层单链，每层成员集与标签都相同 ⇒ 连续 11 段空转 ≥ N
+           跳过    `judged=False`（非标签轴）
+
+    手推依据写在 `ldv/checks/refinement.py` 的 `b20_known_answer` 那一段。
+
+    ⚠️ **不碰内核、不碰语料**：`B20` 判的是「展开有没有在标签上产出东西」，
+       与真语料无关 ⇒ 对照也不该依赖真语料（依赖了就不是最便宜的那一档）。
+    """
+    from ldv.checks.refinement import b20_known_answer
+
+    fails = b20_known_answer()
+    ok("★★ [E] `B20` 合成对照：过 / 红 / 跳过 **三态各一例**"
+       "（标签分开了 ⇒ 过；连续 N 层不分开 ⇒ 红；非标签轴 ⇒ 跳过）",
+       not fails, "；".join(fails) or "三态全对")
+
 
 def test_rebuild() -> None:
     """★ 规范重建 / 阈值重建：**买得到「增量 ≡ 全量」，但代价是 §K3**（`C8` §7 第 3 步）。
@@ -5531,7 +5566,8 @@ def test_cli_paths() -> None:
 def main() -> int:
     for fn in (test_tri, test_loader, test_kernel, test_exposure_model, test_selfopt,
                test_sequence, test_flows, test_emergence, test_divergence,
-               test_equivalence, test_rebuild, test_out_of_scope, test_stay_at_parent,
+               test_equivalence, test_semantic_guard, test_rebuild, test_out_of_scope,
+               test_stay_at_parent,
                test_cover_leak_baseline, test_cover_oracle_transparency,
                test_b3_reduction_premise, test_reach_cache_premise,
                test_reach_cache_transparency, test_tree_premise,
