@@ -71,7 +71,7 @@ import json
 from pathlib import Path
 from typing import Any, Callable
 
-from ._framework import Report
+from ._framework import Report, result_of as _result
 from ..core.tri import Tri
 
 #: 变细守卫的阈值 —— 照 SP-GiST 的前例（`longValuesOK`）：
@@ -768,3 +768,58 @@ def b19_progress_guard(prof: dict[str, Any], rep: Report) -> None:
             else (f"{prof['已展开方向数']} 次展开中没变细 {prof['没变细展开']} 次，"
                   f"最长连续段 {prof['最长没变细连续段']} < N={prof['N']}"
                   f"（切得不匀 {prof['切得不匀展开']} 次是度量，不判）"))
+
+
+def b18_known_answer() -> list[str]:
+    """`B18` 的**合成对照** —— 三态各一例。返回**失败清单**（空 = 全对）。
+
+    ⚠️ 同 `b17_known_answer` / `b20_known_answer`：三态**都**要对照，而且
+       **期望值必须两两不同**（三例落在同一态 ⇒ 这个对照什么都没证明，当场自检）。
+    ⚠️ 它**不碰内核、不碰语料、不碰盘上那份 baseline** —— 全程显式传参。
+
+    ## ⚠️ 为什么 `B18` 也要有这一条（2026-10-12 补）
+
+    `run_checks` 汇总里那段「跳过项的**覆盖证据**」按**编号**出，而它原来只盖
+    `A5` / `B17` / `B20`。`B18` 的跳过有**四个分支**（baseline 是别的语料的 /
+    baseline 里没记指纹 / 存档被改坏 / 没有可比的父子对），而它**真的会跳** ——
+    实测 `snap-hepth` 与 `snap-hepth-dag` 上就跳。那时那段汇总里
+    **既没有 `B18` 那一行、也没有任何提示**（静默省略），
+    而「没有这一行」与「这一行全对」在输出里**长得一样**。
+
+    ⇒ 这条对照 + `_skip_evidence()` 里的登记 + 汇总块的「点名」三样一起才补齐。
+
+    三例：
+
+        过    baseline 是本语料那一区、条目 ≥ 观测
+        红    观测 > baseline（新增覆盖不漏）
+        跳过  baseline 是**另一份语料**的（第 0 条：语料指纹不符）
+    """
+    fp = {"项数": 36, "边数": 47}
+    other = {"项数": 281, "边数": 1008}
+    entry = {"漏项数": 0, "漏的对数": 0}
+    same = {corpus_key(fp): {"语料": fp, "条目": {"keyset|batch": entry}}}
+    diff = {corpus_key(other): {"语料": other, "条目": {"keyset|batch": entry}}}
+    cases: list[tuple[str, dict[str, dict[str, Any]], dict[str, Any], Tri]] = [
+        ("过·baseline 是本语料那一区、没有新增覆盖不漏",
+         {"keyset|batch": {**entry, "明细": []}}, same, Tri.YES),
+        ("红·观测 > baseline（新增覆盖不漏）",
+         {"keyset|batch": {"漏项数": 3, "漏的对数": 2, "明细": ["D0 漏 3 项"]}},
+         same, Tri.NO),
+        ("跳过·baseline 是**另一份语料**的（第 0 条：语料指纹不符）",
+         {"keyset|batch": {**entry, "明细": []}}, diff, Tri.UNEXPANDED),
+    ]
+    fails: list[str] = []
+    seen: list[Tri] = []
+    for label, obs, zones, want in cases:
+        rep = Report(plugin="(合成)")
+        b18_cover_leak_baseline(
+            obs, rep, fp,
+            baseline={BASELINE_FORMAT_KEY: BASELINE_FORMAT, "基线": zones})
+        got = _result(rep, "B18")
+        seen.append(got)
+        if got is not want:
+            fails.append(f"{label}：期望 {want}，实测 {got}")
+    if len(set(seen)) != len(seen):
+        fails.append(f"对照表退化：三例落在同一态 {seen} —— 这个对照证明不了什么")
+    return fails
+

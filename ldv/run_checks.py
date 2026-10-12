@@ -920,6 +920,7 @@ def _skip_evidence() -> list[tuple[str, str, bool]]:
        崩了**报成「对照不符」**（可见），不静默、也不带走整趟。
     """
     from .checks.abstraction import a5_known_answer
+    from .checks.coverage import b18_known_answer
     from .checks.equivalence import b17_known_answer
     from .checks.refinement import b20_known_answer
 
@@ -940,6 +941,8 @@ def _skip_evidence() -> list[tuple[str, str, bool]]:
         ("A5", "合成账（**两态**：指得到 ⇒ 过 / 指不到 ⇒ 红）", a5_ok()),
         ("B17", "合成有环图（**三态**：过 / 红 / 跳过）",
          fails_of(b17_known_answer) == []),
+        ("B18", "合成 baseline 分区（**三态**：过 / 红 / 跳过）",
+         fails_of(b18_known_answer) == []),
         ("B20", "合成标签轴（**三态**：过 / 红 / 跳过）",
          fails_of(b20_known_answer) == []),
     ]
@@ -1082,13 +1085,24 @@ def main(argv: list[str]) -> int:
                     dup.append(f"`{c}` 在 {' 与 '.join(groups)} 上各跳一次")
             print(f"     （**{len(codes)} 次跳过 ⇒ {len(uniq)} 个不同编号** —— "
                   f"{'；'.join(dup)}；覆盖证据按**编号**出，一个编号一行）")
-        ev = [(c, d, g) for c, d, g in _skip_evidence() if c in codes]
+        table = list(_skip_evidence())
+        ev = [(c, d, g) for c, d, g in table if c in codes]
         print("  ── 跳过项的**覆盖证据**（合成对照 —— **不是**本趟读数）——")
         for code, desc, good in ev:
             print(f"     {code:4s}{desc} ⇒ {'✓ 全对' if good else '‼ 对照不符'}")
+        # ⚠️ **不许静默省略**：本趟跳过、但表里**没有**对照的编号必须**点名**。
+        #    不点名的话，「没有这一行」与「这一行全对」在输出里长得一模一样 ——
+        #    而 `B18` 的四个跳过分支实测**真的会跳**（`snap-hepth` / `snap-hepth-dag`）。
+        naked = sorted(set(codes) - {c for c, _d, _g in table})
+        for code in naked:
+            print(f"     {code:4s}‼ **这条跳过没有覆盖证据** —— "
+                  f"表里没有它的合成对照（**要人补**，别读成「已覆盖」）")
+        if naked:
+            print("     ‼ 缺证据的编号**必须点名**：跳过了却没有对照，"
+                  "与「对照全对」不许长得一样")
         if any(not g for _, _, g in ev):
             print("     ‼ 对照不符 —— 权威闸门在 `run_tests`"
-                  "（`test_equivalence` / `test_semantic_guard`）")
+                  "（`test_equivalence` / `test_semantic_guard` / `test_skip_evidence_table`）")
         print("     ⚠️ 「跳过」= 本趟这条方向上**没有内容**；"
               "「对照」= 这条判据**会红**。两件事，不共用一行。")
     if missing:

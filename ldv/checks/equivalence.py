@@ -205,12 +205,29 @@ def b17_leaf_is_equivalence_class(kernel: Any, classes: dict[str, frozenset[str]
     if torn and not judged:
         tail = (f"｜（b）**本方向不判**：{len(torn)} 个等价类被拆到多个叶"
                 f"（`reach` 的 `split` 有意比语义更细，§K8 允许假阳）—— 只报不判")
+    n_cls = len(set(classes.values()))
+    if bad:
+        detail = "；".join(bad[:2])
+    else:
+        if judged:
+            detail = (f"{len(leaves)} 个叶 = {n_cls} 个等价类；"
+                      f"最大叶容量 {cap_max} = 最大等价类 {floor}"
+                      f"（该方向的分辨率**已到下界**）")
+        else:
+            # ⚠️ **`(b)` 不判时这两个数本来就不相等、也不该相等** —— 把它们印成等式是
+            #    **输出说谎**。实测（`pypi-deps`，有环）：
+            #        「最大叶容量 1 = 最大等价类 7（该方向的分辨率**已到下界**）」
+            #    —— `1 ≠ 7` 是**假等式**，而「已到下界」是**反的**
+            #    （`(b)`「等价类 ⊆ 叶」在 `reach` 上**只报不判** ⇒ 下界那一半没人守）。
+            #    ⚠️ **为什么以前没露**：随仓库那份 36 项语料是 **DAG** ⇒ `reach` 上它
+            #    **直接跳过**，这一行根本不印。**换成有环语料才现形**
+            #    （`run_tests.test_b17_cyclic_corpus` 守着这一处）。
+            detail = (f"{len(leaves)} 个叶 = {n_cls} 个等价类；"
+                      f"最大叶容量 {cap_max}、最大等价类 {floor}"
+                      f"（⚠️ **不相等、也不该相等**）")
+        detail += tail
     rep.add("B17", "叶 = 不可分等价类（叶容量 = 分辨率下界）",
-            Tri.NO if bad else Tri.YES,
-            "；".join(bad[:2]) if bad
-            else f"{len(leaves)} 个叶 = {len(set(classes.values()))} 个等价类；"
-                 f"最大叶容量 {cap_max} = 最大等价类 {floor}"
-                 f"（该方向的分辨率**已到下界**）" + tail)
+            Tri.NO if bad else Tri.YES, detail)
 
 
 def absorption_profile(kernel: Any, classes: dict[str, frozenset[str]]) -> dict[str, Any]:

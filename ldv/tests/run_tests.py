@@ -5632,6 +5632,13 @@ def _declared_codes() -> tuple[str, ...]:
             + tuple(RETRIEVER_CODES))
 
 
+#: `_assert_state_counts()` 的**缓存**（2026-10-12）。
+#: ⚠️ 那一趟 `run_checks` 要 ~6 s，而 `test_never_judged` 与 `test_skip_evidence_table`
+#:    **都要它** ⇒ 只跑一次。缓存成立的前提是「套件跑的过程中生产配置不变」——
+#:    唯一会改 `LDV_CORPUS` 的 `test_b17_cyclic_corpus` **用完就还原**（`finally`）。
+_STATE_COUNTS: tuple[dict[str, dict[str, int]], set[str]] | None = None
+
+
 def _assert_state_counts() -> tuple[dict[str, dict[str, int]], set[str]]:
     """跑一趟 `run_checks --no-probes`，按编号数出**生产配置**上的三态。
 
@@ -5643,6 +5650,11 @@ def _assert_state_counts() -> tuple[dict[str, dict[str, int]], set[str]]:
        混进来就会把「没判过」读成「判过」（本仓库踩过一次，见
        `outputs/_恒定的过有多少条.md` 的 E5）。
     """
+    global _STATE_COUNTS
+
+    if _STATE_COUNTS is not None:
+        return _STATE_COUNTS
+
     import contextlib
     import io as _io
 
@@ -5668,7 +5680,8 @@ def _assert_state_counts() -> tuple[dict[str, dict[str, int]], set[str]]:
             _rc.main(["run_checks", "--no-probes"])
     finally:
         _fw.Report.add = orig           # type: ignore[assignment]
-    return counts, plugins
+    _STATE_COUNTS = (counts, plugins)   # 见文件头那个缓存变量的说明
+    return _STATE_COUNTS
 
 
 def _never_judged_fails(counts: dict[str, dict[str, int]],
@@ -5752,6 +5765,178 @@ def test_never_judged() -> None:
        f"①{sorted(got1)}｜②{sorted(got2)}｜③{sorted(got3)}")
 
 
+def _b17_real(corpus: str, which: str) -> tuple[Tri, str, int]:
+    """在 `corpus` 上**真跑**一次 `B17`（`batch_kernel` + 判据本身）。**只读**。
+
+    返回 `(三态, detail, 最大等价类)`。⚠️ `LDV_CORPUS` 用完**必还原**（`finally`）。
+
+    ⚠️ 为什么不用 `run_checks`：整趟在 1200 项上 **4m35s**，而大头是**别的**检查
+       （覆盖 oracle 17419 次）；只要 `B17` 的话小语料上**亚秒**
+       （`outputs/_probe_b17_real_run.py` 留档）。
+    """
+    from ldv.checks._fixtures import equiv_classes
+    from ldv.checks._framework import Report
+    from ldv.checks.equivalence import b17_leaf_is_equivalence_class
+    from ldv.run_checks import batch_kernel
+
+    saved = os.environ.get("LDV_CORPUS")
+    try:
+        os.environ["LDV_CORPUS"] = corpus
+        loaded = load()
+        if loaded is None:
+            return Tri.UNEXPANDED, f"载入 `{corpus}` 失败", 0
+        nodes, edges, _dangling = loaded
+        cls = equiv_classes(which, nodes, edges)
+        kernel, _plugin, _queries, _mk = batch_kernel(which, nodes, edges)
+        rep = Report(plugin=which, expects=("B17",))
+        b17_leaf_is_equivalence_class(kernel, cls, rep, which)
+        biggest = max((len(c) for c in set(cls.values())), default=0)
+        return rep.assertions[0].result, rep.assertions[0].detail, biggest
+    finally:
+        os.environ.pop("LDV_CORPUS", None)
+        if saved is not None:
+            os.environ["LDV_CORPUS"] = saved
+
+
+def _reach_classes(corpus: str) -> tuple[int, int]:
+    """`(项数, reach 最大等价类)` —— **只算等价类，不建内核**（1200 项上也是秒级）。"""
+    from ldv.checks._fixtures import equiv_classes
+
+    saved = os.environ.get("LDV_CORPUS")
+    try:
+        os.environ["LDV_CORPUS"] = corpus
+        loaded = load()
+        if loaded is None:
+            return 0, 0
+        nodes, edges, _d = loaded
+        cls = equiv_classes("reach", nodes, edges)
+        return len(nodes), max((len(c) for c in set(cls.values())), default=0)
+    finally:
+        os.environ.pop("LDV_CORPUS", None)
+        if saved is not None:
+            os.environ["LDV_CORPUS"] = saved
+
+
+def test_b17_cyclic_corpus() -> None:
+    """★★ `B17`@`reach` 的「跳过」是**语料性质**（DAG ⇒ 等价类全是单点），
+    不是判据的毛病 —— 仓库自带**有环**语料，在那些语料上它**真的判**。
+
+    ## 两半分开说（**不共用一行**）
+
+    ① **机制**：设计好的**单变量对照** —— `snap-hepth`（留环）/ `snap-hepth-dag`（去环）：
+       **同一张图**（都是 1200 项），只差有没有环 ⇒ 最大等价类 **51 / 1**。
+    ② **真跑**：小语料上跑**真的** `B17`（亚秒）：`pypi-deps`（有环）**判**、
+       `gh-langs`（DAG）**跳过**。
+       ⚠️ 为什么不用 `snap-hepth` 真跑：`reach` 在 1200 项上建核 **25.5 s** ⇒
+       进不了常规套件，它只在 `outputs/_probe_b17_real_run.py` 里留档。
+
+    ## ★ 顺带钉住一处**输出说谎**（本趟才现形）
+
+    `B17` 那行 detail 原来**无条件**印 `最大叶容量 X = 最大等价类 Y（已到下界）`。
+    而 `(b)`「等价类 ⊆ 叶」在 `reach` 上**只报不判** ⇒ 这两个数**本来就不相等**。
+    实测 `pypi-deps`：印的是 `最大叶容量 1 = 最大等价类 7（该方向的分辨率**已到下界**）`
+    —— `1 ≠ 7` 是**假等式**，而「已到下界」是**反的**。
+    ⚠️ 为什么以前没露：随仓库那份 36 项语料是 DAG ⇒ `reach` 上**直接跳过**，这一行不印。
+    """
+    # ── ① 机制：设计好的单变量对照（只算等价类）─────────────────────────────
+    n_cyc, big_cyc = _reach_classes("snap-hepth")
+    n_dag, big_dag = _reach_classes("snap-hepth-dag")
+    ok("★ 单变量对照：`snap-hepth` / `snap-hepth-dag` 是**同一张图**（项数相同）",
+       n_cyc > 0 and n_cyc == n_dag, f"{n_cyc} vs {n_dag}")
+    ok("★ 留环那份：`reach` 最大等价类 ≥ 2 ⇒ `B17` **判得了**（不是退化）",
+       big_cyc >= 2, f"最大等价类 {big_cyc}")
+    ok("★ 去环那份：`reach` 最大等价类 == 1 ⇒ `B17` **跳过**（全单点）",
+       big_dag == 1, f"最大等价类 {big_dag}")
+
+    # ── ② 真跑：小语料上跑**真的** `B17`（亚秒）────────────────────────────
+    cyc_state, cyc_detail, cyc_big = _b17_real("pypi-deps", "reach")
+    dag_state, dag_detail, dag_big = _b17_real("gh-langs", "reach")
+    ok("★★ 真跑：**有环**语料 `pypi-deps` 上 `B17`@`reach` **判**（不是跳过）",
+       cyc_state is not Tri.UNEXPANDED,
+       f"三态 {cyc_state}；最大等价类 {cyc_big}；detail {cyc_detail}")
+    ok("★★ 真跑：**DAG** 语料 `gh-langs` 上 `B17`@`reach` **跳过**（全单点）",
+       dag_state is Tri.UNEXPANDED,
+       f"三态 {dag_state}；最大等价类 {dag_big}；detail {dag_detail}")
+    ok("★ 而「判 / 跳过」跟着**最大等价类 ≥ 2** 走（同一份对照上的单变量）",
+       (cyc_state is not Tri.UNEXPANDED) == (cyc_big >= 2)
+       and (dag_state is Tri.UNEXPANDED) == (dag_big < 2),
+       f"pypi-deps {cyc_big}/{cyc_state}｜gh-langs {dag_big}/{dag_state}")
+
+    # ── ③ ★ 输出说谎守卫：`(b)` 不判时**不许**把两个数印成等式 ───────────────
+    ok("★★ `(b)` 在 `reach` 上只报不判 ⇒ detail **不许**说「已到下界」"
+       "（实测曾印出 `最大叶容量 1 = 最大等价类 7（已到下界）`：假等式 + 反向结论）",
+       "已到下界" not in cyc_detail, f"detail：{cyc_detail}")
+    ok("★★ 而它必须**明说**这两个数不相等、也不该相等（不是删掉了事）",
+       "不相等" in cyc_detail, f"detail：{cyc_detail}")
+    ks_state, ks_detail, _ks_big = _b17_real("pypi-deps", "keyset")
+    ok("★★ **反向对照**：`keyset` 上 `(b)` **是**判的 ⇒ 那里**该**印「已到下界」"
+       "（只删不放 = 把有内容的读数与没内容的读数印成一个样子）",
+       ks_state is not Tri.UNEXPANDED and "已到下界" in ks_detail,
+       f"三态 {ks_state}；detail {ks_detail}")
+
+
+def test_skip_evidence_table() -> None:
+    """★★ 「跳过项的**覆盖证据**」表 —— **权威闸门**（`run_checks` 那边只印不判）。
+
+    ## 它守的是「跳过」的另一半
+
+    「跳过」有两种含义，本仓库拆开报：**这一趟这条方向上没有内容**（真跳过）
+    与 **这条判据会不会红**（可判，用合成对照证）。后者就是这张表。
+
+    ## 三条规则
+
+      ① 表里每一条的对照**全对**（三态 / 两态都落对，且**期望值两两不同**）
+      ② 本趟**真的跳过**的每个编号都在表里 —— 缺一个就红。
+         ⚠️ 这一条是**本趟补的**：`B18` 的四个跳过分支原来**一条对照都没有**，
+         而汇总块用 `if c in codes` 过滤 ⇒ `B18` 跳过时**静默没有那一行**
+         （实测 `snap-hepth` / `snap-hepth-dag` 上它**就跳过**）。
+         「没有这一行」与「这一行全对」在输出里长得一样 —— 本仓库记过五次的形状。
+      ③ **反向**：把对照换成「报失败」的假实现，表**必须**报「对照不符」
+         （正向全绿只说明「没崩」，说明不了「判得动」）。
+    """
+    from ldv import run_checks as _rc
+
+    table = list(_rc._skip_evidence())          # noqa: SLF001 - 就是被测对象
+    codes = sorted(c for c, _d, _g in table)
+
+    # ── ① 每一条对照都要全对 ────────────────────────────────────────────────
+    bad = [c for c, _d, g in table if not g]
+    ok("★★ [E] 覆盖证据表：每一条的合成对照**全对**（三态/两态都要落对）",
+       not bad, f"对照不符的编号：{bad}｜表：{codes}")
+    ok("★★ [E] 表里**必须**有 `B18` —— 它那四个跳过分支原来一条对照都没有",
+       "B18" in codes, f"表：{codes}")
+
+    # ── ② 本趟真的跳过的编号，一个都不许漏 ──────────────────────────────────
+    counts, _plugins = _assert_state_counts()
+    skipped = sorted(c for c, v in counts.items() if v.get("跳过", 0) > 0)
+    missing = sorted(set(skipped) - set(codes))
+    ok("★★ [E] 本趟**真的跳过**的每个编号都在表里 —— 缺一个就红"
+       "（不许静默省略：没有那一行与那一行全对长得一样）",
+       not missing, f"本趟跳过的 {skipped}｜表里 {codes}｜**缺 {missing}**")
+
+    # ── ③ 反向：对照坏了，表必须报「对照不符」────────────────────────────────
+    from ldv.checks import abstraction as _abs
+    from ldv.checks import coverage as _cov
+    from ldv.checks import equivalence as _eq
+    from ldv.checks import refinement as _ref
+
+    fakes = {"A5": (_abs, "a5_known_answer"), "B17": (_eq, "b17_known_answer"),
+             "B18": (_cov, "b18_known_answer"), "B20": (_ref, "b20_known_answer")}
+    caught: list[str] = []
+    for code, (mod, attr) in fakes.items():
+        orig = getattr(mod, attr)
+        setattr(mod, attr, lambda: ["（反向对照：故意让它报失败）"])
+        try:
+            rows = {c: g for c, _d, g in _rc._skip_evidence()}   # noqa: SLF001
+        finally:
+            setattr(mod, attr, orig)
+        if rows.get(code) is False:
+            caught.append(code)
+    ok("★★ [E] 反向：把对照换成「报失败」的假实现 ⇒ 表**必须**报「对照不符」"
+       "（正向全绿只说明没崩，说明不了判得动）",
+       sorted(caught) == sorted(fakes), f"抓到的 {sorted(caught)}｜期望 {sorted(fakes)}")
+
+
 def main() -> int:
     for fn in (test_tri, test_loader, test_kernel, test_exposure_model, test_selfopt,
                test_sequence, test_flows, test_emergence, test_divergence,
@@ -5765,7 +5950,8 @@ def main() -> int:
                test_query_hit_items, test_spec_paths, test_maintain,
                test_view_oracles, test_influence_channels, test_views,
                test_multilevel, test_retriever, test_cli_paths,
-               test_never_judged):
+               test_never_judged, test_b17_cyclic_corpus,
+               test_skip_evidence_table):
         fn()
     total = len(PASS) + len(FAIL)
     for f in FAIL:
