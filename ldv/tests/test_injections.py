@@ -79,6 +79,7 @@ from ldv.checks._fixtures import (  # noqa: E402
 )
 from ldv.checks._framework import Report  # noqa: E402
 from ldv.checks.abstraction import (  # noqa: E402
+    LEDGER_STAYED,
     READINGS,
     SUMMARIES,
     ReadingCtx,
@@ -94,6 +95,7 @@ from ldv.checks.abstraction import (  # noqa: E402
     a8_fixture_drops,
     a8_maintenance,
     build_views,
+    ledger_entries,
     reading_ctx,
     subtree_of,
     warranted_of,
@@ -1332,7 +1334,7 @@ def _view_chain(nodes: Any, edges: Any, head: int | None = None):
 def _view_report(
     vs: ViewSet, *, kernel: Any = None, cover: Any = None, plugin: Any = None,
     decls: list[dict[str, Any]] | None = None,
-    entries: list[tuple[str, str, str]] | None = None,
+    entries: list[tuple[str, str, str, str]] | None = None,
     a6kw: dict[str, Any] | None = None,
     a7: dict[str, Any] | None = None,
     a8: dict[str, Any] | None = None,
@@ -1350,7 +1352,8 @@ def _view_report(
         a4_category(view_parts(vs.q, lambda d: subtree_of(kernel, d)),
                     reading_ctx(kernel, vs.spec), decls, rep)
     if kernel is not None and entries is not None:
-        a5_ledger(entries, vs, lambda did, item: warranted_of(kernel, did, item),
+        a5_ledger(entries, vs,
+                  lambda did, item, kind: warranted_of(kernel, did, item, kind),
                   frozenset(kernel.items), rep)
     if a6kw is not None:
         with tempfile.TemporaryDirectory() as td:
@@ -1530,14 +1533,14 @@ def _a5_account(kernel: Any, spec: ViewSpec) -> list[tuple[str, str, str]]:
     ⚠️ 这份账是不是「恰好该有那些条」是 **`B4` 的事**，`§A5` 只判**可指认**。
        两条判同一件事会让「红」分不清是谁的（设计稿 §9 的 `§A5` 行写了这条边界）。
     """
-    out: list[tuple[str, str, str]] = []
+    out: list[tuple[str, str, str, str]] = []
     for did in spec.universe:
         d = kernel.direction(did)
         kids: set[str] = set()
         for c in kernel.children_of(d):
             kids |= set(kernel.members_of(c))
         for item in sorted(set(kernel.members_of(d)) - kids):
-            out.append((did, item, "结构停留：子方向都不收它"))
+            out.append((did, item, LEDGER_STAYED, "结构停留：子方向都不收它"))
     return out
 
 
@@ -1557,7 +1560,7 @@ def inj_a5(nodes: Any, edges: Any, injected: bool) -> Report:
     if not entries:
         raise CannotBuild("真链路上结构停留项为空 ⇒ 造不出一份非空的账（基线就绿不了）")
     if injected:
-        entries = [("ZZ", entries[0][1], "编的")] + entries[1:]
+        entries = [("ZZ", entries[0][1], entries[0][2], "编的")] + entries[1:]
     return _view_report(vs, kernel=kernel, entries=entries)
 
 
@@ -1569,7 +1572,7 @@ def inj_a5_bad_item(nodes: Any, edges: Any, injected: bool) -> Report:
     if not entries:
         raise CannotBuild("真链路上结构停留项为空 ⇒ 造不出一份非空的账")
     if injected:
-        entries = [(entries[0][0], "这个项不存在", "编的")] + entries[1:]
+        entries = [(entries[0][0], "这个项不存在", entries[0][2], "编的")] + entries[1:]
     return _view_report(vs, kernel=kernel, entries=entries)
 
 
@@ -1586,7 +1589,45 @@ def inj_a5_unwarranted(nodes: Any, edges: Any, injected: bool) -> Report:
         other = sorted(set(kernel.items) - mine)
         if not other:
             raise CannotBuild(f"`{did}` 的成员集就是整个语料 ⇒ 造不出「不在它上面」的项")
-        entries = [(did, other[0], "编的")] + entries[1:]
+        entries = [(did, other[0], LEDGER_STAYED, "编的")] + entries[1:]
+    return _view_report(vs, kernel=kernel, entries=entries)
+
+
+def inj_a5_out_of_scope(nodes: Any, edges: Any, injected: bool) -> Report:
+    """`§A5` 注入④：**「根覆盖之外」那一类**的独立重算不成立。
+
+        基线  **维护路径**的真实账（先建 6、再维护 30）—— 里面有真的
+              `out_of_scope` 行，修后**条条成立**                      ⇒ **绿**
+        注入  把第一条的项换成**真的进了结构**的项 ⇒ 与「根本没进结构」矛盾 ⇒ **红**
+
+    ⚠️ ★ **为什么必须单独一条**（2026-10-12 查出）：另外三条注入的基线账都由
+       `_a5_account` 造，而它**只造滞留类**（批建路径上 `out_of_scope` 恒空）。
+       ⇒ 「根覆盖之外」那一类**从来没被验过**，于是它「恒判 False」的缺陷
+       **一直没露**。这一条把那一类**真的走一遍**。
+
+    ⚠️ 它**不能**用批建：批建上 `out_of_scope` 恒空（`滞留 == 0`、`根覆盖之外 == 0`），
+       造不出非空且成立的基线。所以走 `maintenance_kernel`（`reach`）——
+       那一趟**先建 6 项**，根的覆盖只含那 6 项 ⇒ 其余项**按证明**落在根覆盖之外。
+    """
+    from ldv.core.kernel import _did_order
+    from ldv.run_checks import batch_kernel, maintenance_kernel
+
+    kernel = maintenance_kernel("reach", nodes, edges)
+    plugin = batch_kernel("reach", nodes, edges)[1]
+    cover = coverage_of("reach", nodes, edges)
+    dirs = sorted(kernel.all_directions(), key=lambda d: _did_order(d.did))
+    U = tuple(d.did for d in dirs)
+    spec = ViewSpec(universe=U, partition=(frozenset(U),),
+                    relation=frozenset((d.parent, d.did) for d in dirs if d.parent))
+    vs = build_views(kernel, spec, cover, plugin)
+    entries = ledger_entries(kernel, spec)
+    if not entries:
+        raise CannotBuild("维护路径上账为空 ⇒ 造不出非空的账（这条注入的前提不成立）")
+    if injected:
+        inside = sorted(kernel.members_of(kernel.root))
+        if not inside:
+            raise CannotBuild("根的成员集为空 ⇒ 造不出「真的进了结构」的项")
+        entries = [(entries[0][0], inside[0], entries[0][2], "编的")] + entries[1:]
     return _view_report(vs, kernel=kernel, entries=entries)
 
 
@@ -2416,6 +2457,7 @@ EXTRA_CASES: dict[str, tuple[str, Callable]] = {
     "A3·稳定但更细": ("A3", inj_a3_not_coarsest),
     "A5·项不是语料的项": ("A5", inj_a5_bad_item),
     "A5·独立重算不成立": ("A5", inj_a5_unwarranted),
+    "A5·根覆盖之外那类不成立": ("A5", inj_a5_out_of_scope),
     "A7·用重算冒充传播": ("A7", inj_a7_recompute),
     "A8·动作谎报": ("A8", inj_a8_mislabelled),
     # ★ `§M1` 的红形态是**对称**的（比 `csr` 更细 / 更粗都红）⇒ 一条注入只够一个侧面。

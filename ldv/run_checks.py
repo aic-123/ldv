@@ -556,7 +556,7 @@ def view_report(loaded, targets: list[str]) -> Report:
     a4_category(parts, reading_ctx(kernel, spec), doc.get("读数") or [], rep)
 
     a5_ledger(ledger_entries(kernel, spec), vs,
-              lambda did, item: warranted_of(kernel, did, item),
+              lambda did, item, kind: warranted_of(kernel, did, item, kind),
               frozenset(kernel.items), rep)
 
     # ⚠️ `§A6` 要一个**真的落盘**才判得了。这里给一个临时文件 ——
@@ -919,7 +919,7 @@ def _skip_evidence() -> list[tuple[str, str, bool]]:
        而**崩比红更糟**（红是判据说话，崩是判据没了）⇒ 这里逐条 `try`，
        崩了**报成「对照不符」**（可见），不静默、也不带走整趟。
     """
-    from .checks.abstraction import a5_known_answer
+    from .checks.abstraction import a5_known_answer, a5_out_of_scope_known_answer
     from .checks.coverage import b18_known_answer
     from .checks.equivalence import b17_known_answer
     from .checks.refinement import b20_known_answer
@@ -931,14 +931,26 @@ def _skip_evidence() -> list[tuple[str, str, bool]]:
             return [f"对照自身崩了：{exc!r}"]
 
     def a5_ok() -> bool:
+        """`§A5` 的账有**两类**，**两类各一条对照** —— 缺一条就会重犯那个错。
+
+        ⚠️ ★ 2026-10-12：原来**只有滞留类**一条。而「根覆盖之外」那一类的 oracle
+           恒判 False（见 `warranted_of`），**只验一类**正是它一直没露的原因。
+        ⚠️ ★ 同一趟：**两类必须真的是两个函数**。把第二类别名成第一条
+           （`a5_out_of_scope_known_answer = a5_known_answer`）**等价于「只验一类」**，
+           而四条断言**照样全过** ⇒ 必须显式钉身份，否则这条对照能被悄悄废掉。
+        """
         try:
             return (a5_known_answer(False) is Tri.YES
-                    and a5_known_answer(True) is Tri.NO)
+                    and a5_known_answer(True) is Tri.NO
+                    and a5_out_of_scope_known_answer is not a5_known_answer
+                    and a5_out_of_scope_known_answer(False) is Tri.YES
+                    and a5_out_of_scope_known_answer(True) is Tri.NO)
         except Exception:  # noqa: BLE001 - 见 docstring
             return False
 
     return [
-        ("A5", "合成账（**两态**：指得到 ⇒ 过 / 指不到 ⇒ 红）", a5_ok()),
+        ("A5", "合成账**两类各一条**（滞留 / 根覆盖之外；两态：成立 ⇒ 过 / 不成立 ⇒ 红）",
+         a5_ok()),
         ("B17", "合成有环图（**三态**：过 / 红 / 跳过）",
          fails_of(b17_known_answer) == []),
         ("B18", "合成 baseline 分区（**三态**：过 / 红 / 跳过）",

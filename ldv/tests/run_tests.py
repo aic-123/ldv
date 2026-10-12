@@ -4574,6 +4574,7 @@ def test_views() -> None:
         a4_known_answer,
         a5_known_answer,
         a5_ledger,
+        a5_out_of_scope_known_answer,
         a6_branch_split,
         a6_known_answer,
         a6_roundtrip,
@@ -4758,7 +4759,7 @@ def test_views() -> None:
         a4_category(view_parts(vs.q, lambda d: subtree_of(kernel, d)),
                     reading_ctx(kernel, spec4b), [], rep)
         a5_ledger(ledger_entries(kernel, spec4b), vs,
-                  lambda did, item: warranted_of(kernel, did, item),
+                  lambda did, item, kind: warranted_of(kernel, did, item, kind),
                   frozenset(kernel.items), rep)
         with tempfile.TemporaryDirectory() as _td:
             a6_roundtrip(vs, kernel, cover, plug, rep, path=Path(_td) / "views.json")
@@ -4853,7 +4854,7 @@ def test_views() -> None:
             a4_category(view_parts(vs2.q, lambda d: subtree_of(k2, d)),
                         reading_ctx(k2, s), doc.get("读数") or [], rep2)
             a5_ledger(ledger_entries(k2, s), vs2,
-                      lambda did, item: warranted_of(k2, did, item),
+                      lambda did, item, kind: warranted_of(k2, did, item, kind),
                       frozenset(k2.items), rep2)
             import tempfile as _tf
 
@@ -4953,9 +4954,41 @@ def test_views() -> None:
     ok("★★ [E] `§A4` 合成对照：三类各一例 + 见证成立/不成立各一例 + "
        "「指不到实现」一例 + 两条跳过 —— 共 9 条**手推**答案",
        not a4_fails, "；".join(a4_fails))
-    ok("★ [E] `§A5` 合成对照：方向指不到任何视图 ⇒ 红（指得到 ⇒ 绿）",
-       a5_known_answer(False) is Tri.YES and a5_known_answer(True) is Tri.NO,
-       f"指得到={a5_known_answer(False)}、指不到={a5_known_answer(True)}")
+    ok("★★ [E] `§A5` 合成对照**两类各一条**（滞留 / 根覆盖之外）："
+       "独立重算不成立 ⇒ 红（成立 ⇒ 绿）。"
+       "⚠️ 缺一类就会重犯「只验一类」那个错 —— 2026-10-12 查出的真缺陷",
+       a5_known_answer(False) is Tri.YES and a5_known_answer(True) is Tri.NO
+       and a5_out_of_scope_known_answer(False) is Tri.YES
+       and a5_out_of_scope_known_answer(True) is Tri.NO,
+       f"滞留：成立={a5_known_answer(False)}、不成立={a5_known_answer(True)}｜"
+       f"根覆盖之外：成立={a5_out_of_scope_known_answer(False)}、"
+       f"不成立={a5_out_of_scope_known_answer(True)}")
+
+    # ③ 反向：把「根覆盖之外」那一支改回**恒判 False**（=原来那个缺陷），
+    #    第二类对照必须由 YES 变 NO。
+    #    它若被悄悄改回「只验一类」（比如别名成 `a5_known_answer`），这条立刻红。
+    from ldv.checks import abstraction as _abs
+
+    _orig_w = _abs.warranted_of
+
+    def _broken_out_of_scope(kernel, did, item, kind=_abs.LEDGER_STAYED):
+        if kind == _abs.LEDGER_OUT_OF_SCOPE:
+            return False
+        return _orig_w(kernel, did, item, kind)
+
+    try:
+        _abs.warranted_of = _broken_out_of_scope
+        _broken_yes = a5_out_of_scope_known_answer(False)
+    finally:
+        _abs.warranted_of = _orig_w
+    ok("★★ [E] 反向：把「根覆盖之外」那一支改回**恒判 False**"
+       "（原来那个缺陷）⇒ 第二类对照**必须**由 YES 变 NO"
+       "—— 否则这条对照根本没走到那一支",
+       _broken_yes is Tri.NO, f"缺陷版下 成立那一例 = {_broken_yes}")
+    ok("★★ [E] 两条对照**不许是同一个函数**"
+       "（第二类被别名成 `a5_known_answer` 时，上面那条反向立刻红）",
+       a5_out_of_scope_known_answer is not a5_known_answer,
+       f"第二类 = {a5_out_of_scope_known_answer.__name__}")
     ok("★ [E] `§A6` 合成对照：真实现 ⇒ 绿；两个对照实现都上 ⇒ 红",
        a6_known_answer(False) is Tri.YES and a6_known_answer(True) is Tri.NO,
        f"真实现={a6_known_answer(False)}、对照对={a6_known_answer(True)}")

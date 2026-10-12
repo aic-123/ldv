@@ -890,26 +890,58 @@ def a4_category(
 #    跳过理由现在由 `a5_empty_reason()` 一处生成，把「为什么永久」印出来。
 
 
-def warranted_of(kernel: Any, did: str, item: str) -> bool:
-    """**独立重算**的 oracle：`item` 真的落在 `did` 上，而且**没有**子方向收它。
+#: 账的两**类** —— 判定必须**按类分**，不许拿一类的话去判另一类。
+#: ⚠️ 两句**互斥**、成立条件也不同：
+#:    滞留         「项**留在这一层**」（在父的成员里，子方向都不收）
+#:    根覆盖之外   「项**根本没进结构**」（在任何方向的成员里都不出现）
+LEDGER_STAYED = "stayed"
+LEDGER_OUT_OF_SCOPE = "out_of_scope"
+LEDGER_KINDS = (LEDGER_STAYED, LEDGER_OUT_OF_SCOPE)
+
+
+def warranted_of(kernel: Any, did: str, item: str,
+                 kind: str = LEDGER_STAYED) -> bool:
+    """**独立重算**的 oracle —— **按 `kind` 分两支**。
+
+        类 `LEDGER_STAYED`        项真的落在 `did` 上，而且**没有**子方向收它
+        类 `LEDGER_OUT_OF_SCOPE`  项**根本没进结构** ⇒ 它在**任何**方向的成员集里都不出现
 
     ⚠️ **从成员集现算**，不读账本自己的说法。拿账本当 oracle 会与被判对象
        共享盲点（两边同时错、判据永远绿 —— `false-green` 形状 3）。
-       这条 oracle 只用到 `members_of` / `children_of` 两个访问器。
+
+    ⚠️ ★ **为什么必须分两支**（2026-10-12 查出的真缺陷）：原来**只有第一支**，
+       而 `ledger_entries` 收**两类** ⇒ 「根覆盖之外」那类的项按定义**不在**
+       `members(did)` 里（它就是「没进结构」）⇒ 第一支**恒判 False**
+       ⇒ 那一类**恒红**。它一直没露，因为 ① 批建路径上两类都空（`§A5` 跳过）、
+       ② 注入的基线账**只造了滞留类**（`test_injections._a5_account`）。
+
+    ⚠️ **未知 `kind` 一律 False** —— 「写错了」与「还没写」是两件事，
+       未知的类**不许**被当成通过（同 `spec_for` 的纪律）。
     """
+    if kind == LEDGER_OUT_OF_SCOPE:
+        # 声称「根本没进结构」⇒ 独立重算：**整个结构**里都不该找得到它。
+        return all(item not in kernel.members_of(d)
+                   for d in kernel.all_directions())
+    if kind != LEDGER_STAYED:
+        return False
     d = kernel.direction(did)
     if item not in kernel.members_of(d):
         return False
     return all(item not in kernel.members_of(c) for c in kernel.children_of(d))
 
 
-def ledger_entries(kernel: Any, spec: ViewSpec) -> list[tuple[str, str, str]]:
-    """把内核账本里「**视图答不出的那些**」抽成 `(方向, 项, 理由)`。
+def ledger_entries(kernel: Any, spec: ViewSpec) -> list[tuple[str, str, str, str]]:
+    """把内核账本里「**视图答不出的那些**」抽成 `(方向, 项, 类, 理由)`。
 
     只取两类，因为它们才**带着一个具体的项**：
 
         滞留（`§10.2` 出路 (4)）  项在父的覆盖里，但**每个子方向都证明不收它**
         根覆盖之外（出路 (1)）    项按证明落在根的覆盖之外，**根本没进结构**
+
+    ⚠️ ★ **第三栏「类」不是装饰**（2026-10-12）：两类的**成立条件不同**，
+       oracle 必须按类分（`warranted_of` 的 `kind` 参数）。原来这一栏不存在，
+       于是两类共用一条「项在 `members(did)` 里」的判法 ⇒
+       「根覆盖之外」那类**恒红**。见 `warranted_of` 的 docstring。
 
     ⚠️ `born` / `witness_updated` / `unsplittable` **不取** —— 它们是**结构事件**，
        不带项。把它们混进来会让账里出现一堆「指不出项」的行，
@@ -918,17 +950,18 @@ def ledger_entries(kernel: Any, spec: ViewSpec) -> list[tuple[str, str, str]]:
 
     ⚠️ 批建路径上这两类**本来就该是空的**（`滞留 == 0`、`根覆盖之外 == 0`），
        所以 `§A5` 在生产上会报**跳过**。那不是「通过」，是「这一层没有东西要记账」
-       —— 它的红路由注入单独验（`test_injections.inj_a5`）。
+       —— 它的红路由注入单独验（`test_injections.inj_a5` / `inj_a5_out_of_scope`）。
     """
     from ..core.direction import EVENT_OUT_OF_SCOPE
 
-    out: list[tuple[str, str, str]] = []
+    out: list[tuple[str, str, str, str]] = []
     for did in spec.universe:
         for item in sorted(kernel.stayed_of(kernel.direction(did))):
-            out.append((did, item, "滞留：每个子方向都证明不收它（§10.2 出路 (4)）"))
+            out.append((did, item, LEDGER_STAYED,
+                        "滞留：每个子方向都证明不收它（§10.2 出路 (4)）"))
     for ev in kernel.ledger:
         if ev.kind == EVENT_OUT_OF_SCOPE:
-            out.append((ev.did, str(ev.detail.get("item", "")),
+            out.append((ev.did, str(ev.detail.get("item", "")), LEDGER_OUT_OF_SCOPE,
                         "根覆盖之外：按证明落在根的覆盖之外（§10.2 出路 (1)）"))
     return out
 
@@ -968,18 +1001,22 @@ def a5_empty_reason() -> str:
 
 
 def a5_ledger(
-    entries: Sequence[tuple[str, str, str]],
+    entries: Sequence[tuple[str, str, str, str]],
     vs: ViewSet,
-    warranted: Callable[[str, str], bool],
+    warranted: Callable[[str, str, str], bool],
     corpus_items: frozenset[str],
     rep: Report,
     skip_reason: str = "",
 ) -> None:
     """`§A5` —— 账里的每一条都要**指得到**具体方向 + 项，且**成立**。
 
-    `entries` 每条是 `(did, item, 理由)`；`warranted(did, item)` 是**独立重算**的
-    oracle（从成员集现算，不读账本）。理由字符串只用于**报告**，不参与判定 ——
-    判定只认那两件事，因为「理由」是自由文本，判它等于判措辞。
+    `entries` 每条是 `(did, item, 类, 理由)`；`warranted(did, item, 类)` 是
+    **独立重算**的 oracle（从成员集现算，不读账本）。理由字符串只用于**报告**，
+    **不参与判定** —— 判定只认那三件事，因为「理由」是自由文本，判它等于判措辞。
+
+    ⚠️ **「类」进判定，但不进「理由」**（2026-10-12）：两类账的成立条件不同
+       （见 `warranted_of`），所以类必须**显式**传下去；而它由 `ledger_entries`
+       产出、**不是**从理由字符串里解析出来的。
 
     `skip_reason` 账为空时报的理由；留空 ⇒ `a5_empty_reason()`（说清是**永久**跳过）。
     """
@@ -991,14 +1028,17 @@ def a5_ledger(
     for v in vs.views:
         in_views |= set(v.block)
     bad: list[str] = []
-    for did, item, _why in entries:
+    for did, item, kind, _why in entries:
         if did not in in_views:
             bad.append(f"{did}/{item}：方向 `{did}` **不在任何视图的块里** ⇒ 指不到视图")
         elif item not in corpus_items:
             bad.append(f"{did}/{item}：项 `{item}` **不是语料里的项**")
-        elif not warranted(did, item):
-            bad.append(f"{did}/{item}：独立重算**不成立**（项不在 `members({did})` 里，"
-                       f"或在某个子方向的成员里）")
+        elif not warranted(did, item, kind):
+            why = (f"项不在 `members({did})` 里，或在某个子方向的成员里"
+                   if kind == LEDGER_STAYED else
+                   "项**进了结构**（出现在某个方向的成员里），"
+                   "而这一类声称它**根本没进结构**")
+            bad.append(f"{did}/{item}（类 `{kind}`）：独立重算**不成立** —— {why}")
     rep.add("A5", title, Tri.NO if bad else Tri.YES,
             (f"{len(bad)}/{len(entries)} 条指不到：{bad[:2]}") if bad
             else f"{len(entries)} 条账全部指得到方向与项，且独立重算下条条成立")
@@ -1586,16 +1626,68 @@ def a5_known_answer(dropped: bool) -> Tri:
                  views=(View(vid="V0", block=frozenset({"D1", "D2"})),))
     members = {"D1": frozenset({"x1", "x2"}), "D2": frozenset({"x1"})}
 
-    def warranted(did: str, item: str) -> bool:
+    def warranted(did: str, item: str, kind: str = LEDGER_STAYED) -> bool:
+        if kind != LEDGER_STAYED:
+            return False
         kids: set[str] = set()
         for d, ms in members.items():
             if d != did:
                 kids |= set(ms)
         return item in members.get(did, frozenset()) and item not in kids
 
-    entries = [(("ZZ" if dropped else "D1"), "x2", "手推：D2 不收它")]
+    entries = [(("ZZ" if dropped else "D1"), "x2", LEDGER_STAYED, "手推：D2 不收它")]
     rep = Report(plugin="(合成)")
     a5_ledger(entries, vs, warranted, frozenset({"x1", "x2", "x3"}), rep)
+    return _result(rep, "A5")
+
+
+class _MiniDir:
+    """最小替身：`warranted_of` 只读 `.did`。"""
+
+    def __init__(self, did: str) -> None:
+        self.did = did
+
+
+class _MiniKernel:
+    """最小替身：只提供 `warranted_of` 在**根覆盖之外**那一支真正调的两个访问器。
+
+    ⚠️ 不冒充内核 —— 只给这一条对照用得着的东西（同 `§A6` 两个替身的纪律）。
+    """
+
+    def __init__(self, members: dict[str, frozenset[str]]) -> None:
+        self._m = members
+        self._dirs = tuple(_MiniDir(did) for did in members)
+
+    def all_directions(self) -> tuple[_MiniDir, ...]:
+        return self._dirs
+
+    def members_of(self, d: _MiniDir) -> frozenset[str]:
+        return self._m.get(d.did, frozenset())
+
+
+def a5_out_of_scope_known_answer(dropped: bool) -> Tri:
+    """`§A5` 的**第二类**合成对照 —— 账里一条「根覆盖之外」。
+
+    手推：结构里只有 `x1`（`members(D1) = {x1}`）⇒
+
+        账 `(D1, x2, 根覆盖之外)`：`x2` 在**任何**方向的成员里都不出现 ⇒ 成立 ⇒ 绿
+        账 `(D1, x1, 根覆盖之外)`：`x1` **进了结构**，与「根本没进结构」矛盾 ⇒ 红
+
+    ⚠️ ★ **为什么非要单独一条**（2026-10-12）：`a5_known_answer` 只覆盖**滞留**类，
+       而「根覆盖之外」那一类**恒判 False** 的缺陷，正是「只验一类」漏掉的。
+       **两类各一条，缺一条就会重犯。**
+    """
+    spec = ViewSpec(universe=("D1",), partition=(frozenset({"D1"}),),
+                    relation=frozenset())
+    vs = ViewSet(spec=spec, q=(frozenset({"D1"}),),
+                 views=(View(vid="V0", block=frozenset({"D1"})),))
+    kernel = _MiniKernel({"D1": frozenset({"x1"})})
+    entries = [("D1", "x1" if dropped else "x2", LEDGER_OUT_OF_SCOPE,
+                "手推：根本没进结构")]
+    rep = Report(plugin="(合成)")
+    a5_ledger(entries, vs,
+              lambda did, item, kind: warranted_of(kernel, did, item, kind),
+              frozenset({"x1", "x2"}), rep)
     return _result(rep, "A5")
 
 
