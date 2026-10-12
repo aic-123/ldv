@@ -1062,8 +1062,22 @@ def main(argv: list[str]) -> int:
     print("═══ 汇总 ═══")
     print(f"  断言 {total} 条：红 {total_red}，跳过 {skipped}")
     if skipped:
-        codes = [a.code for r in reps for a in r.skipped]
+        occ = [(r.plugin or "?", a.code) for r in reps for a in r.skipped]
+        codes = [c for _, c in occ]
         print(f"  跳过的是：{codes}")
+        # ⚠️ **「跳过」按次，覆盖证据按编号** —— 两者不总是相等。
+        #   同一个编号在两个方向上各跳一次 ⇒ 4 次 / 3 个编号。
+        #   不印这行对账的话，「跳过 4」配「3 行证据」读者对不上，
+        #   会读成「有一条没覆盖」—— 而它其实被同一个编号那行盖住了。
+        uniq = sorted(set(codes))
+        if len(uniq) != len(codes):
+            dup = []
+            for c in uniq:
+                groups = [p for p, cc in occ if cc == c]
+                if len(groups) > 1:
+                    dup.append(f"`{c}` 在 {' 与 '.join(groups)} 上各跳一次")
+            print(f"     （**{len(codes)} 次跳过 ⇒ {len(uniq)} 个不同编号** —— "
+                  f"{'；'.join(dup)}；覆盖证据按**编号**出，一个编号一行）")
         ev = [(c, d, g) for c, d, g in _skip_evidence() if c in codes]
         print("  ── 跳过项的**覆盖证据**（合成对照 —— **不是**本趟读数）——")
         for code, desc, good in ev:
