@@ -4882,6 +4882,14 @@ def test_views() -> None:
                "跳过 ≠ 通过，但**跳错了地方**也 ≠ 跳过",
                a5 is Tri.YES or "账为空" in a5_detail,
                f"A5={a5}，理由={a5_detail!r}")
+            # ★ 而「账为空」**四个字不够**（2026-10-12 补）：它读起来像「这趟没内容」，
+            #   而实测它在当前配置下**永远**为空。理由里必须把**机制**印出来，
+            #   否则读者会把「永久跳过」读成「这趟没查到东西」——
+            #   于是「没守」与「守住了」长得一样。
+            ok("★ [E] 而那条跳过的**理由**必须说清它是**永久的** —— "
+               "「批建」与「恒空」两样都要在（只写「账为空」与「这趟没内容」不可区分）",
+               "批建" in a5_detail and "恒空" in a5_detail,
+               f"理由={a5_detail!r}")
             p2p = view_profile(vs2)
             ok("★ [E] committed 声明**非退化**（视图数 < 方向数）—— "
                "两者相等是**读数**不是失败，但那样这一层什么都没压，"
@@ -5563,6 +5571,187 @@ def test_cli_paths() -> None:
        f"实际红的是 {sorted(a.code for a in always.red)}")
 
 
+# --- ⑩ 「恒定的过」守卫：每条编号在生产配置上都得**真的判过**一次 ---------------
+#
+# ⚠️ 与 `test_injections` 的**注册表自检**分工不同，两边都不许省：
+#
+#     注册表自检（`test_injections` 第 0 条）  守「每条编号**会不会红**」
+#                                              —— `CASES` 里每条都配了注入
+#     本条（`test_never_judged`）             守「每条编号在**生产配置**上**判过没有**」
+#
+#    ⇒ 两条**互不覆盖**。`§A5` 就是这样漏的：它有注入（`inj_a5`，该红时会红），
+#      但在视图层跑的**批建 + keyset** 上账恒空 ⇒ 它在生产上**一次都没判过**
+#      （跨 8 份语料：0 过 / 0 红 / 8 跳过），而套件**全绿**。
+#
+#    ⚠️ 「跳过」本身不是错 —— 没有内容就该跳过。错的是**它一直跳过而没人发现**。
+#       一条能红的判据放着一辈子不判，与**没有这条判据**在效果上一样，
+#       而它在输出里长得像「守住了」。
+#
+#    ⚠️ 与「一条常驻的红等于没人再看红」是**同一条道理的镜像**：
+#       常驻的红没人看，**常驻的跳过也没人看** —— 两种都要有东西守着。
+#
+#    跨语料统计见 `outputs/_恒定的过有多少条.md`：8 份语料 784 条真跑里
+#    「判了没红」45 条（**守卫的正常状态**，红路由 70/70 注入证明）
+#    「根本没判」1 条（`§A5`）—— **这条才是「一直放着」的**。
+
+#: 「**在生产配置上判不了**」的编号 —— 显式、带理由，**两头都守**。
+#: ⚠️ 这不是豁免清单，是**待办清单**：修好了就必须从这里删掉。
+#:    不删的话它会退化成「永久豁免」，而那是另一种「没人再看」——
+#:    与 `B18` baseline 那条 `--prune-suppressions` 的规矩同一个形状。
+NEVER_JUDGED: dict[str, str] = {
+    "A5": "视图层跑的是**批建 + keyset** ⇒ 账恒空（机制见 `a5_empty_reason`）。"
+          "账非空的只有 `reach` / `sequence` 的**维护路径**，而「视图层用哪个方向」"
+          "是**外生声明**（设计稿 §10 停止条件 1：猜一个就是替人做决定）"
+          "⇒ 要人拍板（`outputs/_四条跳过能不能解.md` §4.3）",
+}
+
+#: **生产配置**的那几组 —— 「恒定的过」只在它们上面数。
+#: ⚠️ 白名单，**不是**黑名单（「排除含『合成』『对照』的」）：黑名单会**静默**漏掉
+#:    一组新起的名字，而漏掉的那一组正好是「恒定的过」最该看见的地方。
+#:    白名单漏了会**当场报出来**（下面第二条断言）。
+PRODUCTION_GROUPS: tuple[str, ...] = (
+    "keyset", "reach", "sequence", "(视图)", "(视图·读回)", "(L0)", "(cli)",
+    "(检索)", "(内核)",
+)
+
+#: **已知答案对照**那几组 —— 它们**不进**统计（会把「没判过」读成「判过」），
+#: 但组名要认得，否则上面那条白名单断言会把它们当成「新起的一组」。
+SYNTHETIC_GROUPS: tuple[str, ...] = ("(合成)",)
+
+
+def _declared_codes() -> tuple[str, ...]:
+    """`run_checks` 声明的**全部**编号 —— 六组注册表的并集。"""
+    from ldv.checks.abstraction import VIEW_CODES
+    from ldv.checks.cli_paths import CLI_PATH_CODES
+    from ldv.checks.multilevel import MULTILEVEL_CODES
+    from ldv.checks.retrieval import RETRIEVER_CODES
+    from ldv.run_checks import KERNEL_CODES, PLUGIN_CODES
+
+    return (tuple(PLUGIN_CODES) + tuple(KERNEL_CODES) + tuple(VIEW_CODES)
+            + tuple(MULTILEVEL_CODES) + tuple(CLI_PATH_CODES)
+            + tuple(RETRIEVER_CODES))
+
+
+def _assert_state_counts() -> tuple[dict[str, dict[str, int]], set[str]]:
+    """跑一趟 `run_checks --no-probes`，按编号数出**生产配置**上的三态。
+
+    ⚠️ 直接挂 `Report.add` —— **不解析文本**。文本格式会变，挂上去不会
+       （本仓库记过：从散文里认分支会「认错地方还看不出来」）。
+    ⚠️ `redirect_stdout`：这一趟输出很长，**不该混进本套件的输出**。
+    ⚠️ 只数 `PRODUCTION_GROUPS` 那几组 —— `(合成)` 那三份**已知答案对照**
+       会往 `A5` / `B17` / `B20` 的格子里各记一次「过」，
+       混进来就会把「没判过」读成「判过」（本仓库踩过一次，见
+       `outputs/_恒定的过有多少条.md` 的 E5）。
+    """
+    import contextlib
+    import io as _io
+
+    from ldv import run_checks as _rc
+    from ldv.checks import _framework as _fw
+
+    counts: dict[str, dict[str, int]] = {}
+    plugins: set[str] = set()
+    orig = _fw.Report.add
+
+    def patched(self, code, title, result, detail=""):
+        a = orig(self, code, title, result, detail)
+        name = self.plugin or "?"
+        plugins.add(name)
+        if name in PRODUCTION_GROUPS:
+            slot = counts.setdefault(code, {"过": 0, "红": 0, "跳过": 0})
+            slot[{Tri.YES: "过", Tri.NO: "红"}.get(result, "跳过")] += 1
+        return a
+
+    _fw.Report.add = patched            # type: ignore[assignment]
+    try:
+        with contextlib.redirect_stdout(_io.StringIO()):
+            _rc.main(["run_checks", "--no-probes"])
+    finally:
+        _fw.Report.add = orig           # type: ignore[assignment]
+    return counts, plugins
+
+
+def _never_judged_fails(counts: dict[str, dict[str, int]],
+                        todo: dict[str, str],
+                        declared: tuple[str, ...] | None = None) -> list[str]:
+    """守卫的**判定逻辑**（与「怎么数出来」分开，好让已知答案对照直接喂它）。
+
+    两条规则，**方向相反**，缺一条都会漏：
+
+        不在 `todo` 里 ⇒ 必须**判过**（过 ≥ 1）
+        在 `todo` 里   ⇒ 必须**仍然判不了**（过 == 0）—— 修好了就得删
+
+    第二条不是多余的：只守第一条的话，`todo` 会变成一张**只进不出**的表，
+    而**一张永远不缩的待办表与没有待办表是一回事**。
+    """
+    fails: list[str] = []
+    for code in (declared if declared is not None else _declared_codes()):
+        got = counts.get(code)
+        if got is None:
+            fails.append(f"{code}：这一趟**一次都没出现**（连跳过都没有）")
+            continue
+        if code in todo:
+            if got["过"]:
+                fails.append(f"{code}：已经在生产配置上判过了（过 {got['过']}）"
+                             f"⇒ 把它从 `NEVER_JUDGED` 里删掉（表是待办，不是豁免）")
+        elif got["过"] == 0:
+            fails.append(f"{code}：在生产配置上**从来没判过**"
+                         f"（过 0 / 红 {got['红']} / 跳过 {got['跳过']}）——"
+                         f"真判不了就得进 `NEVER_JUDGED` 并写清为什么")
+    return fails
+
+
+def test_never_judged() -> None:
+    """⑩ ★★ 「恒定的过」守卫 —— 每条编号在**生产配置**上必须真的判过一次。
+
+    「恒定的过」有两种，**不能混为一谈**（跨 8 份语料实测）：
+
+        「判了没红」  44 条 —— **守卫的正常状态**（健康数据上就该绿，
+                               红路由 `test_injections` 70/70 证明）
+        「根本没判」   1 条 —— `§A5`。**这条才是「一直放着」的**
+
+    ⇒ 本条守的是**第二种**：判过的（过 ≥ 1）才叫守住了；一次没判过的不算。
+    """
+    counts, plugins = _assert_state_counts()
+    fails = _never_judged_fails(counts, NEVER_JUDGED)
+    ok("★★ [E] 「恒定的过」守卫：每条**已声明**的编号在**生产配置**上至少判过一次 ——"
+       "不在待办表里的必须过 ≥ 1，在表里的必须**仍然**判不了（修好就得删）",
+       not fails, "；".join(fails))
+    print(f"    · 生产配置上 {len(_declared_codes())} 个编号："
+          f"判不了 {sorted(NEVER_JUDGED)}（其余都判过）")
+
+    extra = sorted(plugins - set(PRODUCTION_GROUPS) - set(SYNTHETIC_GROUPS))
+    missing = sorted(set(PRODUCTION_GROUPS) - plugins)
+    ok("★ [E] 这一趟的**组名**集合 == 白名单 ∪ 已知的对照组（不许多、不许少）——"
+       "多出来说明有新的一组判据没登记（守卫会**静默**不数它）；"
+       "少一个说明那一组本趟没跑",
+       not extra and not missing, f"多出来 {extra}｜没跑 {missing}")
+
+    # --- 已知答案对照：守卫**会不会红**、会不会**红错地方** -------------------
+    #
+    # ⚠️ 手推三例，**期望两两不同**，且各打一条分支：
+    #     ① 空表        ⇒ 报「过 0 且不在表」的 `A5` 与 `B7`，**不报**过 6 的 `B1`
+    #     ② `A5` 进表   ⇒ 只报 `B7`（`A5` 被表盖住）
+    #     ③ 再把**已经判过的** `B1` 塞进表 ⇒ 必须报 `B1`
+    demo = {"A5": {"过": 0, "红": 0, "跳过": 8},
+            "B1": {"过": 6, "红": 0, "跳过": 0},
+            "B7": {"过": 0, "红": 0, "跳过": 0}}
+    keys = ("A5", "B1", "B7")
+
+    def _codes(fs: list[str]) -> set[str]:
+        return {f.split("：")[0] for f in fs}
+
+    got1 = _codes(_never_judged_fails(demo, {}, keys))
+    got2 = _codes(_never_judged_fails(demo, {"A5": "…"}, keys))
+    got3 = _codes(_never_judged_fails(demo, {"A5": "…", "B1": "…"}, keys))
+    ok("★★ [E] 上面那条守卫的**已知答案对照**（三条分支，期望两两不同）："
+       "① 空表 ⇒ `{A5, B7}`（过 6 的 `B1` 不报）｜② `A5` 进表 ⇒ `{B7}`｜"
+       "③ 把已经判过的 `B1` 也塞进表 ⇒ `{B1, B7}` —— "
+       "**没有 ③ 这张表只进不出，而永远不缩的待办表与没有待办表是一回事**",
+       (got1 == {"A5", "B7"} and got2 == {"B7"} and got3 == {"B1", "B7"}),
+       f"①{sorted(got1)}｜②{sorted(got2)}｜③{sorted(got3)}")
+
+
 def main() -> int:
     for fn in (test_tri, test_loader, test_kernel, test_exposure_model, test_selfopt,
                test_sequence, test_flows, test_emergence, test_divergence,
@@ -5575,7 +5764,8 @@ def main() -> int:
                test_reusable_build, test_lock_scope,
                test_query_hit_items, test_spec_paths, test_maintain,
                test_view_oracles, test_influence_channels, test_views,
-               test_multilevel, test_retriever, test_cli_paths):
+               test_multilevel, test_retriever, test_cli_paths,
+               test_never_judged):
         fn()
     total = len(PASS) + len(FAIL)
     for f in FAIL:

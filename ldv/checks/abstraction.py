@@ -884,6 +884,10 @@ def a4_category(
 # ⚠️ 账为空 ⇒ **跳过**（设计稿 §9）。判据的适用范围由「它在这条方向上有没有内容」
 #    决定：批建路径上 `滞留 == 0`、`根覆盖之外 == 0` ⇒ 账**本来就该是空的**。
 #    那不是「通过」，是「这一层没有东西要记账」。
+#
+# ★ 2026-10-12：这段原来**没写清是永久**，于是它读起来像「这趟没内容」——
+#    而实测它在当前配置下**永远**为空（`a5_empty_reason()` 的 docstring 有表）。
+#    跳过理由现在由 `a5_empty_reason()` 一处生成，把「为什么永久」印出来。
 
 
 def warranted_of(kernel: Any, did: str, item: str) -> bool:
@@ -929,24 +933,59 @@ def ledger_entries(kernel: Any, spec: ViewSpec) -> list[tuple[str, str, str]]:
     return out
 
 
+def a5_empty_reason() -> str:
+    """账为空时 `§A5` 的**跳过理由** —— 必须说清这是**永久**的，不是本趟没内容。
+
+    ⚠️ 为什么非说清不可（2026-10-12）：原来的理由只写「批建路径上账为空」，
+       读起来像**这一趟**没查到东西。而实测（`outputs/_probe_skip_solvable.out.txt`，
+       6 份语料 × 3 方向 × 2 路径）它在**当前配置下永远为空**：
+
+           keyset    批建 0/0   维护 0/0     ← 精确切分 ⇒ 恒空（跨 6 份语料无一例外）
+           reach     批建 0/0   维护 0/28    ← 有内容，但只在**维护路径**上
+           sequence  批建 0/0   维护 16/0    ← 同上
+
+       而视图层跑的是**批建**路径（`view_report` → `batch_kernel`），声明方向又是
+       `keyset`（14 份 `view_spec.json` 全是）⇒ **两头都空**。
+
+    ⚠️ 「跳过」本身不是错 —— 没有内容就该跳过。错的是**它一直跳过而没人发现**：
+       一条能红的判据放着一辈子不判，与**没有这条判据**在效果上一样，
+       而它在输出里长得像「守住了」。所以理由里**不许**只写「账为空」四个字就完事。
+       （守它的断言在 `run_tests.test_views` ⑦；跨语料统计见
+        `outputs/_恒定的过有多少条.md`。）
+    """
+    return (
+        "账为空 ⇒ 判不了，**不是通过**（设计稿 §9）。⚠️ 而这不是「本趟没查到东西」——"
+        "账的两类来源（滞留（§10.2 出路 (4)）/ 根覆盖之外（出路 (1)））"
+        "**只在维护路径上产生**（批建的根声明为「覆盖一切」⇒ 根覆盖之外由构造为 0；"
+        "实测 3 个方向 × 6 份语料批建都是 0/0），而视图层跑的是**批建**路径"
+        "（`view_report` → `batch_kernel`）；本仓库 14 份 `view_spec.json` 声明的方向"
+        "又都是**精确切分**（`keyset`）⇒ 账**恒空**（连维护路径上也是 0/0，实测）。"
+        "⇒ 这条「跳过」在当前配置下是**永久的**（换语料也一样），不是本趟的。"
+        "账非空的只有 `reach` / `sequence` 的**维护路径**（实测 28 / 50 / 68 / 23 / 130 条）；"
+        "要让它真判得改视图层跑的方向或路径，而那是**外生决定**（设计稿 §10 停止条件 1），"
+        "不由本判据代劳。红路由 `test_injections.inj_a5` 单独验。"
+    )
+
+
 def a5_ledger(
     entries: Sequence[tuple[str, str, str]],
     vs: ViewSet,
     warranted: Callable[[str, str], bool],
     corpus_items: frozenset[str],
     rep: Report,
+    skip_reason: str = "",
 ) -> None:
     """`§A5` —— 账里的每一条都要**指得到**具体方向 + 项，且**成立**。
 
     `entries` 每条是 `(did, item, 理由)`；`warranted(did, item)` 是**独立重算**的
     oracle（从成员集现算，不读账本）。理由字符串只用于**报告**，不参与判定 ——
     判定只认那两件事，因为「理由」是自由文本，判它等于判措辞。
+
+    `skip_reason` 账为空时报的理由；留空 ⇒ `a5_empty_reason()`（说清是**永久**跳过）。
     """
     title = "视图账：每条都要指得到具体方向 + 项，且独立重算下成立"
     if not entries:
-        rep.add("A5", title, Tri.UNEXPANDED,
-                "账为空 ⇒ 判不了，**不是通过**（设计稿 §9）。批建路径上 "
-                "`滞留 == 0`、`根覆盖之外 == 0` ⇒ 账本来就该是空的")
+        rep.add("A5", title, Tri.UNEXPANDED, skip_reason or a5_empty_reason())
         return
     in_views: set[str] = set()
     for v in vs.views:

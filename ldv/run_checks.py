@@ -387,8 +387,12 @@ def run_one(which: str, loaded, probes: bool = True) -> Report:
     #   `reach` / `sequence` 的 payload 与标签无关 ⇒ 只报不判（报「未展开」）。
     labs = labels(nodes)
     ref = refinement_profile(kernel, labs)
-    rep.note(render_refinement(ref, which))
-    b20_semantic_refinement(ref, rep, judged=label_bearing(which, nodes))
+    # ⚠️ `label_bearing` **只算一次**，读数行与判据共用 —— 否则「读数行说判了」
+    #    与「判据说跳过了」有可能分岔，而分岔的两行**各自看着都对**
+    #    （`§K4` 单一真相源的同一条道理）。
+    _bearing = label_bearing(which, nodes)
+    rep.note(render_refinement(ref, which, judged=_bearing))
+    b20_semantic_refinement(ref, rep, judged=_bearing)
 
     # ★ 覆盖 oracle 的**代价读数**（度量，不进退出码）。
     #   ⚠️ **只报一个「快了 N 倍」不够**：一个「从来没命中」的缓存与一个「全命中」的

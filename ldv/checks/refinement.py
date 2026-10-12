@@ -194,14 +194,26 @@ def refinement_profile(kernel: Any, labels: dict[str, str]) -> dict[str, Any]:
     }
 
 
-def render_refinement(prof: dict[str, Any], which: str = "") -> str:
+def render_refinement(prof: dict[str, Any], which: str = "",
+                      *, judged: bool) -> str:
+    """`B20` 的读数行。
+
+    ⚠️ `judged` **必填**（2026-10-12）：这条读数与判据**共用**那几个数字，
+       而判据只在**标签轴**上落。不给 `judged` 的话，`reach` / `sequence` 上
+       会把一个**没判**的数字印成「（判据）」—— 那正是本仓库一直在防的形状
+       （「没守」与「守住了」长得一样），只不过这一次它长在**读数行**上。
+
+    ⚠️ 做成**必填**而不是默认 `True`：默认值会让下一个调用者**静默**地印错，
+       而印错的那一行与印对的那一行**长得一样**。必填 ⇒ 漏了当场 `TypeError`。
+    """
     head = f"语义增益（{which}）" if which else "语义增益"
     if prof["已标注项"] == 0:
         return f"{head}：这份语料**没有标注** ⇒ 判不了（不是通过）"
     if prof["已展开方向数"] == 0:
         return f"{head}：没有已展开的方向（未展开，**不是**通过）"
+    tag = "（判据）" if judged else "（**未判** —— 本方向不是标签轴，只报不判）"
     return (f"{head}：{prof['标签数']} 个标签 / {prof['已标注项']} 项｜"
-            f"{prof['已展开方向数']} 次展开｜**语义空转** {prof['语义空转展开']} 次（判据），"
+            f"{prof['已展开方向数']} 次展开｜**语义空转** {prof['语义空转展开']} 次{tag}，"
             f"最长连续段 {prof['最长语义空转连续段']}（阈值 N={prof['N']}）｜"
             f"最小增益 {prof['最小语义增益']:.4f}、平均 {prof['平均语义增益']:.4f}"
             f"（度量，不进退出码）")
