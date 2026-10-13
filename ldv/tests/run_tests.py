@@ -4349,8 +4349,7 @@ def test_maintain() -> None:
         ⑤ 没有种子 ⇒ 重建（没有「从旧出发」这回事）
     """
     from ldv.checks._fixtures import make_builder
-    from ldv.checks.abstraction import VIEW_SPEC_PATH, a8_branches, spec_for
-    from ldv.checks.coverage import corpus_fingerprint
+    from ldv.checks.abstraction import a8_branches
     from ldv.core.views import (
         MAX_COARSENING_CANDIDATES,
         Maintenance,
@@ -4370,11 +4369,22 @@ def test_maintain() -> None:
     if loaded is None:
         return
     nodes, edges, _ = loaded
-    doc = json.loads(VIEW_SPEC_PATH.read_text(encoding="utf-8"))
-    spec, _why = spec_for(doc, str(doc.get("方向")), corpus_fingerprint(nodes, edges))
-    if spec is None:
-        return
-    U = spec.universe
+    # ★ 2026-10-13：底座**自建**（`keyset` 全树），**不读生产声明** `view_spec.json`。
+    #   两条理由，缺一条都不行：
+    #     ① 下面两个下标 `U[-2:]` / `U[-13:]` 隐含「`|U| ≥ 13`」—— 而 `restrict_spec`
+    #        是**拿掉**（不是「留下」）⇒ 声明换成 `sequence`（`|U| = 8`）之后，
+    #        `U[-13:]` **拿光整个 `universe`** ⇒ `ValueError: 投影之后 universe 空了`
+    #        ⇒ **整趟测试崩**。崩不是红：红是判据说话，崩是判据没了。
+    #     ② `③` 要把种子**传播进 keyset 全树** —— 种子与目标必须**同一条方向**
+    #        （`D0` 在 keyset 里与在 sequence 里是两个不同的方向）⇒ 本条的底座
+    #        本来就只能是 `keyset`。跟着生产声明漂，是把「声明」当成了「夹具」。
+    build = make_builder("keyset", nodes, edges)
+    ids = sorted(nodes)
+    kernel0, _plug0 = build(ids)
+    dirs0 = sorted(kernel0.all_directions(), key=lambda d: _did_order(d.did))
+    U = tuple(d.did for d in dirs0)
+    spec = ViewSpec(universe=U, partition=(frozenset(U),),
+                    relation=frozenset((d.parent, d.did) for d in dirs0 if d.parent))
     seeds = {
         "甲·传播在预算内": coarsest_stable_refinement(restrict_spec(spec, frozenset(U[-2:]))),
         "乙·传播严重退化": coarsest_stable_refinement(restrict_spec(spec, frozenset(U[-13:]))),
@@ -4390,8 +4400,6 @@ def test_maintain() -> None:
        f"甲 {len(m_a.q)} 块、乙 {len(m_b.q)} 块、`csr` {len(q_csr)} 块")
 
     # ── ② 退化曲线（`propagate` 那条定理的推论 ⇒ 已知答案）──────────────
-    build = make_builder("keyset", nodes, edges)
-    ids = sorted(nodes)
     qp = None
     curve: list[float] = []
     for k in (6, 12, 18, 24, 30, 36):
@@ -4409,11 +4417,7 @@ def test_maintain() -> None:
        curve[-1] == 1.0 and curve == sorted(curve), f"曲线 {['%.3f' % x for x in curve]}")
 
     # ── ③ ★ 可判性退化（本条的**核心实测**）────────────────────────────
-    kernel, _plug = build(ids)
-    dirs = sorted(kernel.all_directions(), key=lambda d: _did_order(d.did))
-    u = tuple(d.did for d in dirs)
-    s_full = ViewSpec(universe=u, partition=(frozenset(u),),
-                      relation=frozenset((d.parent, d.did) for d in dirs if d.parent))
+    s_full = spec          # 同一棵树（`keyset` 全树）—— ③ 与 ①② 共用同一个底座
     q_prop = tuple(propagate(seeds["甲·传播在预算内"], s_full))
     n_csr = n_coarsening_candidates(s_full, list(q_csr))
     n_prp = n_coarsening_candidates(s_full, list(q_prop))
@@ -4844,7 +4848,18 @@ def test_views() -> None:
            s is not None, why)
         if s is not None:
             which = str(doc["方向"])
-            k2, p2 = build_keyset(nodes)
+            # ★ 2026-10-13（v0.1.21）：**与 `run_checks.view_report` 同源**。
+            #   声明的 `universe` 是**维护路径**那棵树编的号 —— 方向 id 是每个内核
+            #   各自从 0 开始编的，`D0` 在 keyset 里与在 sequence 里是**两个不同的方向**
+            #   （`_fixtures.Cover` 的 docstring 专门记了这条；实测批建 16 ≠ 维护 8）。
+            #   ⇒ 这里若写死 `build_keyset`，段 ⑦ 验的就不是**生产里跑的那条路**：
+            #   它会拿 keyset 的树去解 sequence 的号 ⇒ `build_views` 抛 `KeyError`，
+            #   或者（更坏）两边恰好都能建出来而**指的不是同一个方向**。
+            #   `plugin` 与路径无关，仍取批建那份（`reusable_build` 有缓存，不重复建）。
+            from ldv.run_checks import batch_kernel, maintenance_kernel
+
+            k2 = maintenance_kernel(which, nodes, edges)
+            p2 = batch_kernel(which, nodes, edges)[1]
             cv2 = coverage_of(which, nodes, edges)
             vs2 = build_views(k2, s, cv2, p2)
             rep2 = Report(plugin="(视图)", expects=VIEW_CODES)
@@ -4873,24 +4888,36 @@ def test_views() -> None:
                all(_result(rep2, c) is Tri.YES
                    for c in ("A1", "A2", "A3", "A4", "A6", "A7")),
                "；".join(a.line() for a in rep2.assertions))
-            # ⚠️ `§A5` 在批建路径上**本来就该跳过**（账为空）—— 但「跳过」不是免检：
-            #   跳过的**理由**必须是「账为空」。理由写错了就说明它跳错了地方，
-            #   而那正是「空转与通过长得一模一样」的另一种形态。
+            # ★ 2026-10-13（v0.1.21）：`§A5` 在 committed 声明上**判上了**（不再跳过）。
+            #
+            #   原来这里钉的是「跳过时理由必须是『账为空』，且要说清它是**永久的**」——
+            #   那两条的前提是「视图层跑**批建**路径 ⇒ 账恒空」。现在视图层改跑
+            #   **维护路径**，账非空 ⇒ 前提没了，那两条**已失去对象**（留着会常驻红）。
+            #
+            #   ⚠️ 但「跳过」的**两种含义**在这里仍然是分开的，两件事不共用一行：
+            #       ①「这一趟这条方向上**没有内容**」（真跳过）—— 由 ④ 的合成 spec 守着
+            #         （那里账为空 ⇒ `§A5` 跳过，见上面 `all(... UNEXPANDED ...)` 那条）；
+            #       ②「这条判据**会不会红**」—— 由 `test_injections.inj_a5` 与 ⑧ 的
+            #         **两类**已知答案（滞留 / 根覆盖之外）守着。
+            #   所以这一段现在验的是第三件事：**生产里那条路径上，账真的是非空的**。
             a5 = _result(rep2, "A5")
             a5_detail = next((a.detail for a in rep2.assertions if a.code == "A5"), "")
-            ok("★ [E] `§A5` 在 committed 声明上跳过时，理由必须是「账为空」"
-               "（批建路径上 `滞留 == 0`、`根覆盖之外 == 0`）—— "
-               "跳过 ≠ 通过，但**跳错了地方**也 ≠ 跳过",
-               a5 is Tri.YES or "账为空" in a5_detail,
-               f"A5={a5}，理由={a5_detail!r}")
-            # ★ 而「账为空」**四个字不够**（2026-10-12 补）：它读起来像「这趟没内容」，
-            #   而实测它在当前配置下**永远**为空。理由里必须把**机制**印出来，
-            #   否则读者会把「永久跳过」读成「这趟没查到东西」——
-            #   于是「没守」与「守住了」长得一样。
-            ok("★ [E] 而那条跳过的**理由**必须说清它是**永久的** —— "
-               "「批建」与「恒空」两样都要在（只写「账为空」与「这趟没内容」不可区分）",
-               "批建" in a5_detail and "恒空" in a5_detail,
-               f"理由={a5_detail!r}")
+            n_ledger = len(ledger_entries(k2, s))
+            ok("★★ [E] `§A5` 在 committed 声明上**判**（不是跳过）—— 账非空 ⇒ "
+               "逐条指得到方向与项、且独立重算下条条成立",
+               a5 is Tri.YES and n_ledger > 0,
+               f"A5={a5}、账 {n_ledger} 条，理由={a5_detail!r}")
+            # ★ 反向：把账清空 ⇒ 判据必须**退回跳过**（而不是报过）。
+            #   没有这一条，「A5=过」也可能是「它根本不看账」——
+            #   而那正是「空转与通过长得一模一样」的另一种形态。
+            a5_empty = Report(plugin="(视图)", expects=VIEW_CODES)
+            a5_ledger((), vs2,
+                      lambda did, item, kind: warranted_of(k2, did, item, kind),
+                      frozenset(k2.items), a5_empty)
+            ok("★★ [E] 上面那条的**已知答案对照**：账清空 ⇒ `§A5` 必须**退回跳过**"
+               "（跳过 ≠ 通过；否则上面那条证明不了它在看账）",
+               _result(a5_empty, "A5") is Tri.UNEXPANDED,
+               f"清空后 A5={_result(a5_empty, 'A5')}")
             p2p = view_profile(vs2)
             ok("★ [E] committed 声明**非退化**（视图数 < 方向数）—— "
                "两者相等是**读数**不是失败，但那样这一层什么都没压，"
@@ -5173,13 +5200,24 @@ def test_multilevel() -> None:
     print("      " + render_levels(levels).splitlines()[0])
 
     # ── ④ `§M4` 与 `§A3` **同时观察** ──────────────────────────────────────
-    u = list(spec.universe)
-    k = 11
-    blocks = [frozenset(u[i * len(u) // k:(i + 1) * len(u) // k]) for i in range(k)]
-    q_big = tuple(b for b in blocks if b)
+    #
+    # ⚠️ 2026-10-13（v0.1.21）：这一段原来从 `spec.universe` 里**切**出 11 块
+    #    （`|U| = 25` 时切得动）。声明换成 `sequence` 之后 `|U| = 8` ⇒ **切不出 11 块**
+    #    （一个 11 块的划分至少要 11 个元素），而 `Bell(8) = 4140 ≤ 200000`
+    #    ⇒ 在 committed 语料上**永远撞不到闸门**。
+    #
+    #    ⇒ 撞闸门那一段**合成**一个够大的层。这正是实测里 `openalex-n100` 的情形：
+    #      `|Q| = 11` ⇒ `Bell(11) = 678570` 撞闸（`MEASUREMENTS.md` 结果表里那一行）。
+    #      被验的是 `§A3` **按规模选 oracle** 这件事，与语料是哪一份无关。
+    #      ⚠️ 反过来说：在 committed 语料上撞不到闸门**不是缺陷**，是 `|U| = 8` 的
+    #      算术后果 —— 而「撞不到」与「没撞」在只看绿的时候长得一模一样，
+    #      所以下面那条「上限内必须走暴力」用的是**真语料**那份 spec。
+    u11 = tuple(f"x{i}" for i in range(11))
+    spec_big = ViewSpec(universe=u11, partition=(frozenset(u11),), relation=frozenset())
+    q_big = tuple(frozenset({x}) for x in u11)
     ok("★ [M] 造出来的那一层真的是 11 块（否则下面那次观察是空的）",
        len(q_big) == 11, f"{len(q_big)} 块")
-    n_cand = n_coarsening_candidates(spec, q_big)
+    n_cand = n_coarsening_candidates(spec_big, q_big)
     ok(f"★★ [M] `§M4` 与 `§A3` **用的是同一个数**：`n_cand = {n_cand}`"
        f"（`Bell(11) = 678570 > {MAX_COARSENING_CANDIDATES}`）—— "
        f"两处各算一份的话，症状是「说不清这一层验证得起不起」",
@@ -5188,21 +5226,19 @@ def test_multilevel() -> None:
     # ★★★ 这一条是 **2026-10-10 用户裁定**要的：**`n_cand` 超上限不许让 `§A3` 变成判不了**
     #     （「A3 不能承认这只是在小语料可用」）
     from ldv.checks.abstraction import a3_oracle
-    big_spec = ViewSpec(universe=spec.universe,
-                        partition=(frozenset(spec.universe),),   # `P = {U}` ⇒ 一块
-                        relation=spec.relation)
-    has_big, why_big, seen_big, tag_big = a3_oracle(big_spec, q_big)
+    has_big, why_big, seen_big, tag_big = a3_oracle(spec_big, q_big)
     ok("★★★ [M] `n_cand` 超上限时 `§A3` **仍然判得了**（走**多项式 oracle**，"
        "不再报跳过）—— 这是「**不能承认只在小语料可用**」那条要求的落点",
        has_big is not None and "多项式" in tag_big,
        f"`has={has_big}`｜{tag_big[:70]}")
     # 同一件事的另一半：还在上限内时**必须**走独立性最强的暴力 oracle
+    #   （这里用 **committed 语料**那份 spec —— `|U| = 8` ⇒ `n_cand = 4140 ≤ 上限`）
     has_small, why_small, _seen_s, tag_small = a3_oracle(spec, q0)
     ok("★★ [M] `n_cand` **在上限内**时 `§A3` 走**暴力枚举**（独立性最强的那条）——"
        "两条 oracle 的**选法**本身也要被验，否则「换了没换」看不出来",
        has_small is not None and "暴力" in tag_small, tag_small[:70])
     # `§M4` 降级后仍要报这个数（读数）
-    r_m4 = m4_reading([_replace(levels[0], q=q_big, n_cand=n_cand)])
+    r_m4 = m4_reading([_replace(levels[0], n_cand=n_cand)])
     ok("★★ [M] `§M4` 已**降级为读数** —— 它仍然报 `n_cand` 与「超没超上限」，"
        "但**不再判**（理由：`§A3` 有了多项式 oracle ⇒ 代价大不再意味着判不了）",
        r_m4["超上限的层"] == [0] and r_m4["每层 n_cand"] == [n_cand],
@@ -5253,16 +5289,20 @@ def _raises_valueerror(fn) -> bool:
 
 
 def test_retriever() -> None:
-    """检索器层（流程 T）的 `T1`–`T3`（`checks/retrieval.py` + `retriever.py`）。
+    """检索器层（流程 T）的 `T1`–`T8`（`checks/retrieval.py` + `retriever.py`）。
 
-    ## 分六段，每段都要有已知答案
+    ## 分八段，每段都要有已知答案
 
         ① 合成对照   三条各自的「该绿时绿、该红时红」（`known_answer_controls`）
-        ② 真跑一遍   在 committed 规格上跑 ⇒ 三条**全过**、而且**不是跳过**
+        ② 真跑一遍   在 committed 规格上跑 ⇒ **八条全过**、而且**不是跳过**
+                     （**直接调生产那一处实现** `retrieval_report`）
         ③ `T1` 的**夹具前提**  真插件上「后看的块」里**不可能**有真命中
         ④ `§C1` 默认值  **不早停**：跑过的块集合 == `Q` 的全部块
         ⑤ 分派       `r` 里出现未知栏 ⇒ **抛**（不是跳过、不是红）
         ⑥ 标题来源   真跑时印的 == 跳过时印的（一处定义、两处用）
+        ⑦ 块画像     `§14.1` 四档**读法**与结构事实相符 + 「必须分档」的见证
+        ⑧ 按使用细调 `§14.7` 两层排序（结构设定 + 倾向降序）
+        ⑨ 影响的证明 `§14.8.1` 换成离散划分 ⇒ 候选集不变、建议退化成逐方向
 
     ⚠️ ③ 是一条**实测出来的**限制（写在 `checks/retrieval.py` 开头）：
        满足 `§I2 覆盖契约` 的插件上，`命中(合并(块)) = 否 ⟹ 每个成员都否`
@@ -5272,8 +5312,13 @@ def test_retriever() -> None:
        而这一趟里**根本不存在漏得掉的余地**：正是本项目最忌的形状
        （「空转与通过长得一模一样」）。
 
-    ⚠️ ② 里的**盘上认识是现造的**（默认语料上没有 `views.json`）⇒ `T2` 这一趟
-       **只有守卫作用**。它的红形态只能靠注入。
+    ⚠️ ② 的**口径是「整个查询集 + 逐编号取最坏结果」**（2026-10-13，v0.1.21）：
+       原来只跑 `queries[0]`（14 条里**最小**的一条）⇒ `T7` **永远跳过**。
+       实测 14 条里 **11 条**能让它判 ⇒ 那是**覆盖不足**，不是「判不了」。
+
+    ⚠️ ③–⑨ 用**代表查询**（候选最多的那条）做结构观察 —— **不许**写死 `queries[0]`：
+       它候选最少，「建议覆盖多个方向」那几条在它上面**恒假**
+       （实测 2 条建议覆盖 2 个方向 —— 与「离散划分」那一路**长得一样**）。
     """
     from ldv.checks._framework import Report
     from ldv.checks.abstraction import build_views, load_spec_file, spec_for
@@ -5282,12 +5327,11 @@ def test_retriever() -> None:
         RETRIEVER_CODES,
         TITLES,
         known_answer_controls,
-        run_retrieval,
         skip_all,
     )
     from ldv.core import view_persist
     from ldv.core.tri import Tri as _Tri
-    from ldv.run_checks import batch_kernel
+    from ldv.run_checks import batch_kernel, maintenance_kernel, retrieval_report
     from ldv import retriever
     from ldv import flow as _flow
 
@@ -5337,40 +5381,72 @@ def test_retriever() -> None:
                     f" —— {_why}）")
         return
 
-    kernel, plugin, queries, _mk = batch_kernel(which, nodes, edges)
+    # ★★ 2026-10-13（v0.1.21）：**与 `run_checks.retrieval_report` 同源** —— 维护路径。
+    #   声明的 `universe` 是**维护路径**那棵树编的号（实测 `sequence` 批建 16 ≠ 维护 8）。
+    #   段 ③–⑨ 若拿**批建**的树去解 `sequence` 的号，`D2` 在两边**指的不是同一个方向**
+    #   （`_fixtures.Cover` 的 docstring 专门记了这条）⇒ 画像 / 候选 / 建议
+    #   全都对着另一棵树说话，而输出里**没有任何一处不对**。
+    #   `queries` 是**语料级**的（与内核路径无关），仍取批建那份。
+    plugin = batch_kernel(which, nodes, edges)[1]
+    queries = batch_kernel(which, nodes, edges)[2]
     if not queries:
         return
     cover = coverage_of(which, nodes, edges)
-    disk = view_persist.to_dict(build_views(kernel, spec, cover, plugin))
-    recognition = view_persist.from_dict(disk, kernel, cover, plugin)
 
-    # ── ② 真跑一遍 ────────────────────────────────────────────────────────
-    # ★ 「按使用细调」（`§14.7`）要**使用记录**才有内容 —— 流程 A 本来就记
-    #   （`R5a` 展示 + `R5b`）。先跑几条攒记录，否则 `T5` **永远跳过**。
-    query = queries[0]
-    for _q0 in queries[:3]:
-        _flow.run_query(kernel, _q0)
-    tendency = selfopt.tendency_by_direction(kernel)
-    rep = Report(plugin="(检索)", expects=RETRIEVER_CODES)
-    r = run_retrieval(kernel, plugin, {which: retriever.as_bar(query)}, spec, rep,
-                      recognition=recognition, tendency=tendency)
-    ok("★★ [T] committed 规格上 `T1`–`T3` **一条红的都没有**（基线绿 —— "
+    # ── ② 真跑一遍：**整个查询集** + 逐编号取**最坏结果** ───────────────────
+    #   ★ 这一条**直接调生产那一处实现**（`retrieval_report`），不在这里另写一份聚合
+    #     —— 另写一份的话，「测试绿」只说明我这份聚合对，说明不了生产对。
+    #   ★★ 它同时是「加宽查询覆盖」那个决定的落点：`T7` 原来只跑 `queries[0]`
+    #     （14 条里**最小**的一条 `随机 1 项 #0`）⇒ **永远跳过**；实测 14 条里
+    #     **11 条**能让它判（`outputs/_probe_t7_queries.out.txt`）。
+    rep = retrieval_report(loaded, [which])
+    ok("★★ [T] committed 规格上 `T1`–`T8` **一条红的都没有**（基线绿 —— "
        "「基线就红的判据过不了注入验证」）",
        not rep.red, "；".join(a.line() for a in rep.red))
-    ok("★★ [T] **五条都跑了**（不是跳过）—— 「全绿」的范围必须与声明的范围恰好相等",
+    ok("★★ [T] **八条都跑了**（不是跳过）—— 「全绿」的范围必须与声明的范围恰好相等",
        all(a.result is _Tri.YES for a in rep.assertions)
        and len(rep.assertions) == len(RETRIEVER_CODES),
        f"{[(a.code, str(a.result)) for a in rep.assertions]}")
 
+    # ── ③–⑨ 结构断言：**逐条查询**各跑一遍（每条一棵新树），
+    #     代表查询 = **候选最多**的那条（并列取先出现者） ────────────────────
+    #
+    #   ⚠️ **每条查询一棵新树**：`deepen` 会 `expand`（唯一写动作）**就地改内核**
+    #      ⇒ 共用一棵的话，第 k 条看到的是被前几条改过的结构，结果与顺序有关。
+    #   ⚠️ 代表查询**不许**写死成 `queries[0]`：那是候选**最少**的一条
+    #      ⇒ 「建议覆盖多个方向」那几条断言在它上面**恒假**
+    #      （实测它 2 条建议覆盖 2 个方向 —— 与「离散划分」那一路**长得一样**）。
+    kernel0 = maintenance_kernel(which, nodes, edges)
+    disk = view_persist.to_dict(build_views(kernel0, spec, cover, plugin))
+
+    runs: list[tuple[Any, Any, Any]] = []
+    for _q in queries:
+        k_q = maintenance_kernel(which, nodes, edges)     # ★ 每条一棵新树
+        rec_q = view_persist.from_dict(disk, k_q, cover, plugin)
+        # ★ 「按使用细调」（`§14.7`）要**使用记录**才有内容 —— 流程 A 本来就记
+        #   （`R5a` 展示 + `R5b`）。先跑几条攒记录，否则 `T5` **永远跳过**。
+        for _q0 in queries[:3]:
+            _flow.run_query(k_q, _q0)
+        tend_q = selfopt.tendency_by_direction(k_q)
+        rr = retriever.retrieve(k_q, plugin, {which: retriever.as_bar(_q)}, spec=spec,
+                                recognition=rec_q, tendency=tend_q)
+        runs.append((_q, k_q, rr))
+    query, kernel, r = max(runs, key=lambda t: len(t[2].candidates))
+
     # ── ③ `T1` 的夹具前提（真插件上后看的块里不可能有真命中） ──────────────
-    seen_late = frozenset().union(*r.late) if r.late else frozenset()
-    hits_in_late = sorted(r.candidates & seen_late)
+    #   ⚠️ 对**整个查询集**验，并单列一条「至少有一条查询真有后看的块」——
+    #      只看代表查询的话，它的 `late` 恰好为空 ⇒ 下面那条**恒真**（假绿）。
+    late_runs = [(q, rr) for q, _k, rr in runs if rr.late]
+    bad_late = [(q.label, sorted(rr.candidates & frozenset().union(*rr.late)))
+                for q, rr in late_runs if rr.candidates & frozenset().union(*rr.late)]
     ok("★★ [T] `T1` 的**夹具前提**：真插件上「后看」的块里**一个真命中都没有**"
        "（`§I2` 契约的推论）—— ⇒ `T1` 在真插件上**永远绿**，注入夹具只能**手造**。"
        "⚠️ 这条如果哪天红了，说明 `§I2` 被破坏了（那是 `B2` 的事）",
-       not hits_in_late,
-       f"后看的块 {len(r.late)} 个、里面的候选 {len(hits_in_late)} 个"
-       f"（{hits_in_late[:3]}）")
+       not bad_late,
+       f"有后看块的查询 {len(late_runs)}/{len(runs)} 条、里面命中 {bad_late[:3]}")
+    ok("★★ [T] 上一条的**夹具前提**：至少有一条查询**真的有「后看」的块**"
+       "—— 否则上面那条是**恒真**的（「空转与通过长得一模一样」）",
+       bool(late_runs), f"{len(late_runs)}/{len(runs)} 条查询有后看的块")
 
     # ── ④ `§C1` 默认值：**不早停** ────────────────────────────────────────
     ran = set(map(frozenset, r.scanned))
@@ -5396,17 +5472,26 @@ def test_retriever() -> None:
        f"；键差：{sorted(set(TITLES) ^ set(RETRIEVER_CODES))}")
 
     # ── ⑦ 结构画像（`基线§14`）—— 「整体倾向的暗示」落在哪儿 ──────────────
+    #
+    # ⚠️ 四档的**字面**只在 `retriever.BlockProfile.reading` 那一处定义：
+    #    `已细分过` / `分不开` / `还没长出来` / `混合`。
+    #    ★ 这一段原来写的是「还没钻进去」「下界到了」—— 那两个字符串在本仓库里
+    #      **根本不存在**（`grep` 一下只有这里）。后果不是红，是**恒真**：
+    #      任何块的 `reading` 都匹配不上那两支 ⇒ 只有 `混合` 那一支能过，
+    #      而当时恰好**每块都报混合** ⇒ 绿得看不出问题。
+    #      ⇒ 这就是「断言写了一个不存在的常量」的形状：它看起来在验四档，其实一档都没验。
     ps = r.profiles
     ok("★★ [T] `Retrieval` 带**块画像**（`§14.1`），且每块的**四档读法**与结构事实相符"
        "（`§14.3` —— 判据 `T4` 从**读法反推事实**，与 `block_profile` 不同路）",
        bool(ps) and all(
            (p.reading == "已细分过"
             and all(kernel.children_of(kernel.direction(x)) for x in p.block))
-           or (p.reading == "还没钻进去"
-               and all(not kernel.is_expanded(kernel.direction(x)) for x in p.block))
-           or (p.reading == "下界到了"
-               and all(kernel.is_expanded(kernel.direction(x))
-                       and not kernel.children_of(kernel.direction(x)) for x in p.block))
+           or (p.reading == "分不开"
+               and all(len(kernel.members_of(kernel.direction(x))) < 2 for x in p.block))
+           or (p.reading == "还没长出来"
+               and all(not kernel.children_of(kernel.direction(x))
+                       and len(kernel.members_of(kernel.direction(x))) >= 2
+                       for x in p.block))
            or p.reading == "混合"
            for p in ps),
        "；".join(f"{sorted(p.block)[:2]}={p.reading}" for p in ps))
@@ -5417,15 +5502,40 @@ def test_retriever() -> None:
        "（`§14.3`：四档都是**结构事实**，不是分）",
        len(kinds) >= 2, f"分出的档：{kinds}")
 
-    big = [p for p in ps if p.n_members == 13]
-    ok("★★ [T] 那一格**正是本仓库那条中心纪律**：13 个成员**都没有子**，"
-       "而它们**不是同一回事** —— 实测 **6 个只有 1 个项**（`§K2` 情形①："
-       "**结构上永远分不开**）、**7 个成员 ≥2**（值得试）。"
-       "⚠️ 只看「有没有子」时这两类**长得一模一样** ⇒ 画像**必须**分档，否则会说错话",
-       bool(big) and all(p.n_singleton == 6 and p.n_unexpanded == 7
-                         and p.n_with_children == 0 and p.reading == "混合" for p in big),
-       "；".join(f"|块|={p.n_members} 有子{p.n_with_children}/分不开{p.n_singleton}"
-                 f"/还没长出来{p.n_unexpanded}→{p.reading}" for p in (big or ps)))
+    # ★★ 「画像必须分档」那条**中心纪律**的见证（`§K6` 在本层的形态）：
+    #    「有没有子」这一列**分不开**下面两类 ——
+    #        ① 只有 1 个项 ⇒ **结构上永远分不开**（`§K2` 情形①，`_expand_inner` 直接 `return ()`）
+    #        ② 成员 ≥ 2    ⇒ 值得试
+    #    ⇒ 画像**必须**把它们分成两档，否则会说错话。
+    #
+    #    ⚠️ 2026-10-13（v0.1.21）：见证原来取的是 keyset 批建上那个 **13 成员块**
+    #       （6 个单项 + 7 个 ≥2）。声明换成 `sequence` + 视图层改跑**维护路径**
+    #       之后，维护树上**没有任何方向只有 1 个项**（实测 D0…D7 的成员数
+    #       36/24/2/2/10/6/2/4）⇒ 那个见证在这条路径上**不存在了**。
+    #       ⇒ 见证改挂在**批建**树上：同一份语料、同一份插件、**真内核**，
+    #         与「这一趟跑哪条路径」无关（那里 `D2`/`D3`/`D15` 就是单项方向）。
+    #         这样这条纪律**不会因为换方向而悄悄失去见证** ——
+    #         「见证没了」与「纪律守住了」在只看绿的时候**长得一模一样**。
+    kb = batch_kernel(which, nodes, edges)[0]
+    _dirs = sorted(kb.all_directions(), key=lambda d: d.did)
+    one_id = next((d.did for d in _dirs
+                   if not kb.children_of(d) and len(kb.members_of(d)) < 2), None)
+    many_id = next((d.did for d in _dirs
+                    if not kb.children_of(d) and len(kb.members_of(d)) >= 2), None)
+    if need_at_least([x for x in (one_id, many_id) if x], 2,
+                     "`T4` 的「必须分档」见证（`分不开` vs `还没长出来`，批建树上）"):
+        p_mix = retriever.block_profile(kb, frozenset({one_id, many_id}))
+        p_one = retriever.block_profile(kb, frozenset({one_id}))
+        p_many = retriever.block_profile(kb, frozenset({many_id}))
+        ok("★★ [T] 那一格**正是本仓库那条中心纪律**：两个成员**都没有子**，"
+           "而它们**不是同一回事** —— 一个只有 1 个项（`§K2` 情形①：**结构上永远分不开**）、"
+           "另一个成员 ≥2（值得试）。⚠️ 只看「有没有子」时这两类**长得一模一样** ⇒ "
+           "画像**必须**分档，否则会说错话",
+           p_mix.n_with_children == 0 and p_mix.n_singleton == 1
+           and p_mix.n_unexpanded == 1 and p_mix.reading == "混合"
+           and p_one.reading == "分不开" and p_many.reading == "还没长出来",
+           f"合在一起 {sorted(p_mix.block)}→{p_mix.reading}｜拆开 "
+           f"{sorted(p_one.block)}→{p_one.reading}、{sorted(p_many.block)}→{p_many.reading}")
 
     ok("★ [T] 三档**互斥且完备**（`§14.1` 的 ⚠️：这条**按构造恒真** ⇒ 它**不是判据**，"
        "只是计数方式的自洽性检查 —— 判据 `T4` 判的是**读法与事实相符**）",
@@ -5447,8 +5557,10 @@ def test_retriever() -> None:
     ok("★★ [T] `步骤 T2` 是**两层**排序（`§14.7`）：① 先由结构设定（`hit` 说否 ⇒ 后看）"
        "② **按使用细调**（有记录的块按倾向降序）—— 这正是 `参考文献地图 §〇` 第 2 行"
        "「搭建上层视图的规则**根据使用自我优化**」与 `§六.2`「收益（用得多）− 维护开销」"
-       "的落点，而它**从未进过设计文档**（本次补上）",
-       hasattr(r, "tendency") and r.n_blocks_with_tendency == len(r.first),
+       "的落点，而它**从未进过设计文档**（本次补上）。"
+       "⚠️ 上界 `≤ len(first)` 是**按构造**的（只有「先看」档的块参与计数）"
+       "⇒ 这条真正的判据是 `> 0`：**第二层有没有内容**（它是下面那条降序断言的防空转守卫）",
+       hasattr(r, "tendency") and 0 < r.n_blocks_with_tendency <= len(r.first),
        f"有记录的方向 {len(r.tendency)} 个；「先看」档 {r.n_blocks_with_tendency}/{len(r.first)} 块有记录")
 
     if r.tendency and len(r.first) > 1:
@@ -5492,25 +5604,25 @@ def test_retriever() -> None:
     # ★★ **影响的证明**：把认识换成**离散划分**（= 不用视图），再跑一遍同样的检索。
     #    ⇒ 候选集**不变**（`T1` 的定理），但「整体倾向」**退化成逐方向**
     #      ⇒ 这就是「有认识 / 没认识」的**可机检差异**。
+    #
+    #    ⚠️ 直接**传** `recognition=` 即可 —— `current_recognition` 在
+    #       `disk_fingerprint` 未显式给时会从 `recognition.spec` 推断，
+    #       而这份的 `spec` 就是当前那份 ⇒ 指纹相符 ⇒ 用它。（原来在这里
+    #       monkeypatch 一个替身，替身签名比真实现窄 ⇒ 调用点加参数就会炸在**测试**里。）
     _disc = retriever.Recognition(
         spec=spec, q=tuple(frozenset({d}) for d in spec.universe),
         source="对照：离散划分（= 不用视图）",
         fingerprint=retriever.spec_fingerprint(spec), on_disk=True)
-    _cr = retriever.current_recognition
-    # ⚠️ 必须接 `**kw` —— `retrieve` 会传 `disk_unreadable`（2026-10-10 加的）。
-    #    替身签名比真实现窄 ⇒ 调用点加了参数就会在这里炸（而炸的是**测试**，不是被测代码）。
-    retriever.current_recognition = lambda s, r=None, **kw: _disc
-    try:
-        rd = retriever.retrieve(kernel, plugin, {which: retriever.as_bar(query)}, spec=spec)
-    finally:
-        retriever.current_recognition = _cr
+    rd = retriever.retrieve(kernel, plugin, {which: retriever.as_bar(query)}, spec=spec,
+                            recognition=_disc, tendency=r.tendency)
     ok("★★ [T] **影响的证明**（`§14.8.1`）：换成**离散划分**（= 不用视图）后，"
        "**候选集不变**（`§3` 定理 —— 「不改变结论」这一半）"
-       "**而「整体倾向」退化成逐方向** ⇒ 这就是「有认识 / 没认识」的可机检差异",
+       "**而「整体倾向」退化成逐方向**（每条建议**恰好**覆盖 1 个方向）"
+       "⇒ 这就是「有认识 / 没认识」的可机检差异",
        rd.candidates == r.candidates
-       and len(rd.advice) == len(rd.candidates)          # 25 条（每条 1 个方向）
-       and len(r.advice) < len(r.candidates)             # 8 条覆盖 25（有认识）
-       and rd.advice_span == len(rd.candidates),
+       and rd.advice_span == len(rd.advice)     # 离散：块 = 单方向 ⇒ 每条建议覆盖 1 个方向
+       and r.advice_span > len(r.advice)        # 有认识：块级建议覆盖多个方向
+       and rd.advice_span == len(r.candidates),  # 离散下候选各自成块 ⇒ 全覆盖
        f"有认识：{len(r.advice)} 条覆盖 {r.advice_span}/{len(r.candidates)}｜"
        f"离散：{len(rd.advice)} 条覆盖 {rd.advice_span}/{len(rd.candidates)}"
        f"｜候选集相同={rd.candidates == r.candidates}")
@@ -5631,12 +5743,14 @@ def test_cli_paths() -> None:
 #: ⚠️ 这不是豁免清单，是**待办清单**：修好了就必须从这里删掉。
 #:    不删的话它会退化成「永久豁免」，而那是另一种「没人再看」——
 #:    与 `B18` baseline 那条 `--prune-suppressions` 的规矩同一个形状。
-NEVER_JUDGED: dict[str, str] = {
-    "A5": "视图层跑的是**批建 + keyset** ⇒ 账恒空（机制见 `a5_empty_reason`）。"
-          "账非空的只有 `reach` / `sequence` 的**维护路径**，而「视图层用哪个方向」"
-          "是**外生声明**（设计稿 §10 停止条件 1：猜一个就是替人做决定）"
-          "⇒ 要人拍板（`outputs/_四条跳过能不能解.md` §4.3）",
-}
+#:
+#: ★ 2026-10-13（v0.1.21）：**现在是空的** —— 唯一那条（`A5`）**修好了**。
+#:    用户拍板后：`view_spec.json` 的 `方向` 由 `keyset` 改为 `sequence`、
+#:    视图层改跑**维护路径** ⇒ 账非空（16 条）⇒ `A5` 在生产配置上**判上了**。
+#:    按上面「在表里 ⇒ 必须仍然判不了」那条，它**必须**被删掉 ——
+#:    这一趟就是**守卫自己把它报出来的**（「已经在生产配置上判过了 ⇒ 删掉」）。
+#:    ⇒ 表空不等于「这张表没用过」：它**用完就缩**，正是设计要的。
+NEVER_JUDGED: dict[str, str] = {}
 
 #: **生产配置**的那几组 —— 「恒定的过」只在它们上面数。
 #: ⚠️ 白名单，**不是**黑名单（「排除含『合成』『对照』的」）：黑名单会**静默**漏掉

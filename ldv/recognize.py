@@ -81,7 +81,7 @@ from .checks.abstraction import build_views, load_spec_file, spec_for
 from .checks.coverage import corpus_fingerprint
 from .core import view_persist
 from .core.views import maintain, shrink_ratio
-from .run_checks import batch_kernel
+from .run_checks import batch_kernel, maintenance_kernel
 
 DIRECTIONS = ("keyset", "reach", "sequence")
 
@@ -114,7 +114,18 @@ def run_one(which: str, nodes, edges, *, dry_run: bool) -> tuple[str, str]:
     if spec is None:
         return "跳过", (f"═══ 方向 {which} ═══\n  ⊘ {why}\n"
                         f"     ⇒ **本方向没跑**（跳过 ≠ 通过）")
-    kernel, plugin, _queries, _mk = batch_kernel(which, nodes, edges)
+    # ★★ 2026-10-13（v0.1.21）：**与消费者同源** —— 视图层跑**维护路径**
+    #   （`run_checks.view_report` / `multilevel_report` / `retrieval_report` 三处
+    #   都用 `maintenance_kernel`）。本模块是 `views.json` 的**唯一生产者**，
+    #   而那份文件正是那三处**读回来的东西** ⇒ 两边必须建**同一棵树**，
+    #   否则「写进去的」与「读出来的」按各自的方向 id 解释 ⇒ 盘上那份
+    #   可能**看着指纹相符、内容却是另一棵树的**（`T2` 只比 `spec` 的指纹，
+    #   比不出这件事）。
+    #   ⚠️ 实测（`sequence`）：两种路径的 `to_dict` 输出**逐字节相同** ⇒
+    #     这一改动**零行为变化**；但它是**潜伏**的 —— 换到 `reach`
+    #     （批建 71 ≠ 维护 15）就会分岔。`plugin` 与路径无关，仍取批建那份。
+    kernel = maintenance_kernel(which, nodes, edges)
+    plugin = batch_kernel(which, nodes, edges)[1]
     cover = coverage_of(which, nodes, edges)
     path = view_persist.default_path(nodes_dir)
 

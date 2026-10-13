@@ -15,6 +15,10 @@
 | `语料` | **算** | 就是 `corpus_fingerprint(nodes, edges)`，两个数 |
 | `方向` | **人给**（命令行） | 「这批 id 属于哪条方向」—— 内核各自从 `D0` 开始编号，不写清就歧义 |
 | `universe` `U` | **算** | 那个内核的 `all_directions()` |
+
+⚠️ **`universe` 算的是「维护路径」那棵树**（与 `run_checks.view_report` 同源）——
+   方向 id 每个内核各自从 0 开始，而**同一条方向在批建 / 维护两条路径上是两棵树**
+   （实测 `reach` 71 / 15、`sequence` 16 / 8）⇒ 两边不同源就会崩，见 `build_spec`。
 | `relation` `E` | **算**（候选） | 这棵树自己的树边。它是**结构事实**，冻结在这里、进版本库 |
 | `partition` `P` | **候选** | 生成器只给**信息量最低**的那一档 `P = {U}` |
 | `读数` | **人给** | 类别是**外生声称**（Gray 三分法有定理，不是能算出来的属性） |
@@ -91,10 +95,28 @@ def spec_target(nodes_dir: Path | None) -> Path:
 
 
 def build_spec(which: str, nodes, edges) -> tuple[dict, list[str]]:
-    """算出机械那几栏。返回 `(spec, 说明行)`。"""
-    from ..run_checks import batch_kernel
+    """算出机械那几栏。返回 `(spec, 说明行)`。
 
-    kernel, _plugin, _queries, _mk_root = batch_kernel(which, nodes, edges)
+    ⚠️ **必须用 `maintenance_kernel` —— 与 `run_checks.view_report` 同源**（v0.1.21）。
+
+    声明里的 `universe` 是「**判据实际会去建的那些方向 id**」。方向 id 是**每个内核
+    各自从 0 开始**编的，而**同一条方向在两条路径上是两棵树** —— 实测（36 项 / 47 边）：
+
+        keyset    批建 25 = 维护 25     ← 只有这一条两条路径同形
+        reach     批建 71 ≠ 维护 15
+        sequence  批建 16 ≠ 维护  8
+
+    ⇒ 若生成器按**批建**编 `universe`、判据却按**维护**建视图，声明里就会出现
+      `D8`..`D15` 这些维护路径上**不存在**的 id ⇒ `build_views` 抛 `KeyError`
+      （2026-10-13 实测崩在 `D10`）。**两边必须同源。**
+
+    ⚠️ 它也是「生成器只给候选、人看过才落盘」的一个具体形态：算出来的 `universe`
+       只对**一条路径**成立，而「这份声明描述哪条路径」是**外生**的 ——
+       生成器不替人挑，只保证自己与判据走的是**同一条**。
+    """
+    from ..run_checks import maintenance_kernel
+
+    kernel = maintenance_kernel(which, nodes, edges)
     dirs = sorted(kernel.all_directions(), key=lambda d: _did_order(d.did))
     universe = [d.did for d in dirs]
     relation = sorted(

@@ -2189,14 +2189,19 @@ def inj_t3(nodes, edges, injected: bool) -> Report:
 
 
 def inj_t4(nodes, edges, injected: bool) -> Report:
-    """`T4` —— 注入「**三态混同**」：把「未展开」计入「已展开·无子」（`基线§14.5`）。
+    """`T4` —— 注入「**三态混同**」：把「还没长出来」计入「分不开」（`基线§14.5`）。
 
-    红形态 = 读法变成「**下界到了**」，而事实是「**还没钻进去**」——
+    红形态 = 读法翻成「**分不开**」，而事实是「**还没长出来**」——
     `§K6` 在本层的形态：**把「不知道」说成「已经到底了」**。
+    ⚠️ 四档的**字面**只有 `retriever.BlockProfile.reading` 那一处定义；
+       `分不开` = 成员**只有 1 个项**（`§K2` 情形①，结构上永远分不开），
+       `还没长出来` = 无子**且成员 ≥2**（值得试）—— 只看「有没有子」时两者**长得一样**。
 
     ⚠️ **用真语料**（`nodes` / `edges`），不用 `_synth`：手造那个小夹具上未必有
-       「未展开」的块，而这一注入正是在**那一档**上才分得开。
-       本语料实测：13 个成员的块**全部未展开**（`基线§14.2`）。
+       「还没长出来」的块，而这一注入正是在**那一档**上才分得开。
+       本语料实测（`sequence`，批建路径）：块 `['D2','D3','D4','D6','D7']`
+       是 5 个成员、2 个有子 / 2 个只有 1 个项 / 1 个还没长出来 ⇒ 读法「混合」；
+       注入把「还没长出来」并进「分不开」后，那 2 个单项的成员**事实没变**而读法翻档。
     """
     from ldv.checks.abstraction import spec_for
     from ldv.checks.retrieval import RETRIEVER_CODES, t4_profile
@@ -2215,10 +2220,10 @@ def inj_t4(nodes, edges, injected: bool) -> Report:
     kernel, plugin, queries, _mk = batch_kernel(which, nodes, edges)
     r = retrieve(kernel, plugin, {which: as_bar(queries[0])}, spec=spec)
     if injected:
-        # 「三态混同」的可观测形态：未展开被并进「已展开·无子」⇒
-        # 读法从「还没钻进去」翻成「下界到了」，而**事实没变**。
         # 「三态混同」的可观测形态：**「还没长出来」被并进「分不开」**
         #   ⇒ 读法从「还没长出来」/「混合」翻成「分不开」，而**事实没变**。
+        #   ⚠️ 四档的**字面**只有 `retriever.BlockProfile.reading` 那一处定义：
+        #      `已细分过` / `分不开` / `还没长出来` / `混合`。
         r = replace(r, profiles=tuple(
             replace(p, n_singleton=p.n_singleton + p.n_unexpanded, n_unexpanded=0)
             for p in r.profiles))
@@ -2290,8 +2295,8 @@ def inj_t6(nodes, edges, injected: bool) -> Report:
     也就是「说的和事实不一样」。★ 它骗的是流程 A 的 `R3a`：那一步**本来没有依据**，
     拿一条错的建议去判「要不要继续往下」，就是**照着错的判**。
 
-    ⚠️ 用**真语料**（同 `inj_t4` / `inj_t5`）—— 它要**真的块**（含那个 13 成员的
-       「还没钻进去」块）才有内容。
+    ⚠️ 用**真语料**（同 `inj_t4` / `inj_t5`）—— 它要**真的块**（含「值得往下」/
+       「看具体方向」那一档）才有内容：那一档正是 `deepen` 会去展开的那一带。
     """
     from ldv.checks.abstraction import spec_for
     from ldv.checks.retrieval import RETRIEVER_CODES, t6_advice
@@ -2334,6 +2339,13 @@ def inj_t7(nodes, edges, injected: bool) -> Report:
     ★ 注入形态（手造）：把 `deepen` 前的候选集**人为置多一点**（比真实的多），
        于是「深化后 ⊇ 深化前」**不成立** ⇒ 红。
        ⚠️ 不能靠真跑造出来（真跑下它恒真）—— 同 `T1`/`T4`/`T6` 的处境。
+
+    ⚠️ **夹具前提：查询要选得让深化真的发生**（2026-10-13，v0.1.21）。
+       `T7` 在 `deepened` 为空时**跳过**，而 `queries[0]`（`随机 1 项 #0`）是 14 条里
+       最小的一条 —— 它的候选只落在「已细分过」的块里 ⇒ `deepen` 无事可做
+       ⇒ **基线未展开**（实测：`✗ T7: 基线不是绿的（未展开）`）。
+       ⇒ 这里**逐查询试**，取第一条能让 `deepen` 展开的；一条都没有就抛 `CannotBuild`
+         （那是第三种状态：**问不出**「会不会红」，不是「判据不红」）。
     """
     from ldv.checks.abstraction import spec_for
     from ldv.checks.retrieval import RETRIEVER_CODES, t7_deepening
@@ -2352,11 +2364,31 @@ def inj_t7(nodes, edges, injected: bool) -> Report:
     which = str(doc.get("方向") or "")
     spec, _why = spec_for(doc, which, _corpus)
     kernel, plugin, queries, _mk = batch_kernel(which, nodes, edges)
-    for q0 in queries[:3]:
-        flow.run_query(kernel, q0)
-    r = retrieve(kernel, plugin, {which: as_bar(queries[0])}, spec=spec,
-                 tendency=selfopt.tendency_by_direction(kernel))
-    deep = deepen(kernel, plugin, r)
+    # ★★ 2026-10-13（v0.1.21）：**选一条能让「深化」真的发生的查询**。
+    #
+    #   `T7` 在「本趟没有做深化」（`deepened` 为空）时**跳过**（`跳过 ≠ 通过`），
+    #   而 `queries[0]` 是 14 条里**最小**的一条（`随机 1 项 #0`）：它的候选只落在
+    #   **已细分过**的块里 ⇒ `deepen` 无事可做 ⇒ **基线未展开**。
+    #   ⚠️ 声明换成 `sequence` 之前，`queries[0]` 恰好落在「值得往下」那一带
+    #      ⇒ 这条基线**碰巧**能过。碰巧能过的夹具与「夹具前提成立」长得一样，
+    #      直到换了方向才露出来。
+    #   ⚠️ **不许**把基线的「判不了」当成「注入有效」：判不了 ≠ 红
+    #      （驱动会把 `CannotBuild` 记成「夹具做不出来」，那是第三种状态）。
+    #   ⚠️ **每条候选查询一棵新树** —— `deepen` 会 `expand`（唯一写动作）就地改结构。
+    r = deep = None
+    for _q in queries:
+        _k = batch_kernel(which, nodes, edges)[0]
+        for _q0 in queries[:3]:
+            flow.run_query(_k, _q0)
+        _r = retrieve(_k, plugin, {which: as_bar(_q)}, spec=spec,
+                      tendency=selfopt.tendency_by_direction(_k))
+        _d = deepen(_k, plugin, _r)
+        if _d.deepened:
+            kernel, r, deep = _k, _r, _d
+            break
+    if r is None:
+        raise CannotBuild("这一条方向上**没有任何查询**能让 `deepen` 真的展开"
+                          "（`T7` 的基线在每一条查询上都「未展开」）⇒ 问不出「会不会红」")
     if injected:
         # 「深化把候选弄丢了」的可观测形态：**深化前**那份被塞进一个不存在的候选。
         r = replace(r, candidates=r.candidates | {"__幽灵__"})

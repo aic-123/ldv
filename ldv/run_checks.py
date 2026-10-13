@@ -90,7 +90,7 @@ from .checks._fixtures import (
     reusable_build,
 )
 from .core.tri import Tri
-from .checks._framework import Report
+from .checks._framework import Assertion, Report
 from .checks.multilevel import (
     MULTILEVEL_CODES,
     render_levels,
@@ -542,7 +542,13 @@ def view_report(loaded, targets: list[str]) -> Report:
         _skip_views(rep, why + " —— 判不了，**不是通过**")
         return rep
 
-    kernel, plugin, _, _ = batch_kernel(which, nodes, edges)
+    # ★ 2026-10-13（v0.1.21）：视图层改跑**维护路径**。
+    #   账的两类（滞留 / 根覆盖之外）**只在维护路径上产生** —— 批建路径上两类都是 0/0
+    #   （根的声明是「覆盖一切」）⇒ `§A5` 在批建路径上**永远判不了**
+    #   （实测 `outputs/_probe_maintenance_tree.out.txt`）。
+    #   `plugin` 与路径无关，仍取批建那份（`reusable_build` 有缓存，不会重复建）。
+    kernel = maintenance_kernel(which, nodes, edges)
+    plugin = batch_kernel(which, nodes, edges)[1]
     cover = coverage_of(which, nodes, edges)
     vs = build_views(kernel, spec, cover, plugin)
     a1_soundness(vs, rep)
@@ -690,7 +696,13 @@ def multilevel_report(loaded, targets: list[str]) -> Report:
         skip_all(rep, why + " —— 判不了，**不是通过**")
         return rep
 
-    kernel, plugin, _q, _mk = batch_kernel(which, nodes, edges)
+    # ★ 2026-10-13（v0.1.21）：与 `view_report` **同源** —— 声明的 `universe` 是
+    #   **维护路径**那棵树编的号（实测 `sequence`：批建 16 / 维护 8）⇒ 这一层
+    #   拿 `q = csr(spec)` 去问内核时，必须问**同一棵树**，否则 `D0` 在两边
+    #   指的不是同一个方向（`_fixtures.Cover` 的 docstring 专门记了这条）。
+    #   `plugin` 与路径无关，仍取批建那份（`reusable_build` 有缓存，不重复建）。
+    kernel = maintenance_kernel(which, nodes, edges)
+    plugin = batch_kernel(which, nodes, edges)[1]
     cover = coverage_of(which, nodes, edges)
     levels = run_multilevel(spec, kernel, cover, plugin, rep)
     rep.note(why + f"；方向 `{which}`")
@@ -753,6 +765,37 @@ def cli_report(loaded, targets: list[str]) -> Report:
     rep.note("⚠️ `CL3` / `CL4` / `CL5` 的**已知答案是红**（空转护栏必须开火）—— "
              "断言「它红了」才证明护栏在；断言「它绿了」会永远绿。")
     return rep
+
+
+class _Collector:
+    """逐查询的**临时收集器** —— **故意不是 `Report`**。
+
+    ## 为什么必须是另一个类型（2026-10-13 实测踩到）
+
+    `run_tests._assert_state_counts` 把 `Report.add` **挂掉**，用来数
+    「每条编号在**生产配置**上判过没有」（`test_never_judged` 与
+    `test_skip_evidence_table` 都吃这个数）。⇒ 若逐查询的中间结果也走 `Report`，
+    那 14 份中间报告会被**当成生产读数**数进去：
+
+        实测：`T1` / `T3` / `T5` / `T6` / `T7` 被 `空集` 那条查询带出「跳过」
+        ⇒ `test_skip_evidence_table` 报「本趟跳过的编号缺 5 个」，
+          而 `run_checks` 自己印的是「跳过 3 次 / 2 个编号」—— **两处打架**。
+
+    ⇒ **生产结果只有聚合后的那 8 条**。中间结果不进 `Report`，用这个最小替身
+      （`run_retrieval` 只用到 `add` / `note` / `assertions` 三样）。
+    """
+
+    def __init__(self) -> None:
+        self.assertions: list[Assertion] = []
+        self.notes: list[str] = []
+
+    def add(self, code: str, title: str, result: Tri, detail: str = "") -> Assertion:
+        a = Assertion(code=code, title=title, result=result, detail=detail)
+        self.assertions.append(a)
+        return a
+
+    def note(self, text: str) -> None:
+        self.notes.append(text)
 
 
 def retrieval_report(loaded, targets: list[str]) -> Report:
@@ -821,7 +864,14 @@ def retrieval_report(loaded, targets: list[str]) -> Report:
         skip_retrieval(rep, why + " —— 判不了，**不是通过**")
         return rep
 
-    kernel, plugin, queries, _mk = batch_kernel(which, nodes, edges)
+    # ★ 2026-10-13（v0.1.21）：同 `view_report` / `multilevel_report` ——
+    #   声明是**维护路径**那棵树；而且**盘上那份认识**（`python -m ldv.recognize`
+    #   产出）本来就是维护路径建的 ⇒ 这一层必须用**同一棵树**，否则候选会落在
+    #   `spec.universe` **之外**（实测：`sequence` 下候选出现 `D8`，而声明只到 `D7`）。
+    #   `queries` 是**语料级**的（与内核路径无关），仍取批建那份。
+    kernel = maintenance_kernel(which, nodes, edges)
+    plugin = batch_kernel(which, nodes, edges)[1]
+    queries = batch_kernel(which, nodes, edges)[2]
     if not queries:
         skip_retrieval(rep, "这一条方向**没有查询集** ⇒ 没有需求可分派（跳过 ≠ 通过）")
         return rep
@@ -875,15 +925,92 @@ def retrieval_report(loaded, targets: list[str]) -> Report:
         flow.run_query(kernel, q0)
     tendency = selfopt.tendency_by_direction(kernel)
 
-    query = queries[0]
-    # ★ 取回 `Retrieval` —— 判据读的是它的 `recognition`（`Recognition`），
-    #   而上面那个 `recognition` 是**盘上读回的 `ViewSet`**。两者不是一回事：
-    #   前者带「盘上那份的指纹/读得回来吗」，后者只描述视图本身。
-    r = run_retrieval(kernel, plugin, {which: retriever.as_bar(query)}, spec, rep,
-                      recognition=recognition, tendency=tendency,
-                      disk_fingerprint=disk_fp, disk_unreadable=bad_disk)
+    # ★★ 2026-10-13（v0.1.21）：跑**整个查询集**，逐编号取**最坏结果**。
+    #
+    #   原来只跑 `queries[0]` —— 那是 14 条里**最小**的一条（`随机 1 项 #0`）。
+    #   实测（`outputs/_probe_t7_queries.out.txt`）：`T7` 只在**候选落进
+    #   「值得往下 / 看具体方向」那一档**时才判，而 **14 条里 11 条**能让它判、
+    #   `queries[0]` 恰好不能 ⇒ **`T7` 在生产上永远跳过**。
+    #   ⚠️ 那是**覆盖不足**，不是「这条判据判不了」：一条「永远跳过」的判据
+    #   与「没有这条判据」在效果上一样，而它在输出里长得像「守住了」
+    #   （`test_never_judged` 追讨的正是这件事）。
+    #
+    #   聚合法 = **最坏结果**：任一查询红 ⇒ 红；否则任一判 ⇒ 判；否则跳过。
+    #   ⚠️ **不许**取「第一条」或「最后一条」：那会把「14 条里 1 条红」藏起来，
+    #      而「全绿」的范围必须与**声明的**范围（本趟 = 整个查询集）恰好相等。
+    #
+    #   ⚠️ **每条查询一棵新树**：`deepen` 会 `expand`（`§14.9` 的唯一写动作）就地改内核
+    #      ⇒ 共用一棵树的话，第 k 条查询看到的是被前几条**改过**的结构，
+    #      结果**与查询顺序有关**。⇒ 每条各建一棵，判据之间互不影响。
+    #   ⚠️ 认识与倾向也跟着**每条各一份**（`from_dict` 绑内核；倾向来自内核上的使用记录）。
+
+    def _recognition_for(k: Any) -> tuple[Any, Any, bool]:
+        """给一个内核配一份认识 —— 与上面那份**同源**（同一批盘上字节）。"""
+        if not from_disk:
+            d = view_persist.to_dict(build_views(k, spec, cover, plugin))
+            return view_persist.from_dict(d, k, cover, plugin), None, False
+        try:
+            rec = view_persist.from_dict(disk_on_file, k, cover, plugin)
+        except Exception:  # noqa: BLE001 —— 坏档要**报出来**，不是崩
+            return None, None, True
+        return rec, retriever.spec_fingerprint(rec.spec), False
+
+    runs: list[tuple[Any, _Collector]] = []
+    for i, q in enumerate(queries):
+        if i == 0:
+            # 第 1 条沿用上面那套（`kernel` / `recognition` / `disk_fp` / `tendency`）
+            k_q, rec_q, fp_q, bad_q, tend_q = (
+                kernel, recognition, disk_fp, bad_disk, tendency)
+        else:
+            k_q = maintenance_kernel(which, nodes, edges)     # ★ 每条一棵新树
+            rec_q, fp_q, bad_q = _recognition_for(k_q)
+            if rec_q is None and not bad_q:
+                d = view_persist.to_dict(build_views(k_q, spec, cover, plugin))
+                rec_q = view_persist.from_dict(d, k_q, cover, plugin)
+            for q0 in queries[:3]:
+                flow.run_query(k_q, q0)
+            tend_q = selfopt.tendency_by_direction(k_q)
+        sub = _Collector()
+        r_q = run_retrieval(k_q, plugin, {which: retriever.as_bar(q)}, spec, sub,
+                            recognition=rec_q, tendency=tend_q,
+                            disk_fingerprint=fp_q, disk_unreadable=bad_q)
+        runs.append((r_q, sub))
+
+    # 逐编号取**最坏结果**；`detail` 取**定结果的那一条**查询（不许张冠李戴）。
+    # ⚠️ **`YES` 比 `UNEXPANDED` 好** —— 「跳过」是**那条查询没有需求**
+    #   （如 `空集` 查询：`ideal` / `require` / `forbid` 三样都没有 ⇒ 无可判），
+    #   不是「这条判据判不了」。⇒ 让跳过压过过，会把**14 条里 13 条判了的判据**
+    #   读成「没判」—— 那是把「覆盖不足」这个错法**换个方向再犯一次**。
+    #   ⚠️ 但**也不许**反过来把「跳过」当「过」：全趟都跳过的编号仍然是跳过。
+    _rank = {Tri.UNEXPANDED: 0, Tri.YES: 1, Tri.NO: 2}
+    for code in RETRIEVER_CODES:
+        pick: tuple[int, Any] | None = None
+        n_judged = 0
+        for i, (_rq, sub) in enumerate(runs):
+            a = next((x for x in sub.assertions if x.code == code), None)
+            if a is None:
+                continue
+            if a.result is not Tri.UNEXPANDED:
+                n_judged += 1
+            if pick is None or _rank[a.result] > _rank[pick[1].result]:
+                pick = (i, a)
+        if pick is None:
+            continue
+        i, a = pick
+        detail = a.detail if len(runs) == 1 else (
+            f"{a.detail}（**定这条结果的是第 {i + 1} 条查询**：`{queries[i].label}`；"
+            f"本组共跑 {len(runs)} 条，其中 **{n_judged} 条判了**这条，"
+            f"逐编号取**最坏结果**）")
+        rep.add(code, a.title, a.result, detail)
+
+    # 注记取**第 1 条查询**那一份（读数与它同源），另加一条聚合口径。
+    r = runs[0][0]
+    for t in runs[0][1].notes:
+        rep.note(t)
     rec = r.recognition
-    rep.note(f"{why}；方向 `{which}`；需求取自第 1 条查询（`{query.label}`）")
+    rep.note(f"{why}；方向 `{which}`；需求取自**整个查询集**（{len(queries)} 条："
+             f"`{queries[0].label}` … `{queries[-1].label}`）"
+             f"—— 逐编号取**最坏结果**（任一红 ⇒ 红；否则任一判 ⇒ 判；否则跳过）")
     # ⚠️ **四种状态各印一行，不许共用**（`§K6` 的同一条纪律）：
     #    盘上那份**当前** / 盘上那份**陈旧** / 盘上那份**读不回来** / 盘上**没有**
     if not from_disk:
