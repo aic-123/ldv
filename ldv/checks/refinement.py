@@ -194,7 +194,7 @@ def refinement_profile(kernel: Any, labels: dict[str, str]) -> dict[str, Any]:
     }
 
 
-def render_refinement(prof: dict[str, Any], which: str = "",
+def render_refinement(prof: dict[str, Any] | None, which: str = "",
                       *, judged: bool) -> str:
     """`B20` 的读数行。
 
@@ -205,8 +205,21 @@ def render_refinement(prof: dict[str, Any], which: str = "",
 
     ⚠️ 做成**必填**而不是默认 `True`：默认值会让下一个调用者**静默**地印错，
        而印错的那一行与印对的那一行**长得一样**。必填 ⇒ 漏了当场 `TypeError`。
+
+    ⚠️ `prof is None`（2026-10-13）：本方向**不是标签轴** ⇒ 语义增益在它上面
+       **没有内容** ⇒ **不计算、不印数**，只给结构性理由。旧代码照样算完整
+       profile（openalex × `sequence` 实测：3906 次展开、2569 次空转），
+       再把对本方向无意义的数字印进这一行 —— 与 v0.1.18 `judged` 修掉的
+       那个形状同族（「没判的数字印成读数」），还白烧 CPU。
     """
     head = f"语义增益（{which}）" if which else "语义增益"
+    if prof is None:
+        if judged:
+            raise ValueError(
+                "接线错误：标签轴上必须给出 refinement_profile —— "
+                "`prof=None` 只允许出现在**只报不判**的方向上")
+        return (f"{head}：本方向**不是标签轴**（payload 与标签无关）⇒ "
+                f"**不计算、不印数** —— 这是结构性理由，不是读数")
     if prof["已标注项"] == 0:
         return f"{head}：这份语料**没有标注** ⇒ 判不了（不是通过）"
     if prof["已展开方向数"] == 0:
@@ -219,8 +232,8 @@ def render_refinement(prof: dict[str, Any], which: str = "",
             f"（度量，不进退出码）")
 
 
-def b20_semantic_refinement(prof: dict[str, Any], rep: Report,
-                            judged: bool = True) -> None:
+def b20_semantic_refinement(prof: dict[str, Any] | None, rep: Report,
+                            *, judged: bool) -> None:
     """**反复声称能分、却连续 N 次在标签上什么都没分开 ⇒ 红。**
 
     与 `§K2 判空`、`B19` 的关系：
@@ -229,22 +242,35 @@ def b20_semantic_refinement(prof: dict[str, Any], rep: Report,
         B19        判「反复声称，却连续 N 次**覆盖没变细**」 —— 跨次数，**结构**
         B20        判「反复声称，却连续 N 次**标签没分开**」 —— 跨次数，**语义**
 
-    `judged=False`（这条方向不是标签轴）⇒ 报「**未展开**」并把理由印出来。
-    ⚠️ **不许报「过」** —— 那会让「这条判据在这条方向上没查」与「查过了没问题」
-       长得一模一样（`B19` 的 docstring 里那条教训的同一形态）。
+    ⚠️ `judged` **必填且 keyword-only**（2026-10-13 与 `render_refinement` 对齐）：
+       漏了当场 `TypeError`，而不是**静默**地按「判了」往下走。
+
+    ⚠️ `prof=None` 而 `judged=True` ⇒ `ValueError`：那是**接线错误**
+       （标签轴上必须给出 profile；`None` 只允许出现在只报不判的方向上）。
+
+    ⚠️ `prof=None`（2026-10-13，非标签轴）：语义增益**没有内容** ⇒ 不计不印。
+       旧代码照样算完整 profile，再把「3906 次展开的语义空转 2569 次」这种
+       对本方向无意义的数字印出来 —— 数字是真的，但这条方向上它**不算读数**。
+
+    ⚠️ 非标签轴报「**跳过**」而**不许报「过」** —— 那会让「这条判据在这条
+       方向上没查」与「查过了没问题」长得一模一样（`B19` 的 docstring 里
+       那条教训的同一形态）。
     """
+    if prof is None:
+        if judged:
+            raise ValueError(
+                "接线错误：标签轴上必须给出 refinement_profile —— "
+                "`prof=None` 只允许出现在**只报不判**的方向上")
+        rep.add("B20", "语义变细守卫", Tri.UNEXPANDED,
+                "本方向**不是标签轴**（payload 与标签无关）⇒ 语义增益**不计不印**"
+                " —— 只报不判（**跳过 ≠ 通过**）")
+        return
     if prof["已标注项"] == 0:
         rep.add("B20", "语义变细守卫", Tri.UNEXPANDED,
                 "这份语料没有标注（标签取自 `type` 字段）—— 判不了，不是通过")
         return
     if prof["已展开方向数"] == 0:
         rep.add("B20", "语义变细守卫", Tri.UNEXPANDED, "没有任何方向被展开过")
-        return
-    if not judged:
-        rep.add("B20", "语义变细守卫", Tri.UNEXPANDED,
-                f"本方向**不是标签轴**（payload 与标签无关）⇒ 只报不判"
-                f"（{prof['已展开方向数']} 次展开的语义空转 {prof['语义空转展开']} 次"
-                f"仍印在读数里）—— **跳过 ≠ 通过**")
         return
     over = prof["最长语义空转连续段"] >= prof["N"]
     rep.add("B20", "语义变细守卫（连续 N 次展开都必须真的分开标签）",
@@ -263,7 +289,7 @@ def b20_semantic_refinement(prof: dict[str, Any], rep: Report,
 # ⚠️ **为什么非有不可**：这条判据只在**标签轴**（`keyset`）上落 —— `reach` / `sequence`
 #    上它报「**跳过**」。而「跳过」与「这条判据根本不会红」在汇总里长得**一模一样**。
 #    ⇒ 用一棵**最小合成树**把「标签真的分开了 ⇒ 过」与「连续 N 层没分开 ⇒ 红」
-#    当场演一遍。
+#    当场演一遍；**跳过**那一例传 `prof=None`，连样式带「不计算、不印数」一起锁住。
 #
 # 手推（`N = REFINEMENT_N = 10`）：
 #
@@ -275,8 +301,10 @@ def b20_semantic_refinement(prof: dict[str, Any], rep: Report,
 #     红·空转       **11 层**单链，每层成员集与标签都**完全相同**：
 #                   ⇒ 每一层「子的分布 == 父的分布」⇒ 连续 11 段 ≥ N ⇒ **红**
 #
-#     跳过·非标签轴   `judged=False`（`reach` / `sequence` 上的形态）
-#                   ⇒ 报「跳过」而不是「过」—— 判据在那里**什么都没查**
+#     跳过·非标签轴   `prof=None` + `judged=False`（`reach` / `sequence` 上的形态）
+#                   ⇒ 报「跳过」而不是「过」—— 判据在那里**什么都没查**，
+#                     而且语义增益**不算不印**（2026-10-13：旧实现照样算，
+#                     还把对本方向无意义的数字印进读数行）
 #
 # ⚠️ 「红」那一例**不是编出来的**：它正是 `§K2` 第二半要拦的形态 ——
 #    「反复声称能分，却每一层都什么都没分开」。成员集不缩小、标签不变化
@@ -327,11 +355,11 @@ def _b20_stub(kind: str) -> tuple[_StubKernel, dict[str, str]]:
     return _StubKernel(root, kids), {"x1": "p", "x2": "p", "x3": "q", "x4": "q"}
 
 
-#: `(标签, 形态, judged, 手推的答案)`
-_B20_CASES: list[tuple[str, str, bool, Tri]] = [
+#: `(标签, 形态, judged, 手推的答案)` —— `judged=None` ⇒ 非标签轴：**不计不印**
+_B20_CASES: list[tuple[str, str, bool | None, Tri]] = [
     ("过·两个子把标签切干净", "split", True, Tri.YES),
     ("红·连续 N 层标签分布与父完全相同", "flat", True, Tri.NO),
-    ("跳过·非标签轴（`judged=False`）", "split", False, Tri.UNEXPANDED),
+    ("跳过·非标签轴（不计不印，`prof=None`）", "split", None, Tri.UNEXPANDED),
 ]
 
 
@@ -340,18 +368,29 @@ def b20_known_answer() -> list[str]:
 
     ⚠️ 同 `b17_known_answer`：三态都要对照，而且**期望值必须两两不同**
        （三例落在同一态 ⇒ 对照证明不了什么）⇒ 这里当场自检。
+
+    ⚠️ 「跳过」那一例（2026-10-13）传 `prof=None`：非标签轴上语义增益
+       **没有内容** ⇒ 不计算。旧实现在这里照样算完整 profile 并把
+       「3906 次展开的语义空转 2569 次」印进读数行 —— 数字是真的，
+       但对这条方向**不算读数**。这里断言两行都不印数。
     """
     fails: list[str] = []
     seen: list[Tri] = []
     for label, kind, judged, want in _B20_CASES:
-        kernel, labs = _b20_stub(kind)
-        prof = refinement_profile(kernel, labs)
+        prof = None if judged is None else refinement_profile(*_b20_stub(kind))
         rep = Report(plugin="(合成)")
-        b20_semantic_refinement(prof, rep, judged=judged)
+        b20_semantic_refinement(prof, rep, judged=bool(judged))
         got = _result(rep, "B20")
         seen.append(got)
         if got is not want:
             fails.append(f"{label}：期望 {want}，实测 {got}")
+        if judged is None:
+            line = render_refinement(None, "sequence", judged=False)
+            if "不计算" not in line or "次展开" in line:
+                fails.append(f"{label}：读数行该「不计算、不印数」，实测 {line!r}")
+            if "不计不印" not in rep.assertions[0].detail:
+                fails.append(f"{label}：判据行该说「不计不印」，"
+                             f"实测 {rep.assertions[0].detail!r}")
     if len(set(seen)) != len(seen):
         fails.append(f"对照表退化：三例落在同一态 {seen} —— 这个对照证明不了什么")
     return fails

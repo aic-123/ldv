@@ -679,8 +679,8 @@ SUMMARIES: dict[str, Callable] = {
 #      ⇒ 改成**构造法**：`§A4` 在**当前**语料上搜一对「同摘要、异读数」。
 #        这样声明**与语料无关**，而证据**每次都是当场量出来的**。
 #
-#  ⚠️ 搜不到 ⇒ **红**（不是跳过）：声称是 holistic，而这份语料上拿不出支撑
-#     ⇒ 要么人补一个显式见证，要么把类别降成 `algebraic`（设计稿 §10 停止条件 2）。
+#  ⚠️ 这个函数**只当构造法用**（找一对）；「判不判得了」是 `decide_digest_witness`
+#     的事（2026-10-13：旧 `§A4` 的恒红 = 拿它的「搜不到」当「不存在」判）。
 
 def witness_same_digest_diff_reading(f: Callable, sf: Callable, ctx: "ReadingCtx",
                                      ks: Sequence[int] = (2, 3, 4),
@@ -733,6 +733,152 @@ def _close(a: Any, b: Any, tol: float = 1e-9) -> bool:
         return abs(float(a) - float(b)) <= tol * max(1.0, abs(float(a)), abs(float(b)))
     return a == b
 
+
+# --- `§A4` 的两级证据：**函数级**（语料无关）+ **语料级**（本论域） -------------
+#
+# ★★★ 2026-10-13：`§A4` 恒红的真因 = 把**两个 scope** 混成了一条判据。
+#
+#      Scope-M（函数级，语料无关）  「这个读数**能被定长摘要决定吗**」
+#           —— Gray 等 1997 三分法里 holistic 的**本义**：median 这类函数
+#              不能由各部件的一个数算出。它是**读数**的性质。
+#      Scope-C（语料级，本论域）    「这份语料上**存不存在**一对同摘要异读数」
+#           —— 旧判据只测这一档，还用**有界搜索（k≤4）当判定**。
+#
+#      后果：在**摘要单射**的论域上（openalex × `sequence`：9 个方向、穷举
+#      512 个子集 ⇒ 512 桶两两不同、0 对 ⇒ 见证**不存在**，不是没搜到），
+#      `§A4` **恒红** —— 与声称真假无关；两条出路还都堵死（补见证已证不可能；
+#      降 `algebraic` 会让块恒等式当场红）⇒ **分类学空洞**。
+#
+# ⇒ 修法 = 两级分开判、各自的结论各自报：
+#      Scope-M  构造论域上穷举：0 对 ⇒ 红「读数本就被摘要决定」；
+#                有对 ⇒ 「函数级有支撑」（随后才谈语料级）。
+#      Scope-C  本论域：2^|U| ≤ 预算 ⇒ 穷举 —— 找到 ⇒ 过 + 印对；
+#                0 对 ⇒ **过 + 披露**「论域的性质，不是声称不成立」；
+#                超预算 ⇒ 过 + 「语料级未判」（不拿有界搜索的失败冒充判定）。
+
+#: 穷举预算：`2^|U| ≤ 1<<16`（`|U| ≤ 16` ⇒ 65536 个子集）担当得起。
+WITNESS_ENUM_BUDGET = 1 << 16
+
+
+def decide_digest_witness(f: Callable, sf: Callable, ctx: ReadingCtx, *,
+                          budget: int = WITNESS_ENUM_BUDGET) -> dict[str, Any]:
+    """在本论域上判「同摘要异读数」这对东西**存不存在**，而不是「搜不搜得到」。
+
+    ## 为什么不复用 `witness_same_digest_diff_reading`
+
+    那个是**构造法**：给它 `ks`，它找**一对**。`§A4` 要的却是**判定**：
+    「这对东西在这份语料上到底有没有」。两者的差别全在**搜不到时的含义**上 ——
+    构造法搜不到只说明「这个 `ks` 里没有」，判定要回答「是不是根本没有」。
+
+    ## `mode = exhaustive` ⇒ 0 对是**结论**，不是「没搜到」
+
+        2^|U| ≤ budget ⇒ `k = 2..|U|` **全部**枚举（与构造法同序：k 升序、
+        字典序；同一份语料上两次跑给出同一对）⇒ `found=False` 是**证明**：
+        这份论域上 `摘要` 对**读数**单射。
+
+    ## `mode = bounded` ⇒ `suffices=False`（搜不到**什么都不证明**）
+
+        超出预算 ⇒ 退回构造法（`k ≤ 4`）并在返回值里如实标出来 ——
+        「没判」与「判过了」不许长得一样（`§A5` 那对教训的同一条纪律）。
+
+    ⚠️ `k` 从 **2** 起（与构造法共用这条约定）：1 元集合里摘要碰撞只可能是
+       「同值不同方向」，而构造论域的六个值两两不同（见 `_A4_SYNTH_VALUES`）
+       ⇒ 这条约定在构造论域上不漏。
+    """
+    universe = sorted(ctx.value_of)
+    n = len(universe)
+    if (1 << n) > budget:
+        pair = WITNESS_BUILDERS["同摘要异读数"](f, sf, ctx)
+        return {"found": pair is not None, "pair": pair, "mode": "bounded",
+                "subsets": None, "buckets": None, "suffices": pair is not None}
+    seen: dict[Any, tuple[Any, frozenset[str]]] = {}
+    n_seen = 0
+    for k in range(2, n + 1):
+        for combo in itertools.combinations(universe, k):
+            S = frozenset(combo)
+            dg = sf(S, ctx)
+            val = f(S, ctx)
+            n_seen += 1
+            prev = seen.get(dg)
+            if prev is None:
+                seen[dg] = (val, S)
+            elif not _close(prev[0], val):
+                return {"found": True, "pair": (prev[1], S), "mode": "exhaustive",
+                        "subsets": n_seen, "buckets": len(seen), "suffices": True}
+    return {"found": False, "pair": None, "mode": "exhaustive",
+            "subsets": n_seen, "buckets": len(seen), "suffices": True}
+
+
+#: `§A4` Scope-M 的**构造论域**（2026-10-13）—— 挑法是**手推**的：
+#:
+#:     ① 六个值两两不同 ⇒ 1 元集合不可能同摘要 ⇒ `k=2` 起的约定在此域上不漏
+#:     ② 值里含 `{1,2,6}` 与 `{1,3,5}`（和都 9、中位数 2 ≠ 3）⇒ `中位数`
+#:        **不是** `(计数, 和)` 的函数（k=2 上同和对的中位数都等于均值 ⇒ 见证在 k=3）
+#:     ③ 覆盖含 `{a}∪{a..f}` 与 `{a}∪{a..e}`（和都 7、覆盖 6 ≠ 5）⇒ `覆盖计数`
+#:        **不是**摘要的函数
+#:     ④ `计数 == 取第一项`、`和 == 取第二项`、`平均 == 和除计数` ⇒ 这三个
+#:        在**任何**论域上都一对找不出（恒等式）；本域把它们逐个坐实
+_A4_SYNTH_VALUES = {"s1": 1.0, "s2": 2.0, "s3": 6.0, "s4": 3.0, "s5": 5.0, "s6": 10.0}
+_A4_SYNTH_COVERS = {
+    "s1": frozenset({"a"}),
+    "s2": frozenset({"a"}),
+    "s3": frozenset({"a", "b", "c", "d", "e", "f"}),
+    "s4": frozenset({"a", "b", "c"}),
+    "s5": frozenset({"a", "b", "c", "d", "e"}),
+    "s6": frozenset({"a", "b", "c", "d", "e", "f", "g", "h", "i", "j"}),
+}
+
+
+def synthetic_reading_ctx() -> ReadingCtx:
+    """Scope-M 的构造论域 —— **深拷贝**，免得调用方改坏共享常量。"""
+    return ReadingCtx(value_of=dict(_A4_SYNTH_VALUES),
+                      cover_of=dict(_A4_SYNTH_COVERS))
+
+
+def _match_h(f: Callable, sf: Callable, ctx: ReadingCtx) -> str | None:
+    """构造论域上逐个登记 `H` 试：哪个让 `f ≡ H∘摘要`（⇒ f 由摘要决定）。"""
+    universe = sorted(ctx.value_of)
+    subsets = [frozenset(c)
+               for k in range(2, len(universe) + 1)
+               for c in itertools.combinations(universe, k)]
+    for hname, h in H_FUNCS.items():
+        if all(_close(f(S, ctx), h(sf(S, ctx))) for S in subsets):
+            return hname
+    return None
+
+
+def scope_m_reading(f: Callable, sf: Callable) -> dict[str, Any]:
+    """**函数级**（语料无关）：这个读数在构造论域上能被 `摘要` 决定吗？
+
+    返回 `{determined, pair, H, subsets, note}`。`note` 是给人读的一行。
+
+    ⚠️ 这不是「在语料上搜见证」—— 语料一个节点都没进来。holistic 是**读数**
+       的性质（Gray 等 1997 的三分法），该由读数自己回答；旧实现拿语料上的
+       搜索结果判它 ⇒ 摘要单射的论域上恒红（openalex × `sequence`）。
+
+    ⚠️ 边界（如实记）：构造论域对当前注册表六个读数**够用** —— 三个「被决定」
+       的在此一对都找不出（且 `H` 点名了恒等式），三个「不被决定」的各有一个
+       当场见证（见域的定义）。**将来**若注册一个「在此域上碰巧恒定、别处不然」
+       的读数，这条判据会误判 ⇒ 新增读数时必须回来重审这个域。
+    """
+    ctx = synthetic_reading_ctx()
+    d = decide_digest_witness(f, sf, ctx)
+    if d["found"]:
+        A, B = d["pair"]
+        return {
+            "determined": False, "pair": d["pair"], "H": None, "subsets": d["subsets"],
+            "note": (f"函数级：构造论域上枚举 {d['subsets']} 个子集，当场找到见证 "
+                     f"A={sorted(A)} B={sorted(B)}（`摘要` 同为 {sf(A, ctx)}，"
+                     f"读数 {f(A, ctx)} ≠ {f(B, ctx)}）⇒ 这个摘要**分不开**"
+                     f"所有论域"),
+        }
+    hname = _match_h(f, sf, ctx)
+    return {
+        "determined": True, "pair": None, "H": hname, "subsets": d["subsets"],
+        "note": (f"函数级：构造论域上穷举 {d['subsets']} 个子集、**0 对**同摘要异读数"
+                 f" ⇒ 该论域上 `读数` 与 `摘要` 恒定一致"
+                 + (f"（== `H={hname}`）" if hname else "")),
+    }
 
 def judge_reading(
     name: str, category: str, decl: dict[str, Any],
@@ -787,28 +933,54 @@ def judge_reading(
             return False, (f"`{name}` 声称 holistic，却没附可用的**见证摘要**"
                            f"（{sname!r}；只有 {sorted(SUMMARIES)}）")
         sf = SUMMARIES[str(sname)]
-        # ★ 见证有**两种**给法（2026-10-10）：
-        #     构造法 `{摘要, 构造}`  —— **与语料无关**，`§A4` 当场在语料上搜一对
-        #     显式   `{摘要, A, B}` —— 人挑的一对，**绑语料**（换语料必须重挑）
+        # ── ① **函数级**（语料无关）────────────────────────────────────────
+        #    holistic 是**读数**的性质 ⇒ 先在构造论域上判它与摘要的关系。
+        #    这一步的结论与当前语料**无关** —— 所以它**不该**由「当前语料上
+        #    搜不到见证」来红（2026-10-13 修；旧实现的恒红就在这儿）。
+        sm = scope_m_reading(f, sf)
+        if sm["determined"]:
+            hint = (f" —— 它**就是** `摘要` 经 `H={sm['H']}` 算出来的，"
+                    f"该往 `algebraic` 挑（不是 holistic）"
+                    if sm["H"] else "")
+            return False, (f"`{name}` 声称 holistic，但这个读数**本就被 "
+                           f"`{sname}` 决定**（{sm['note']}）⇒ 「无常数额摘要」"
+                           f"在**函数级**上就不成立 —— 与这份语料无关{hint}")
+        # ── ② **语料级**（本论域）──────────────────────────────────────────
+        #    见证有**两种**给法（2026-10-10）：
+        #      构造法 `{摘要, 构造}` —— 与语料无关，`§A4` 当场在语料上判一对
+        #      显式   `{摘要, A, B}` —— 人挑的一对，绑语料（换语料必须重挑）
         builder = w.get("构造")
+        d: dict[str, Any] | None = None
         if builder is not None:
             if builder not in WITNESS_BUILDERS:
                 return False, (f"`{name}` 的见证构造法 {builder!r} 不在注册表里"
                                f"（只有 {sorted(WITNESS_BUILDERS)}）")
-            found = WITNESS_BUILDERS[str(builder)](f, sf, ctx)
-            if found is None:
-                return False, (
-                    f"见证**搜不到**：这份语料上没有任何一对方向集合，`{sname}` 相同"
-                    f"而读数不同（搜到 4 元为止）⇒ 「holistic」**没有支撑** —— "
-                    f"要么补一个显式见证（`A` / `B`），要么把类别降成 `algebraic`"
-                    f"（设计稿 §10 停止条件 2）")
-            A, B = found
+            d = decide_digest_witness(f, sf, ctx)
+            if d["found"]:
+                A, B = d["pair"]
+            else:
+                A = B = None
         else:
             A = frozenset(w.get("A") or ())
             B = frozenset(w.get("B") or ())
             if not A or not B:
                 return False, (f"`{name}` 声称 holistic，却既没给**构造法**（`构造`）"
                                f"也没给见证的**两组方向**（`A` / `B`）")
+        if A is None:
+            # 函数级有支撑，而这份语料给不出语料级见证 ⇒ 按口径分别报。
+            # ⚠️ 两种都**不是红**：函数级已过；语料级「0 对」是论域的性质，
+            #    「超预算」是**没判** —— 拿它们当红，就是 openalex 那条恒红。
+            n = len(ctx.value_of)
+            if d["mode"] == "exhaustive":
+                return True, (
+                    f"{sm['note']}；语料级：本论域 {n} 个方向，穷举 {d['subsets']} "
+                    f"个子集（2..{n} 元、{d['buckets']} 桶）、**0 对**同摘要异读数 "
+                    f"⇒ 这份语料上 `{sname}` 对读数是**单射**的 ⇒ 「搜不到」是"
+                    f"**论域的性质**，不是声称不成立")
+            return True, (
+                f"{sm['note']}；语料级**未判**：本论域 {n} 个方向 ⇒ 2^{n} 个子集"
+                f"超出穷举预算 {WITNESS_ENUM_BUDGET} ⇒ 构造法只搜到 4 元为止、"
+                f"无见证 ⇒ 按**函数级**结论判过，语料级证据未取得（如实披露）")
         unknown = sorted((A | B) - set(ctx.value_of))[:3]
         if unknown:
             return False, f"见证里的方向不在 `universe` 里：{unknown}"
@@ -823,8 +995,8 @@ def judge_reading(
             return False, (f"见证**不成立**：`{sname}` 相同（{sa}）而读数**也相同**"
                            f"（{fa}）⇒ 这个摘要**够用** ⇒ 「holistic」没有支撑")
         how = (f"构造法 `{builder}` 当场搜到" if builder is not None else "声明的显式一对")
-        return True, (f"见证成立（{how}）：A={sorted(A)} B={sorted(B)}；"
-                      f"`{sname}` 两边都是 {sa}，而读数 {fa} ≠ {fb} "
+        return True, (f"{sm['note']}；语料级：见证成立（{how}）：A={sorted(A)} "
+                      f"B={sorted(B)}；`{sname}` 两边都是 {sa}，而读数 {fa} ≠ {fb} "
                       f"⇒ 定长摘要分不开它们 ⇒ 「无常数额摘要」有支撑")
 
     return False, f"未知类别 {category!r}（只认 distributive / algebraic / holistic）"
@@ -1562,19 +1734,54 @@ def _a4_parts() -> tuple[dict[frozenset[str], tuple[frozenset[str], ...]], Readi
     return parts, ctx
 
 
-#: `(声明, 手推的答案)` —— `want` 是**手推**出来的，不是跑出来抄的。
-_A4_CASES: list[tuple[dict[str, Any], bool]] = [
-    ({"名": "计数", "类别": "distributive", "G": "取和"}, True),
-    ({"名": "最大", "类别": "distributive", "G": "取最大"}, True),
-    ({"名": "平均", "类别": "algebraic", "摘要": "计数与和", "H": "和除计数"}, True),
+def _a4_inj_parts() -> tuple[dict[frozenset[str], tuple[frozenset[str], ...]], ReadingCtx]:
+    """「摘要**单射**」的论域 —— 值取 2 的幂。
+
+    任两个不同子集的和都不同（二进制唯一）⇒ `(计数, 和)` 对**任何**读数都单射
+    ⇒ 这里**搜不到**任何 holistic 见证 —— 正是 openalex × `sequence`（9 个方向、
+    穷举 512 个子集、0 对）的**微型复现**。旧实现在这里判红；新实现按两级口径
+    判：函数级有支撑 ⇒ 过 + 披露「论域的性质」。
+    """
+    values = {"p1": 1.0, "p2": 2.0, "p4": 4.0, "p8": 8.0, "p16": 16.0}
+    covers = {d: frozenset({d, "z"}) for d in values}
+    ctx = ReadingCtx(value_of=values, cover_of=covers)
+    block = frozenset(values)
+    parts = {block: (frozenset({"p1", "p2", "p4"}), frozenset({"p8", "p16"}))}
+    return parts, ctx
+
+
+def a4_inj_ctx() -> ReadingCtx:
+    """`_a4_inj_parts()` 的**只取 ctx** 版 —— 已知答案对照直接调 `judge_reading`。"""
+    return _a4_inj_parts()[1]
+
+
+#: `(声明, 域, 手推的答案)` —— `want` 是**手推**出来的，不是跑出来抄的。
+#: 域：`prod` = `_A4_VALUES` 那张表；`inj` = `_a4_inj_parts()`（摘要单射）。
+_A4_CASES: list[tuple[dict[str, Any], str, bool]] = [
+    ({"名": "计数", "类别": "distributive", "G": "取和"}, "prod", True),
+    ({"名": "最大", "类别": "distributive", "G": "取最大"}, "prod", True),
+    ({"名": "平均", "类别": "algebraic", "摘要": "计数与和", "H": "和除计数"}, "prod", True),
     # ↓ 这两条是**红的对照**：「类别说错了」与「指不到实现」各一例。
-    ({"名": "中位数", "类别": "distributive", "G": "取平均"}, False),
-    ({"名": "不存在的读数", "类别": "distributive", "G": "取和"}, False),
-    # ↓ holistic 的两条路：见证成立 ⇒ 过；见证不成立（A / B 读数相同）⇒ 红。
+    ({"名": "中位数", "类别": "distributive", "G": "取平均"}, "prod", False),
+    ({"名": "不存在的读数", "类别": "distributive", "G": "取和"}, "prod", False),
+    # ↓ holistic **函数级有支撑**（构造论域上见证存在）⇒ 过
     ({"名": "中位数", "类别": "holistic", "摘要": "计数与和",
-      "见证": {"摘要": "计数与和", "A": ["a", "b", "c"], "B": ["a", "d", "e"]}}, True),
+      "见证": {"摘要": "计数与和", "A": ["a", "b", "c"], "B": ["a", "d", "e"]}}, "prod", True),
+    # ↓ 同一个见证换成一个集合：摘要相同、读数**也**相同 ⇒ 证不了什么 ⇒ 红
     ({"名": "中位数", "类别": "holistic", "摘要": "计数与和",
-      "见证": {"摘要": "计数与和", "A": ["a", "b", "c"], "B": ["b", "a", "c"]}}, False),
+      "见证": {"摘要": "计数与和", "A": ["a", "b", "c"], "B": ["b", "a", "c"]}}, "prod", False),
+    # ↓ holistic **函数级被反驳**：读数本就被摘要决定 ⇒ 红（与语料无关）。
+    #   故意放在 `inj` 域（那是「语料级搜不到」的论域）—— 旧实现只会在那里
+    #   因为搜不到而红；新实现必须在**任何**论域上都红。
+    ({"名": "平均", "类别": "holistic", "摘要": "计数与和",
+      "见证": {"摘要": "计数与和", "构造": "同摘要异读数"}}, "inj", False),
+    ({"名": "计数", "类别": "holistic", "摘要": "计数与和",
+      "见证": {"摘要": "计数与和", "构造": "同摘要异读数"}}, "inj", False),
+    # ↓ 摘要单射的论域（openalex 恒红的微型复现）：函数级有支撑 ⇒ **过**
+    ({"名": "中位数", "类别": "holistic", "摘要": "计数与和",
+      "见证": {"摘要": "计数与和", "构造": "同摘要异读数"}}, "inj", True),
+    ({"名": "覆盖计数", "类别": "holistic", "摘要": "计数与和",
+      "见证": {"摘要": "计数与和", "构造": "同摘要异读数"}}, "inj", True),
 ]
 
 
@@ -1591,19 +1798,33 @@ def a4_known_answer() -> list[str]:
                             摘要都是 `(3, 8)`，中位数 2 ≠ 3    ⇒ 过
         同一个见证换成 `{a,b,c}` vs `{b,a,c}`：
                             摘要相同、读数**也**相同 ⇒ 证明不了什么 ⇒ 红
+
+    **函数级**（2026-10-13 新增；构造论域 `_A4_SYNTH_VALUES` 六个值）：
+
+        `中位数`    `{s1,s2,s3}={1,2,6}` vs `{s1,s4,s5}={1,3,5}`：
+                    摘要同为 `(3,9)`，中位数 2 ≠ 3            ⇒ 不被摘要决定
+        `覆盖计数`  `{s1,s3}` vs `{s2,s5}`：摘要同为 `(2,7)`，
+                    覆盖 `{a..f}`=6 ≠ `{a..e}`=5             ⇒ 不被摘要决定
+        `平均`      == `H=和除计数`（57 个子集逐一对上）      ⇒ **被决定** ⇒ 红
+        `计数`      == `H=取第一项`                           ⇒ **被决定** ⇒ 红
+
+    **语料级**（`inj` 域，五个 2 的幂）：任意两个不同子集的和都不同
+        ⇒ `(计数,和)` 单射 ⇒ 0 对 ⇒ 中位数 / 覆盖计数 holistic **过**
+        （旧实现在此判红 —— openalex 恒红的微型复现）。
     """
-    parts, ctx = _a4_parts()
     fails: list[str] = []
-    for decl, want in _A4_CASES:
+    for decl, dom, want in _A4_CASES:
+        parts, ctx = _a4_inj_parts() if dom == "inj" else _a4_parts()
         got, why = judge_reading(str(decl["名"]), str(decl["类别"]), decl, parts, ctx)
         if got is not want:
-            fails.append(f"{decl['名']}/{decl['类别']}：期望 {'过' if want else '红'}，"
+            fails.append(f"{decl['名']}/{decl['类别']}@{dom}：期望 {'过' if want else '红'}，"
                          f"实测 {'过' if got else '红'} —— {why}")
     # ★ 还有两条**跳过**（设计稿 §9）：没有下层、以及一条读数都没声明。
     #   跳过**不是过** —— 这里用 `Tri` 直接比，比布尔更严。
+    parts, ctx = _a4_parts()
     rep = Report(plugin="(合成)")
     a4_category({frozenset({"a"}): (frozenset({"a"}),)}, ctx,
-                [d for d, _ in _A4_CASES], rep)
+                [d for d, _, _ in _A4_CASES], rep)
     if _result(rep, "A4") is not Tri.UNEXPANDED:
         fails.append(f"全是叶 ⇒ `§A4` 该跳过，实测 {_result(rep, 'A4')}")
     rep = Report(plugin="(合成)")

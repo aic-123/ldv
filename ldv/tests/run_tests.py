@@ -1230,7 +1230,7 @@ def test_semantic_guard() -> None:
 
            过      两个子把标签切干净（父 `p:2 q:2` ⇒ 子 `p:2` / `q:2`）
            红      11 层单链，每层成员集与标签都相同 ⇒ 连续 11 段空转 ≥ N
-           跳过    `judged=False`（非标签轴）
+           跳过    `prof=None` + `judged=False`（非标签轴 ⇒ **不计不印**）
 
     手推依据写在 `ldv/checks/refinement.py` 的 `b20_known_answer` 那一段。
 
@@ -1241,7 +1241,7 @@ def test_semantic_guard() -> None:
 
     fails = b20_known_answer()
     ok("★★ [E] `B20` 合成对照：过 / 红 / 跳过 **三态各一例**"
-       "（标签分开了 ⇒ 过；连续 N 层不分开 ⇒ 红；非标签轴 ⇒ 跳过）",
+       "（标签分开了 ⇒ 过；连续 N 层不分开 ⇒ 红；非标签轴 ⇒ 跳过**且不印数**）",
        not fails, "；".join(fails) or "三态全对")
 
 
@@ -4223,14 +4223,15 @@ def test_view_oracles() -> None:
     而且它们各自的**失效形态**都长得像正常：
 
         `§A3` 的多项式 oracle 若与 `_refine` 分岔 ⇒ 「视图最粗」会在全量上**报错或漏判**
-        `§A4` 的见证构造若搜不到 ⇒ 「holistic」**没有支撑**，而它只差一句话
+        `§A4` 的两个 scope（函数级 / 语料级）若混成一条 ⇒ 摘要单射的论域上**恒红**
+               （函数级在构造论域上判，语料级按穷举 / 预算分别报）
 
     ⚠️ **本测试全程用合成图**（不依赖语料大小）⇒ 换语料不会让它静默失效。
     """
     import random
 
     from ldv.checks.abstraction import (
-        WITNESS_BUILDERS, SUMMARIES, ReadingCtx, judge_reading,
+        WITNESS_BUILDERS, SUMMARIES, ReadingCtx, a4_inj_ctx, judge_reading,
         witness_same_digest_diff_reading,
     )
     from ldv.core.views import (
@@ -4308,18 +4309,52 @@ def test_view_oracles() -> None:
        and f_med(w1[0], ctx) != f_med(w1[1], ctx),
        f"{w1}")
 
-    # ── ④ 搜不到时 `§A4` **判红**（不是跳过）────────────────────────────
-    #    造一个**搜不到**的语料：所有值相同 ⇒ 任何子集的摘要相同 ⇒ 读数也相同
+    # ── ④ `§A4` 的两级证据（2026-10-13 重写）────────────────────────────────
+    #    旧 ④：「语料上搜不到 ⇒ 红」。真因：那等于用**语料**判**函数级**的声称
+    #    ⇒ 摘要单射的论域上恒红（openalex × `sequence`：9 方向、穷举 512 子集、
+    #    0 对 —— 见证**不存在**，不是没搜到；两条出路还都堵死 ⇒ 分类学空洞）。
+    #    现在：函数级在**构造论域**上判（与语料无关），语料级按穷举/预算分别报。
+    inj_ctx = a4_inj_ctx()
+    _hol = lambda nm: {"名": nm, "类别": "holistic", "摘要": "计数与和",
+                       "见证": {"摘要": "计数与和", "构造": "同摘要异读数"}}
+    ok("④ ★★ [O] holistic 的**函数级**门：读数本就被 `摘要` 决定 ⇒ 红，"
+       "**与语料无关** —— `平均` == `H=和除计数`、`计数` == `H=取第一项`"
+       "（构造论域 57 个子集逐一对上）⇒ 这两条在**任何**语料上都红",
+       judge_reading("平均", "holistic", _hol("平均"), {}, inj_ctx)[0] is False
+       and judge_reading("计数", "holistic", _hol("计数"), {}, inj_ctx)[0] is False,
+       f"平均：{judge_reading('平均', 'holistic', _hol('平均'), {}, inj_ctx)[1][:100]}")
+
+    # ── ④b 摘要**单射**的论域：函数级有支撑 ⇒ **过**（旧实现在此判红）────────
+    #    值取 2 的幂 ⇒ 子集和唯一 ⇒ `(计数,和)` 对任何读数都单射 ⇒ 搜不到**任何**
+    #    见证。这正是 openalex 恒红的微型复现：判据必须分清「论域的性质」与
+    #    「声称不成立」，否则每个可用声明在这类论域上都是错的。
+    ok("④ ★★ [O] 摘要单射的论域上，函数级有支撑的 holistic **过**（旧实现判红）"
+       "—— openalex × `sequence`（512 子集、0 对）恒红的**微型复现**；"
+       "「搜不到」是**论域的性质**，不是声称不成立，且行内要**披露**这一点",
+       judge_reading("中位数", "holistic", _hol("中位数"), {}, inj_ctx)[0] is True
+       and "论域的性质" in judge_reading(
+           "中位数", "holistic", _hol("中位数"), {}, inj_ctx)[1],
+       f"中位数：{judge_reading('中位数', 'holistic', _hol('中位数'), {}, inj_ctx)[1][:120]}")
+
+    # ── ④c 全同值语料：读数恒为常数 ⇒ 语料级 0 对，仍按函数级**过** ───────────
     flat = ReadingCtx(value_of={d: 1.0 for d in "abcd"},
                       cover_of={d: frozenset({d}) for d in "abcd"})
-    ok("④ ★ [O] 搜不到见证时 `§A4` **判红**（不是跳过）—— 「声称 holistic 却拿不出支撑」"
-       "必须是一条红，否则那条声称**永远不用被兑现**",
-       WITNESS_BUILDERS["同摘要异读数"](lambda S, c: float(len(S)), sf, flat) is None
-       and judge_reading("计数", "holistic",
-                         {"名": "计数", "类别": "holistic",
-                          "见证": {"摘要": "计数与和", "构造": "同摘要异读数"}},
-                         {}, flat)[0] is False,
-       f"{judge_reading('计数', 'holistic', {'名': '计数', '类别': 'holistic', '见证': {'摘要': '计数与和', '构造': '同摘要异读数'}}, {}, flat)[1][:80]}")
+    ok("④ [O] 全同值语料（每个读数都是常数）上 holistic 仍按**函数级**过 —— "
+       "语料级 0 对是语料的性质；旧实现在这里判红，于是「拿不出支撑」"
+       "与「语料太齐」分不开",
+       judge_reading("中位数", "holistic", _hol("中位数"), {}, flat)[0] is True,
+       f"中位数：{judge_reading('中位数', 'holistic', _hol('中位数'), {}, flat)[1][:100]}")
+
+    # ── ④d 超预算 ⇒ 过 + 「语料级未判」：不拿有界搜索的失败冒充判定 ──────────
+    big_ctx = ReadingCtx(
+        value_of={f"q{i}": float(1 << i) for i in range(20)},
+        cover_of={f"q{i}": frozenset({f"q{i}", "z"}) for i in range(20)})
+    ok("④ [O] 2^|U| 超出穷举预算 ⇒ 过 + 「语料级**未判**」—— "
+       "不拿有界搜索（k≤4）的失败当判定（`suffices=False` 的口径落到行上）",
+       judge_reading("中位数", "holistic", _hol("中位数"), {}, big_ctx)[0] is True
+       and "未判" in judge_reading(
+           "中位数", "holistic", _hol("中位数"), {}, big_ctx)[1],
+       f"中位数：{judge_reading('中位数', 'holistic', _hol('中位数'), {}, big_ctx)[1][:120]}")
 
     # ── ⑤ 构造法名字写错 ⇒ 红（声明指不到实现）──────────────────────────
     ok("⑤ [O] 见证构造法**不在注册表里** ⇒ 红（「声明写错了」与「还没写」是两件事）",
@@ -4979,8 +5014,32 @@ def test_views() -> None:
        f"没掐={a1_known_answer(False)}、掐了={a1_known_answer(True)}")
     a4_fails = a4_known_answer()
     ok("★★ [E] `§A4` 合成对照：三类各一例 + 见证成立/不成立各一例 + "
-       "「指不到实现」一例 + 两条跳过 —— 共 9 条**手推**答案",
+       "「指不到实现」一例 + **函数级被反驳**两条（平均 / 计数 holistic ⇒ 红）"
+       "+ **摘要单注射域**两条（中位数 / 覆盖计数 ⇒ 过）+ 两条跳过 "
+       "—— 共 13 条**手推**答案",
        not a4_fails, "；".join(a4_fails))
+    # ③ 反向：把**函数级门短路**（恒报「不被决定」）⇒ `平均` / `计数` 两条
+    #    必须由红变绿 —— 否则那条红来自别处（比如语料搜索碰巧搜不到），
+    #    而不是函数级门。openalex 恒红的成因正是把后者当成了前者。
+    from ldv.checks import abstraction as _abs_a4
+
+    _orig_sm = _abs_a4.scope_m_reading
+
+    def _no_scope_m(f, sf):
+        return {"determined": False, "pair": None, "H": None, "subsets": 0,
+                "note": "（函数级门被短路）"}
+
+    try:
+        _abs_a4.scope_m_reading = _no_scope_m
+        _broken_sm = a4_known_answer()
+    finally:
+        _abs_a4.scope_m_reading = _orig_sm
+    ok("★ [E] 反向：把**函数级门短路** ⇒ 合成对照必须报 FAIL"
+       "（`平均` / `计数` 两条 holistic 由**红变绿**）—— 证明那条红是函数级门给的，"
+       "不是「语料搜索碰巧搜不到」",
+       any("平均/holistic" in f for f in _broken_sm)
+       and any("计数/holistic" in f for f in _broken_sm),
+       "；".join(_broken_sm)[:200] or "短路后对照全对 —— 函数级门是摆设")
     ok("★★ [E] `§A5` 合成对照**两类各一条**（滞留 / 根覆盖之外）："
        "独立重算不成立 ⇒ 红（成立 ⇒ 绿）。"
        "⚠️ 缺一类就会重犯「只验一类」那个错 —— 2026-10-12 查出的真缺陷",

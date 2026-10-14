@@ -386,11 +386,15 @@ def run_one(which: str, loaded, probes: bool = True) -> Report:
     # ⚠️ 判据只在**标签轴**上落（`label_bearing`，由语料决定）：
     #   `reach` / `sequence` 的 payload 与标签无关 ⇒ 只报不判（报「未展开」）。
     labs = labels(nodes)
-    ref = refinement_profile(kernel, labs)
+    # ⚠️ `label_bearing` **先算**（2026-10-13）：不是标签轴 ⇒ 语义增益**没有内容**
+    #    ⇒ **不算**。旧代码无条件 `refinement_profile(...)`（openalex × `sequence`
+    #    实测 3906 次展开、2569 次空转），再往读数行印对本方向无意义的数字 ——
+    #    白烧 CPU，还与 v0.1.18 `judged` 修掉的形状同族。
     # ⚠️ `label_bearing` **只算一次**，读数行与判据共用 —— 否则「读数行说判了」
     #    与「判据说跳过了」有可能分岔，而分岔的两行**各自看着都对**
     #    （`§K4` 单一真相源的同一条道理）。
     _bearing = label_bearing(which, nodes)
+    ref = refinement_profile(kernel, labs) if _bearing else None
     rep.note(render_refinement(ref, which, judged=_bearing))
     b20_semantic_refinement(ref, rep, judged=_bearing)
 
