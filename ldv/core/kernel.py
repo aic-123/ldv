@@ -834,11 +834,26 @@ class Kernel:
 
     # --- 遍历循环（§R0–§R5） ----------------------------------------------
 
-    def query(self, q: Query) -> QueryResult:
+    def query(self, q: Query, *, skip: frozenset[str] = frozenset()) -> QueryResult:
         """§R0–§R5。
 
         `R2` 的**三分支不许合并** —— 所以这里把三态分别收进三个元组，
         最后按 `R3` 的三去向给一个 `Tri`。**没有**任何一步把「未展开」当「否」。
+
+        ## ★ `skip` —— 「这一支**已经知道说否**」的入口（`§R1` 的一处省，不改结论）
+
+        调用方（检索器层 `步骤 T3`）把「**已经知道说否**」的方向 did 传进来。依据是
+        `§I2` 的一条推论（证明在 `ldv/checks/retrieval.py` 的模块 docstring 里）：
+
+            `覆盖(合并(S)) ⊇ ⋃_{d∈S} 覆盖(d)`  ⇒  合并说「否」 ⇒ **每个成员都说「否」**
+
+        ⇒ 这些方向**照 `Tri.NO` 分支处理**（记 `no`、**不展开**），只**省掉** `call_hit`。
+
+        ⚠️ **它不违反 `§C1` ①「不自立终止依据」**：说「否」的是**插件**（`§K8` 允许的那
+           一侧：`否` 必须是**保证**不满足），不是内核自己立的依据；而且 `Tri.NO` 分支
+           **本来就不展开** ⇒ 那些方向的子树本来就不跑。省掉的只是重复判定。
+        ⚠️ **传错了会造假阴**（`§K8` 禁止的那一侧）—— 所以这一条由判据 `T1` 守：
+           候选集必须与**全扫**逐项相同。
         """
         yes: list[str] = []
         no: list[str] = []
@@ -853,6 +868,12 @@ class Kernel:
             self._last_frontier = tuple(d.did for d in frontier)   # 内省用，**不是**展示
             nxt: list[Direction] = []
             for d in frontier:
+                if d.did in skip:                               # ★ 块级预筛：已知说「否」
+                    # 与下面 `Tri.NO` 分支**逐字同款**（记 `no`、不展开）——
+                    # 唯一的差别是不调 `call_hit`。见 `query` 的 docstring。
+                    no.append(d.did)
+                    trace.append((d.did, str(Tri.NO)))
+                    continue
                 v = call_hit(self.plugin, d, q)                 # §R1
                 trace.append((d.did, str(v)))
                 if v is Tri.YES:                                # §R2 分支一

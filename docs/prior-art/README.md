@@ -72,6 +72,13 @@
 | `dmlgp.pdf` / `.txt` | **Gottesbüren / Heuer / Sanders / Schulz / Seemaier, *Deep Multilevel Graph Partitioning*, arXiv:2105.02022v1**（19 页） | 同上 §1：★ **`k` 大时 MGP 的失效点**（论文 p.3）：「The coarsening phase of MGP usually stops when kC nodes are left.」+「For large k, this breaks the assumption that the coarsest graph is small.」+「Thus, really expensive initial partitioners are infeasible at this level.」；★ **停止阈值的另一种形态**（p.2）：「Once the number of nodes of a coarse graph falls below a certain threshold or the coarsening algorithm converges, initial partitioning computes a partition of the coarsest graph.」；★★ **块数与全局 `k` 解耦**（p.4，不变式 `(P)`）：「A coarse graph Gi is partitioned into ki := ceil2(|Vi|/C) blocks (bounded by 2 and k).」 |
 | `reslimit.pdf` / `.txt` | **Fortunato & Barthélemy, *Resolution limit in community detection*, arXiv:physics/0607100v2**（8 页） | 同上 §1.4：★★ **单一全局质量函数内蕴一个尺度**（摘要）：「We find that modularity optimization may fail to identify modules smaller than a scale which depends on the total number L of links of the network and on the degree of interconnectedness of the modules, even in cases where modules are unambiguously defined.」；★ **结论节（p.7）**：「by enforcing modularity optimization, the possible partitions of the system are explored at a coarse level, so that modules smaller than some scale may not be resolved」；★★ **出路是「局部再精化」**（同页）：「constraining modularity optimization on each single module」+「a procedure which is not safe but may give useful indications」；★ 结论句：「have an intrinsic resolution limit calls for a new theoretical framework which focuses on a local definition of community, regardless of its size」 |
 | `lsmsurvey.pdf` / `.txt` | **Luo & Carey, *LSM-based Storage Techniques: A Survey*, arXiv:1812.07527**（25 页） | 同上 §1.1 / §1.3：★ **层数由「尺寸比」决定**（论文 p.6）：「Let the size ratio of a given LSM-tree be T, and suppose the LSM-tree contains L levels.」+「In practice, for a stable LSM-tree where the volume of inserts equals the volume of deletes, L remains static.」+「Thus, the number of levels for N entries can be approximated as」（`L = ⌈logT(N/(B·P·T/(T+1)))⌉`，抽文里分式压成一行）；★ **层数封顶的「兜底配置」形态**（p.3）：「If level L is already the configured maximum level, then the resulting component remains at level L.」；★ **阈值不是单向的**（p.6）：写代价 `O(T·L/B)`（leveling）对 `O(L/B)`（tiering）⇒ `T` 更大 ⇒ 层数更少但**每层级联更多** |
+| `snow08.pdf` / `.txt` | **Snow / O'Connor / Jurafsky / Ng, *Cheap and fast—but is it good? Evaluating non-expert annotations for natural language tasks*, EMNLP 2008, pp.254–263**（10 页） | `docs/外生声明标准.md` §B4：非专家不是问题，**没量的非专家**才是 —— 结论逐字「we require an average of 4 non-expert labels per item in order to emulate expert-level label quality」（论文 p.262） |
+| `artstein08.pdf` / `.txt` | **Artstein & Poesio, *Inter-Coder Agreement for Computational Linguistics*, Computational Linguistics 34(4):555–596, 2008**（42 页） | 同上 §B1：一致性**阈值区间**的成熟口径（论文 p.576）—— Carletta 1996 转引 Krippendorff 1980 的 `K>.8` / `0.67<K<.8`、Krippendorff 2004a「Even a cutoff point ofα = .800 ... is a pretty low standard」、Neuendorf 2002 的 `.90/.80` 三档 |
+| `sakai_slides.pdf` / `.txt` | **Sakai, *Metrics, Statistics, Tests*（IR 度量讲义，48 页幻灯片）** | 同上 §A1 / §D1：★ **仪器的低保准**（脚注 17，PDF p.37）「is a function of some gold standard data and a system output – and nothing else」+「is not a metric」；★ 摘要（PDF p.1）「statistical signiﬁcance does not necessarily imply practical signiﬁcance, and statistical insigniﬁcance does not necessarily imply practical insigniﬁcance」 |
+| `yang12.pdf` / `.txt` | **Schaer, *Better Than Their Reputation? On the Reliability of Relevance Assessments with Students*, arXiv:1206.4802**（12 页，ECIR 2012 的作者预印本） | 同上 §B3：**反例** —— 180+ 名学生的相关性判定实测 Kappa 0.37 / α 0.15；作者处置「We suggest not to work with unfiltered results or to clearly document the disagreement rates」 |
+| `moffat18.pdf` / `.txt` | **Moffat / Scholer / Yang, *Estimating Measurement Uncertainty for Information Retrieval Effectiveness Metrics*, ACM JDIQ, 2018**（22 页） | 同上 §C2 / §D1：★ **未池化文档被默认当成不相关**（PDF p.1）：「Non-pooled documents – ones that did not appear in the top-d sets of any of the contributing systems – are then deemed to be non-relevant ...」；★ 报告义务（PDF p.20）：「we recommend as an absolute minimum that authors be encouraged to report the fraction of unjudged documents among the top k documents for each topic ...」；★ p 值不反映不确定度（PDF p.20） |
+| `moffat16.pdf` / `.txt` | **Moffat / Scholer / Yang, *The Effect of Pooling and Evaluation Depth on IR Metrics*, Information Retrieval Journal 19(1), 2016**（32 页） | 同上 §C4：**指标选择本身会改结论**（PDF p.1）—— 召回类指标在系统排名上比效用类指标「more volatile」 ⇒ 主指标必须事前定死 |
+| `sigir20bccm.pdf` / `.txt` | **Benham / Carterette / Culpepper / Moffat, *Bayesian Inferential Risk Evaluation On Multiple IR Systems*, SIGIR 2020**（10 页） | 同上 §A2 / §D1：★ **带偏基线**（PDF p.1）：「online evaluation cannot be used to evaluate alternative rankers, as click-logs may be biased to the original ranker」；★ 功效不足/过度是 IR 论文的常见错误（同页）：「Sakai[31] analyzed several mistakes commonly made in IR papers, including under- and over- powered significance tests」 |
 | `extract.py` | 抽 PDF 正文（带页码标记） | 见下 |
 
 ⚠️ **`sources/` 那一批（第二份语料）里的一篇，本轮首次进仓库文档引用**：
@@ -218,6 +225,36 @@ head -c 5 betree.pdf                                 # 必须是 %PDF- —— �
 python extract.py betree.pdf betree.txt
 ```
 
+第八批七篇（2026-10-15 取，为 `docs/外生声明标准.md` 的引文找前作）—— 已落盘，
+**核验时读本地副本，不必再联网**：
+
+| 文件 | URL | 备注 |
+|---|---|---|
+| `snow08.pdf` | `https://aclanthology.org/D08-1027.pdf` | 直接 200；EMNLP'08，论文页 254–263 |
+| `artstein08.pdf` | `https://aclanthology.org/J08-4004.pdf` | 直接 200；CL 34(4)，论文页 555–596 |
+| `sakai_slides.pdf` | `https://www.ccs.neu.edu/home/vip/teach/IRcourse/5_eval_userstudy/other_notes/T.Sakai_metrics.pdf` | 直接 200；48 页幻灯片（**讲义，不是论文** —— 引用时写「讲义 PDF 页」） |
+| `yang12.pdf` | `https://arxiv.org/pdf/1206.4802` | 直接 200；**作者预印本**，无印刷页码 ⇒ 引 PDF 页 |
+| `moffat18.pdf` | `https://people.eng.unimelb.edu.au/ammoffat/abstracts/jdiq18msy.pdf` | 直接 200；⚠️ **页眉是 ACM 模板占位**（每页都印 `Vol. 1, No. 1, Article 1`）⇒ **没有可靠印刷页码**，引 PDF 页 |
+| `moffat16.pdf` | `https://people.eng.unimelb.edu.au/ammoffat/abstracts/lmc16irj.pdf` | 直接 200；副本自带页脚 1–32 = PDF 页 |
+| `sigir20bccm.pdf` | `https://people.eng.unimelb.edu.au/ammoffat/abstracts/sigir20bccm.pdf` | 直接 200；SIGIR'20 新版式**无印刷页码** ⇒ 引 PDF 页 |
+
+⚠️ **同一趟试过而没取到的**（都记在这里，免得下一位重跑）：
+Voorhees 2000（IPM 36(5)）、Buckley & Voorhees 2000（SIGIR'00）、
+Zobel 1998（SIGIR'98）、Sakai 2017/2018（Springer）、
+Nosek 等 2018（PNAS / PMC）、Saracevic 2007 Part III（UNC 镜像）
+—— 全部**闭源或本机被挡**，已在 `docs/外生声明标准.md` §8 列为**未核**，
+**不作为任何结论的依据**。
+
+⚠️ **第八批的抽取瑕疵登记**（`verify_quotes` 的 `norm()` 能吃掉它们，
+   所以「全覆盖」**不**等于「逐字」—— 这几条是人工看过的）：
+
+| 源 | 瑕疵 | 处置 |
+|---|---|---|
+| `sakai_slides` | 脚注 17 里 `is not a metric` 被抽成 `is not am e t r i c`（**字母间距**）；全文用 `ﬁ` 连字 | 引文**按读法写**；字母间距那条靠 `norm()` 去空格对上 ⇒ 已在 `outputs/_verify_exonorm_cites.py` 的两层归一化里分层报数 |
+| `snow08` | 结论里 `average` / `emulate` 被断行连字符拆开（`av-erage` / `em-ulate`） | 同上，靠 `norm()` 的 `-\s+` 还原 |
+| `yang12` | `disagreement` 断成 `disa-` + `greement` | 同上 |
+| `moffat18` / `moffat16` | 双栏抽文会串行；图表的坐标轴数字被抽成孤立数字行 | 引文避开跨栏处；孤立数字**不是页码**（`outputs/_page_offset.py` 就是这么被误导的） |
+
 ## 复现
 
 ### ★ 调用式（**跑校验必须连调用式一起抄** —— 只抄数字，范围就漂了）
@@ -251,6 +288,11 @@ PYTHONIOENCODING=utf-8 PYTHONUTF8=1 "$V" repo/docs/prior-art/verify_quotes.py \
 不是 3 条不同的引文。）
 
 ⚠️ **这句话的范围恰好等于上面那条调用式。** 两处**不在**范围里，写在这里：
+
+**2026-10-15 实测（最近一次）：引文 307 条｜全覆盖 307｜有缺口 0。**
+（2026-10-10 是 272 条；同日 278；**+29 全部来自新文档 `docs/外生声明标准.md`** ——
+13 条引文在正文与 §7 核验表各出现一次 = 26，另 3 条是表内/内联的同一片段重复引用。
+**每一句都经 `outputs/_verify_exonorm_cites.py` 逐字回源核过**（13/13 硬命中 + 页码相符）。）
 
 | 不在范围里的 | 为什么 | 实测 |
 |---|---|---|
@@ -308,6 +350,13 @@ io.open("spgist.txt", "w", encoding="utf-8").write(s)
     Gottesbüren 2023 PDF 页 − 1 = 论文页（PDF p.1 是题名页；PDF p.4 页眉 `3`）
     Fortunato 2006   PDF 页 = 论文页（PDF p.7 页首 `7`）
     Luo 2025 (LSM)   PDF 页 = 论文页（PDF p.6 页眉 `6 Chen Luo, Michael J. Carey`）
+    Snow 2008        PDF 页 + 253 = 论文页（PDF p.1 页脚 254 … PDF p.10 页脚 263）
+    Artstein 2008    PDF 页 + 554 = 论文页（PDF p.2 页脚 556 … PDF p.42 页脚 596；PDF p.1 是题名页 = 555）
+    Schaer 2012      **arXiv 预印本**，无印刷页码 ⇒ 引 PDF 页
+    Sakai 讲义       **幻灯片**，无印刷页码 ⇒ 引「讲义 PDF 页」
+    Moffat 2018      **无可靠印刷页码**（页眉是 ACM 模板占位）⇒ 引 PDF 页
+    Moffat 2016      副本页脚 = PDF 页 ⇒ 引 PDF 页
+    Benham 2020      SIGIR'20 新版式无印刷页码 ⇒ 引 PDF 页
 
 引用时一律写**论文页**，括号里给 PDF 页。
 

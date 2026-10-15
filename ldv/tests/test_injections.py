@@ -2061,8 +2061,13 @@ def inj_t1(nodes, edges, injected: bool) -> Report:
     from ldv.checks.retrieval import RETRIEVER_CODES, _early_stop, t1_equivalence
 
     kernel, _plugin, full, _spec = _retrieve_on_synth()
+    # ★ 2026-10-14 起 `retrieve` **自己就会跳过「后看」的块** ⇒ 在 `_LosingMerge`
+    #   （**破坏 `§I2`**）上，`full.candidates` **已经是漏的** ⇒ 拿它当基线**不绿**。
+    #   ⇒ 基线改成「**没有跳过**」的形态（全扫）—— 那才是「正确实现」该有的样子。
+    #   ⚠️ 而**生产路径上**这个红已经真实存在（`known_answer_controls` 就在验它）。
+    whole = replace(full, candidates=frozenset(kernel.query(full.query).yes))
     rep = Report(plugin="(检索)", expects=RETRIEVER_CODES)
-    t1_equivalence(rep, _early_stop(full) if injected else full, kernel)
+    t1_equivalence(rep, _early_stop(whole) if injected else whole, kernel)
     return rep
 
 

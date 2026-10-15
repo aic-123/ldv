@@ -130,6 +130,7 @@ def synthetic_feedback(kernel: Any, query: Any, result: Any) -> dict[str, float]
 
 
 def run_query(kernel: Any, query: Any, *,
+              skip: frozenset[str] = frozenset(),
               feedback: dict[str, float] | None = None,
               auto_feedback: bool = True) -> FlowA:
     """流程 A。R0–R4 由内核做；**R5 的关键是「展示」与「遍历」分开**。
@@ -142,8 +143,12 @@ def run_query(kernel: Any, query: Any, *,
         R5b 逐条 `record_usage` —— 倾向权重由内核按**展示位次**填
 
     `feedback` 给的是「这次交互有没有用」；**缺席 = 没看见 = 不产记录**。
+
+    `skip` 是**透传给内核**的「已知说否的方向」集合（`Kernel.query` 的 docstring 有全解）
+    —— 检索器层的 `步骤 T3` 用它跳过「后看」的块。⚠️ **它不改结论**：那些方向照 `Tri.NO`
+      分支处理；判据 `T1` 守「候选集必须与全扫逐项相同」。
     """
-    result = kernel.query(query)                      # R0–R4
+    result = kernel.query(query, skip=skip)           # R0–R4
     shown = kernel.show(result.yes)                   # R5a ★ 展示
     fb = (dict(feedback) if feedback is not None
           else (synthetic_feedback(kernel, query, result) if auto_feedback else {}))

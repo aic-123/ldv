@@ -5495,28 +5495,44 @@ def test_retriever() -> None:
     # ── ③ `T1` 的夹具前提（真插件上后看的块里不可能有真命中） ──────────────
     #   ⚠️ 对**整个查询集**验，并单列一条「至少有一条查询真有后看的块」——
     #      只看代表查询的话，它的 `late` 恰好为空 ⇒ 下面那条**恒真**（假绿）。
-    late_runs = [(q, rr) for q, _k, rr in runs if rr.late]
-    bad_late = [(q.label, sorted(rr.candidates & frozenset().union(*rr.late)))
-                for q, rr in late_runs if rr.candidates & frozenset().union(*rr.late)]
+    late_runs = [(q, kk, rr) for q, kk, rr in runs if rr.late]
+    # ⚠️ **必须用「全扫」来量**（`kk.query(rr.query)`）—— 2026-10-14 起 `rr.candidates`
+    #    **已经跳过了「后看」的块** ⇒ 拿它去量 `candidates & late` **恒为空**（恒真）。
+    #    这正是本仓最忌的形状：改动让一条原本有内容的断言**变成恒真**，而输出无一处不对。
+    bad_late = [(q.label, sorted(frozenset(kk.query(rr.query).yes)
+                                 & frozenset().union(*rr.late)))
+                for q, kk, rr in late_runs
+                if frozenset(kk.query(rr.query).yes) & frozenset().union(*rr.late)]
     ok("★★ [T] `T1` 的**夹具前提**：真插件上「后看」的块里**一个真命中都没有**"
        "（`§I2` 契约的推论）—— ⇒ `T1` 在真插件上**永远绿**，注入夹具只能**手造**。"
-       "⚠️ 这条如果哪天红了，说明 `§I2` 被破坏了（那是 `B2` 的事）",
+       "⚠️ 这条如果哪天红了，说明 `§I2` 被破坏了（那是 `B2` 的事）。"
+       "★ 量它的必须是**全扫**（`kernel.query(q)`）—— `rr.candidates` 现在跳过了后看块",
        not bad_late,
        f"有后看块的查询 {len(late_runs)}/{len(runs)} 条、里面命中 {bad_late[:3]}")
     ok("★★ [T] 上一条的**夹具前提**：至少有一条查询**真的有「后看」的块**"
        "—— 否则上面那条是**恒真**的（「空转与通过长得一模一样」）",
        bool(late_runs), f"{len(late_runs)}/{len(runs)} 条查询有后看的块")
 
-    # ── ④ `§C1` 默认值：**不早停** ────────────────────────────────────────
+    # ── ④ `§C1` 默认值：**不早停**（口径 2026-10-14 更新） ────────────────
+    #
+    # ⚠️ 原来是 `ran == all_blocks` —— 那一条是**构造性恒真**（`scanned` 由 `order`
+    #    构造 ⇒ 必然相等），自认「不是守卫」。2026-10-14 起 `步骤 T3` 会**跳过
+    #    「后看」的块** ⇒ 那个等式**不再成立**，「少扫」本身**成了读数**。
+    #    ⇒ 这一段改成守**新**的性质（两条，各自能红）。
     ran = set(map(frozenset, r.scanned))
     all_blocks = set(map(frozenset, r.first + r.late))
-    ok("★★ [T] `步骤 T3` **不自立终止依据**（`基线§4 T3 ①`）—— ⚠️ 这一条本身是"
-       "**构造性恒真**（`scanned` 由 `order` 构造 ⇒ `ran == all_blocks` 必然）⇒ "
-       "它**不是守卫**，只是钉住「将来别往循环体里偷塞早停」；"
-       "★ 本层**访问量零变化**（顺序无处可达 —— `基线§4 T3 ②`，`§13 13.0`）；"
-       "★★ **收益 = 影响**（`基线§14.6`）—— 那个 0 是**读数**，不是收益",
-       ran == all_blocks and ran == set(map(frozenset, r.recognition.q)),
-       f"跑过 {len(ran)} / 块 {len(all_blocks)} / |Q| {len(r.recognition.q)}")
+    ok("★★ [T] `步骤 T3` 跳过的**只是**「后看」的块 —— 「先看」的块**一块都不许少**"
+       "（`基线§4 T3 ①` 在 2026-10-14 之后**长这样**：允许省的是**插件已经说过「否」**"
+       "的那些块，**不许**省任何「先看」的块；而「省了却不许丢候选」由 `T1` 守）",
+       ran == set(map(frozenset, r.first)),
+       f"跑过 {len(ran)} / 先看 {len(r.first)} / 后看 {len(r.late)} / 块 {len(all_blocks)}")
+    ok("★★ [T] **「少扫」真的发生了** —— 至少有一条查询的「后看」非空，而它跑过的块"
+       "**严格少于**全部块。⚠️ 这条是**真守卫**：`skip` 没接线时它会红"
+       "（否则上面那条 `ran == first` 恒真、什么都守不住）"
+       "★ 访问量（读数）见 `基线§13 13.0` / `§14.6`（「少扫」是一种影响）",
+       any(len(rr.scanned) < len(rr.first) + len(rr.late) for _q, _k, rr in runs),
+       f"有后看块的查询 {len(late_runs)}/{len(runs)} 条、"
+       f"代表查询跑过 {len(r.scanned)}/{len(r.first) + len(r.late)} 块")
 
     # ── ⑥ 标题只有一个来源：真跑时印的 == 跳过时印的 ──────────────────────
     skip_rep = Report(plugin="(检索)", expects=RETRIEVER_CODES)
