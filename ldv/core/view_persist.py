@@ -62,7 +62,7 @@ __all__ = [
     "ViewPersistenceError",
     "default_path",
     "commit",
-    "PLACE_ATTEMPTS",
+    "RETRY_ATTEMPTS",
     "to_dict",
     "from_dict",
     "read",
@@ -108,12 +108,54 @@ def default_path(nodes_dir: Any) -> Any:
     return _P(__file__).resolve().parent.parent / "checks" / VIEWS_NAME
 
 
-#: 「同卷改名被拒」时的重试次数与间隔。
-#: ⚠️ 这两个数**不是拍脑袋**：实测（`outputs/_probe_win_replace_vs_read.py`，win32）
-#:   写者 400 次 `os.replace` 有 **350 次**被拒 —— 因为读者持着目标句柄。
-#:   50 × 2 ms = 100 ms 的上限，比「读者读一份 2 MB 存档」的持有时间长两个量级。
-PLACE_ATTEMPTS = 50
-PLACE_PAUSE = 0.002
+#: 落盘 / 读盘遇到「**别人正拿着这个文件**」时的重试参数。
+#:
+#: ⚠️ 这三个数**不是拍脑袋**，三条实测与两条成熟做法都写在下面：
+#:
+#:   `outputs/_probe_win_replace_vs_read.py`（win32）
+#:       写者 400 次 `os.replace` ⇒ **350 次被拒**（读者持着目标句柄）
+#:       读者 44812 次读        ⇒ 42 次被拒，**撕裂 0 次**
+#:   `outputs/_probe_persist_reader_side.py`（win32，**加了写者重试之后**）
+#:       写者 300 次 `commit`   ⇒ 失败 **0**（299/300 需要重试 >1 次，**max 15**）
+#:       读者 7266 次 `read`    ⇒ **18 次被拒** ⇒ 光有写者重试**只补了一半**
+#:
+#:   成熟做法（两条独立来源，结论一致 —— **有界重试 + 指数退避 + 只重试瞬时错误**）：
+#:       Los Lab「Windows 原子文件发布」：8 次，退避 1·2·4·8·16·16·16 ms（上限 63 ms）
+#:       Codex 同步工具：20 × 100 ms（上限 ~2 s），`winerror ∈ {5, 32}` 才重试，其余立刻抛
+#:
+#: ⇒ 取 **12 次 × 1 ms 起、翻倍、封顶 16 ms**（预算 ≈ **143 ms**）——
+#:   比上面两家都宽一点：本仓库的读者要读的是一份**完整存档**（不是一行），持柄时间更长。
+RETRY_ATTEMPTS = 12
+RETRY_BASE_PAUSE = 0.001
+RETRY_MAX_PAUSE = 0.016
+
+
+def _transient(e: OSError) -> bool:
+    """这个 `OSError` 是「**别人正拿着这个文件**」那种**瞬时**冲突吗？
+
+    ⚠️ **只在 Windows 上判为真**，理由是一条实测事实：
+
+        POSIX 的 `os.replace` 是**原子改名**，读者持的是**旧 inode**
+        ⇒ 它**不会**因为「有人读」而失败；那里的 `PermissionError` 是
+        **真·权限不足**（目录只读之类）⇒ 重试只会白等 143 ms。
+
+        Windows 的 `MoveFileEx(MOVEFILE_REPLACE_EXISTING)` 要求对**目标**有删除权，
+        而 Python 的 `open()` 走 CRT、**不含 `FILE_SHARE_DELETE`**
+        ⇒ 有人读着就拒（实测 350/400）。
+
+    ⚠️ Windows 上**不**细看 `winerror`：CPython 把 `ERROR_ACCESS_DENIED`(5) /
+        `ERROR_SHARING_VIOLATION`(32) / `ERROR_LOCK_VIOLATION`(33) **都**映射成 `EACCES`
+        ⇒ 到了 Python 这一层已经分不开；而成熟做法（Codex）对这三个也都是重试。
+        ⚠️ 代价如实记着：Windows 上「真的没有权限」也会被重试满 143 ms 才抛。
+    """
+    import os
+
+    return os.name == "nt" and isinstance(e, PermissionError)
+
+
+def _pause(attempt: int) -> float:
+    """第 `attempt` 次失败之后等多久 —— **指数退避**，封顶 `RETRY_MAX_PAUSE`。"""
+    return min(RETRY_BASE_PAUSE * (1 << (attempt - 1)), RETRY_MAX_PAUSE)
 
 
 def commit(p: Any, body: str) -> tuple[Any, int]:
@@ -175,14 +217,14 @@ def commit(p: Any, body: str) -> tuple[Any, int]:
             fh.write(body)
             fh.flush()
             os.fsync(fh.fileno())          # 先落盘，再改名 —— 顺序反了等于没做
-        for attempt in range(1, PLACE_ATTEMPTS + 1):
+        for attempt in range(1, RETRY_ATTEMPTS + 1):
             try:
                 os.replace(tmp, target)    # ★ 原子：同卷改名
                 break
-            except PermissionError:        # ← Windows：目标正被别的进程持着
-                if attempt == PLACE_ATTEMPTS:
+            except PermissionError as e:   # ← Windows：目标正被别的进程持着
+                if not _transient(e) or attempt == RETRY_ATTEMPTS:
                     raise
-                time.sleep(PLACE_PAUSE)
+                time.sleep(_pause(attempt))
     except BaseException:
         try:
             os.unlink(tmp)                 # 目标**没被动过**，这里只收拾临时文件
@@ -220,13 +262,30 @@ def read(path: Any) -> dict:
 
         文件不在 ⇒ `{}`（与 `abstraction.load_spec_file` 同一个约定：
                      「还没写」与「写坏了」必须分得开 —— 后者由 JSON 解析抛异常）
+
+    ★ 2026-10-16：**读者侧也要重试** —— 这是「读者 vs 替换」的另一半。
+      ⚠️ 为什么不能只靠写者重试：`os.replace` 在 Windows 上把目标短暂置成
+      **「删除挂起」**，那一瞬间别的进程 `open` 它拿到的是 `ERROR_ACCESS_DENIED`
+      —— **写者重试救不了读者**（实测读者 7266 次里 18 次被拒，而同期写者 300/300 成功）。
+
+    ⚠️ **重试的边界**：只重试 `PermissionError`（且只在 Windows 上）。
+      `json.JSONDecodeError` **不重试** —— 「读的时候被撞了」与「盘上那份本来就是坏的」
+      必须分得开，后者重试多少次都一样。
     """
+    import time
     from pathlib import Path as _P
 
     p = _P(path)
-    if not p.is_file():
-        return {}
-    return json.loads(p.read_text(encoding="utf-8"))
+    for attempt in range(1, RETRY_ATTEMPTS + 1):
+        try:
+            if not p.is_file():
+                return {}
+            return json.loads(p.read_text(encoding="utf-8"))
+        except PermissionError as e:
+            if not _transient(e) or attempt == RETRY_ATTEMPTS:
+                raise
+            time.sleep(_pause(attempt))
+    raise AssertionError("unreachable")          # pragma: no cover
 
 
 class ViewPersistenceError(RuntimeError):

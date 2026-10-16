@@ -3689,13 +3689,109 @@ def test_persist_atomic() -> None:
                   for pr in procs)
     for pr in procs:
         pr.wait()
+    # ⚠️ **写者 stderr 是读数、不是判据** —— 在「读者疯狂抢」的对抗性负载下，
+    #    写者耗尽重试预算是**对**的行为（设计上就是「永久占用 ⇒ 如实抛」）。
+    #    ⇒ 写者侧那条性质由 **⑤ / ⑥ 用确定性探针**判（持句柄 / 不持句柄），
+    #      这一条只管**不撕裂**。
     ok("★★ [阶段2] ② 两个子进程并发落盘 ⇒ 读者**只**见到完整份（没撕裂）",
-       err.strip() == "" and bad == 0 and n_read >= 20 and seen == {"A", "B"},
+       bad == 0 and n_read >= 20 and seen == {"A", "B"},
        f"读 {n_read} 次｜撕裂 {bad} 次（样本字节数 {bad_sample}）"
        f"｜见到的整份 {sorted(seen) or '（一次都没读到）'}"
-       f"｜子进程 stderr {err.strip()[:60] or '（空）'}"
+       f"｜写者 stderr {err.strip()[:60] or '（空）'}"
        + ("—— **读到的不是完整份**" if bad else "")
        + ("—— **读得太少，这条判据空转**" if n_read < 20 else ""))
+
+    # ── ⑤ 写者重试**接上了**（**确定性**）─────────────────────────────────────
+    #    ⚠️ 同进程持一个读句柄就**必然**挡住 `os.replace`（Windows 的共享模型是
+    #       **按句柄**算的，不是按进程）⇒ 另起一个线程在 50 ms 后释放 ⇒
+    #       `commit` **必须**重试后成功，而且**尝试次数 > 1**。
+    #       这一条**不靠抢窗口**，是 ② 那条概率判据的确定性替代。
+    import threading
+
+    hold = open(target, "rb")
+    threading.Thread(target=lambda: (time.sleep(0.05), hold.close()),
+                     daemon=True).start()
+    t0 = time.time()
+    try:
+        _tgt, n_try = vp.commit(target, bodies["A"])
+        c5 = n_try > 1 and target.read_text(encoding="utf-8") == bodies["A"]
+        c5d = f"尝试 **{n_try}** 次｜{time.time() - t0:.3f}s｜落盘内容 {'对' if c5 else '**错**'}"
+    except Exception as e:                                   # noqa: BLE001
+        c5, c5d = False, f"**抛了** {type(e).__name__} —— 句柄 50 ms 后已释放，不该抛"
+    ok("★★ [阶段2] ⑤ 持句柄 50 ms 后释放 ⇒ `commit` **重试后成功**（确定性）",
+       c5, c5d)
+
+    # ── ⑥ 重试**有界**：一直持句柄 ⇒ 如实抛，且**不许无限等**（**确定性**）─────
+    hold2 = open(target, "rb")
+    t0 = time.time()
+    try:
+        vp.commit(target, bodies["B"])
+        c6, c6d = False, "**没抛** —— 句柄一直持着，它不该成功"
+    except PermissionError as e:                             # noqa: BLE001
+        dt = time.time() - t0
+        c6 = dt <= 1.0
+        c6d = (f"抛 `PermissionError`｜{dt:.3f}s"
+               + ("（有界 ✓）" if c6 else "（**超过 1 s —— 重试没界**）"))
+    except Exception as e:                                   # noqa: BLE001
+        c6, c6d = False, f"抛的是 {type(e).__name__}（该抛 `PermissionError`）"
+    finally:
+        hold2.close()
+    ok("★★ [阶段2] ⑥ 一直持句柄 ⇒ 如实抛 `PermissionError`，且**耗时 ≤ 1 s**（有界）",
+       c6, c6d)
+
+    # ── ③ 读者侧：写者循环替换、读者循环读 —— 读者**不许**抛 ────────────────
+    #    ⚠️ 成色同 ②：靠**窗口够大**才必现（**不是**确定性判据）。
+    #      反向对照下实测 **18/7266 被拒** ⇒ 这条会红。
+    READER = """import sys, json, time
+sys.path.insert(0, sys.argv[1])
+from ldv.core import view_persist as vp
+target, secs = sys.argv[2], float(sys.argv[3])
+n, bad = 0, []
+t0 = time.time()
+while time.time() - t0 < secs:
+    try:
+        vp.read(target)
+        n += 1
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        bad.append(type(e).__name__)
+print("@@R" + json.dumps({"reads": n, "n_err": len(bad), "kinds": bad[:3]}))
+"""
+    rp = root / "_reader.py"
+    rp.write_text(READER, encoding="utf-8")
+    wp = subprocess.Popen(
+        [sys.executable, "-c", CHILD, str(repo), str(target),
+         str(root / "body_B.txt"), "300"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    rr = subprocess.Popen([sys.executable, str(rp), str(repo), str(target), "8"],
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    o_r, e_r = rr.communicate(timeout=120)
+    wp.wait()
+    rerr = (e_r or b"").decode("utf-8", "replace")
+    rrep = {}
+    for line in (o_r or b"").decode("utf-8", "replace").splitlines():
+        if line.startswith("@@R"):
+            rrep = json.loads(line[3:])
+    ok("★★ [阶段2] ③ 写者循环替换时，读者 `read()` **一次都不许抛**",
+       rerr.strip() == "" and rrep.get("n_err") == 0 and rrep.get("reads", 0) >= 200,
+       f"读了 {rrep.get('reads', 0)} 次｜异常 {rrep.get('n_err', '?')} 次"
+       f"{rrep.get('kinds') or ''}"
+       + ("—— **读者侧没补**" if rrep.get("n_err") else "")
+       + ("—— **读得太少，这条判据空转**" if rrep.get("reads", 0) < 200 else "")
+       + (f"｜stderr {rerr.strip()[:60]}" if rerr.strip() else ""))
+
+    # ── ④ 重试的**边界**（**确定性**，手推已知答案）─────────────────────────
+    #    ⚠️ 这条钉的是「**只重试该重试的**」：POSIX 上一律不重试（那里没有
+    #       「读者挡住替换」这回事，`PermissionError` 就是真没权限）；
+    #       Windows 上只重试 `PermissionError`，别的 `OSError` 立刻抛。
+    ok("★ [阶段2] ④ 重试边界：只在 Windows 上、只对 `PermissionError` 重试",
+       (vp._transient(PermissionError()) is (os.name == "nt"))
+       and (vp._transient(FileNotFoundError()) is False)
+       and (vp._transient(IsADirectoryError()) is False)
+       and (vp._transient(OSError()) is False),
+       f"os.name={os.name!r}｜PermissionError ⇒ {vp._transient(PermissionError())}"
+       f"｜FileNotFoundError ⇒ {vp._transient(FileNotFoundError())}")
 
 # ═══ 并发（§10.2 D 的 P8） ═══════════════════════════════════════════════════
 #
