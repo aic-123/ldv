@@ -4361,6 +4361,179 @@ def test_lock_scope() -> None:
        f"default rc={_rc_default} / 收到 {_seen_without_flag}")
 
 
+
+
+def test_service_shell() -> None:
+    """★ 服务壳四阶段判据的**快版**（`docs/服务化设计.md` §3 阶段 3.1–3.4）。
+
+    分工：本函数是**判据**（进退出码、快、CI 可跑）；`outputs/_probe_service_*.py`
+    是**证据**（慢而全：真实大语料、完整留档）。⚠️ 两者互不替代 —— 本函数
+    不重跑 112 秒的慢任务（排队用 **TaskTable 状态机单测**，等价用小租户）。
+
+    ⚠️ 运维判据全程只碰**临时挂载的副本**（`_data/_rt-ops-*`），`pypi-deps`
+    原件**只读不碰** —— run_tests 绝不能获得破坏语料库的能力。
+    """
+    import shutil
+    import tempfile
+    import threading
+    import time
+    import urllib.error
+    import urllib.request
+    from http.server import ThreadingHTTPServer
+
+    import serve  # 仓库根已在 sys.path（本文件顶部）
+    from ldv.cli import run_one
+
+    # ── 小租户（毫秒级）+ 不完整对照 ──────────────────────────────────
+    TENANTS = ("pypi-deps", "arxiv-taxonomy", "gh-langs", "crossref-journals")
+    INCOMPLETE = "cora-labeled"            # 缺 view_spec.json ⇒ 应 404
+    DATA = Path(__file__).resolve().parents[2] / "_data"
+
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), serve.Handler)   # ephemeral 端口
+    port = srv.server_address[1]
+    base = f"http://127.0.0.1:{port}"
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+
+    def _get(path: str) -> tuple[int, str]:
+        try:
+            with urllib.request.urlopen(base + path, timeout=30) as r:
+                return r.status, r.read().decode("utf-8")
+        except urllib.error.HTTPError as e:
+            return e.code, e.read().decode("utf-8")
+
+    # ── ⑧a 等价（3.1）：壳响应 == CLI 基线逐字相同 ────────────────────
+    #    ⚠️ 恒真陷阱照旧（绕掉壳直接返回 CLI 输出也相同）⇒ 不能单独证明接上了，
+    #    靠下面 ⑨ 隔离 + 反向对照一起才不空转。
+    orig_env = os.environ.get("LDV_CORPUS")
+    try:
+        for tenant in TENANTS:
+            st, body = _get(f"/{tenant}/run?plugin=keyset&only=a")
+            os.environ["LDV_CORPUS"] = tenant          # CLI 基线走 find_corpus
+            _ok_cli, text_cli = run_one("keyset", 12, "a")
+            ok(f"★ [服务壳] ⑧a 等价：{tenant} 壳响应 == CLI 逐字",
+               st == 200 and body == text_cli,
+               f"壳 {len(body.encode())}B vs CLI {len(text_cli.encode())}B")
+    finally:
+        if orig_env is None:
+            os.environ.pop("LDV_CORPUS", None)
+        else:
+            os.environ["LDV_CORPUS"] = orig_env
+
+    # ── ⑨ 隔离（3.2）：不完整 / 不存在 ⇒ 404 ──────────────────────────
+    st_bad, _ = _get(f"/{INCOMPLETE}/run?plugin=keyset")
+    ok(f"★ [服务壳] ⑨ 隔离：缺 view_spec 的 {INCOMPLETE} ⇒ 404",
+       st_bad == 404, f"实得 {st_bad}")
+    st_miss, _ = _get("/_no-such-tenant_/run?plugin=keyset")
+    ok("★ [服务壳] ⑨ 隔离：不存在的租户 ⇒ 404", st_miss == 404, f"实得 {st_miss}")
+
+    # ── ⑩⑪⑫ 排队（3.3）：TaskTable 状态机单测（**不**走 HTTP）─────────
+    #    ⚠️ 不用真慢任务（ext-coauth 全流程 112 s，会把 run_tests 拖到分钟级）——
+    #    假任务 fn=sleep 测的正是**排队逻辑本身**；`run_one` 的执行等价已由 ⑧a 覆盖。
+    tbl = serve.TaskTable(max_per_tenant=1)
+    slow = lambda: (time.sleep(0.25), (200, "done"))[1]   # noqa: E731
+    tid_a = tbl.submit("租户A", slow)
+    t0 = time.time()
+    while tbl.status(tid_a)[1]["status"] != "running" and time.time() - t0 < 5:
+        time.sleep(0.01)
+    st_a = tbl.status(tid_a)[1]["status"]
+    ok("★ [服务壳] ⑩ 排队：A 进入 running（状态机放行）", st_a == "running",
+       f"状态 {st_a}")
+    tid_b = tbl.submit("租户A", slow)
+    st_b = tbl.status(tid_b)[1]["status"]
+    ok("★ [服务壳] ⑩ 排队：同租户 B 在 A running 期间 ⇒ queued",
+       st_b == "queued", f"B 状态 {st_b}（running ⇒ 限流没生效）")
+    tid_c = tbl.submit("租户B", slow)
+    t0 = time.time()
+    st_c = tbl.status(tid_c)[1]["status"]
+    while st_c != "running" and time.time() - t0 < 5:
+        time.sleep(0.01)
+        st_c = tbl.status(tid_c)[1]["status"]
+    ok("★ [服务壳] ⑪ 跨租户不受影响：只换租户名 ⇒ C 立刻 running",
+       st_c == "running", f"C 状态 {st_c}")
+    t0 = time.time()
+    st_b2 = tbl.status(tid_b)[1]["status"]
+    while st_b2 in ("queued", "running") and time.time() - t0 < 10:
+        time.sleep(0.02)
+        st_b2 = tbl.status(tid_b)[1]["status"]
+    ok("★ [服务壳] ⑫ FIFO：A 完成后排队的 B 自动开始并 done",
+       st_b2 == "done", f"B 状态 {st_b2}")
+    t0 = time.time()
+    st_c2 = tbl.status(tid_c)[1]["status"]
+    while st_c2 in ("queued", "running") and time.time() - t0 < 10:
+        time.sleep(0.02)
+        st_c2 = tbl.status(tid_c)[1]["status"]
+    ok("★ [服务壳] ⑫ FIFO：C 最终 done", st_c2 == "done", f"C 状态 {st_c2}")
+
+    # ── ⑬⑭⑮ 运维（3.4）：全程在**临时挂载副本**上，原件只读 ───────────
+    #    ⚠️ 不碰 `pypi-deps` 原件 —— run_tests 崩在中途 ⇒ 语料库留在坏状态，不可接受。
+    tmp = Path(tempfile.mkdtemp(prefix="ldv-rt-"))
+    mounted = DATA / "_rt-ops-pypi-deps"
+    shutil.rmtree(mounted, ignore_errors=True)     # 前置清理（上趟异常退出的残留）
+    shutil.copytree(DATA / "pypi-deps", mounted)
+    try:
+        # ⑮ 备份即语料：副本本身当租户跑（= 备份可独立使用）
+        st_m, out_m = _get("/_rt-ops-pypi-deps/run?plugin=keyset")
+        st_orig, out_orig = _get("/pypi-deps/run?plugin=keyset")
+        ok("★ [服务壳] ⑮ 备份即语料：副本当租户跑 == 原件输出",
+           st_m == 200 and out_m == out_orig,
+           f"副本 {len(out_m.encode())}B vs 原件 {len(out_orig.encode())}B")
+
+        # ⑭ 破坏可检：删副本的一个节点 ⇒ 输出必然变
+        #    ⚠️ detail 打**首差位置** —— 实测「装进 48 项 → 47 项」字节数碰巧相同，
+        #    只报字节数会让「变了」与「相同」长得一样（3.4 踩到的读数陷阱）。
+        nodes_dir = mounted / "nodes"
+        victim = sorted(nodes_dir.glob("*.md"))[0]
+        victim_text = victim.read_text(encoding="utf-8")
+        victim.unlink()
+        try:
+            st_bk, out_bk = _get("/_rt-ops-pypi-deps/run?plugin=keyset")
+            i_diff = next((j for j, (x, y) in enumerate(zip(out_orig, out_bk))
+                           if x != y), None)
+            ok("★ [服务壳] ⑭ 破坏可检：删节点后未恢复 ⇒ 输出变（首差位置在）",
+               (st_bk != 200) or (i_diff is not None),
+               f"状态 {st_bk}｜首差 @{i_diff}"
+               + (f"：{out_orig[i_diff:i_diff+12]!r} → {out_bk[i_diff:i_diff+12]!r}"
+                  if i_diff is not None else "（500）"))
+        finally:
+            victim.write_text(victim_text, encoding="utf-8")
+
+        # ⑬ 备份-恢复往返：再删 ⇒ 从原件整目录拷回 ⇒ 逐字相同
+        victim.unlink()
+        st_broken, _ = _get("/_rt-ops-pypi-deps/run?plugin=keyset")
+        shutil.rmtree(mounted)
+        shutil.copytree(DATA / "pypi-deps", mounted)
+        st_r, out_r = _get("/_rt-ops-pypi-deps/run?plugin=keyset")
+        ok("★ [服务壳] ⑬ 备份-恢复往返：整目录拷回 ⇒ 与原件输出逐字相同",
+           st_r == 200 and out_r == out_orig,
+           f"恢复态 {len(out_r.encode())}B vs 原件 {len(out_orig.encode())}B"
+           f"（破坏态 {st_broken}）")
+        ok("★ [服务壳] ⑬ 对照：破坏态确实 ≠ 恢复态（单变量：只差是否恢复）",
+           (st_broken != 200) or (out_r == out_orig),
+           f"破坏态 {st_broken}｜恢复态与原件逐字相同 ⇒ 往返成立")
+    finally:
+        shutil.rmtree(mounted, ignore_errors=True)   # 摘掉临时租户
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    # ── 反向对照：假响应 ⇒ ⑧a 必须红（证明判据会红）──────────────────
+    #    ⚠️ patch 的必须是**服务器正在用的那个类** —— 不能 `importlib.reload`
+    #    （那会造一个新类，patch 落在新类上、服务器还用旧的 ⇒ 打不中，判据假绿）。
+    orig_run = serve.Handler._run_sync
+
+    def _fake_run(self, tenant, qs):
+        self._send(200, "假响应：不调内核")
+
+    try:
+        serve.Handler._run_sync = _fake_run
+        st_f, body_f = _get(f"/{TENANTS[0]}/run?plugin=keyset")
+        st_f2, body_f2 = _get(f"/{TENANTS[1]}/run?plugin=keyset")
+        ok("★ [服务壳] 反向对照：假响应 ⇒ 与 CLI 基线不同（⑧a 红）",
+           body_f != out_orig, f"假响应 {len(body_f.encode())}B ≠ 基线")
+        ok("★ [服务壳] 反向对照：假响应换租户**不变**（⑧b 红）",
+           body_f == body_f2, "两租户假响应相同 ⇒ 链路判据会红")
+    finally:
+        serve.Handler._run_sync = orig_run
+    srv.shutdown()
+
 def _spec_mechanical_mismatch(doc: dict, which: str, nodes, edges) -> list[str]:
     """committed 的 `view_spec.json` 里**机械那几栏**与生成器算出来的差在哪。
 
@@ -6443,6 +6616,7 @@ def main() -> int:
                test_deletion_path, test_persistence, test_persist_atomic,
                test_versioning,
                test_reusable_build, test_lock_scope,
+               test_service_shell,
                test_query_hit_items, test_spec_paths, test_maintain,
                test_view_oracles, test_influence_channels, test_views,
                test_multilevel, test_retriever, test_cli_paths,
