@@ -8,7 +8,7 @@
 > **Layer = Direction** · **Deeper = Finer**
 > 输出是**方向**，不是答案。押错了的代价是一次**漏**，而**用本身就是确认**。
 
-**当前版本 v0.1.27** ｜ [历次发布](https://github.com/aic-123/ldv/releases) ｜
+**当前版本 v0.1.28** ｜ [历次发布](https://github.com/aic-123/ldv/releases) ｜
 **零第三方**（标准库 + 纯内存）｜ [Apache-2.0](LICENSE) ｜
 家族位置：`Scaffold` → `arena` → `dce` → **`ldv`（检索方向层）**
 
