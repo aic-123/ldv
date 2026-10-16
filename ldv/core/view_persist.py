@@ -32,6 +32,21 @@
 但它同时是 `§A3` 的被判对象 —— 若读回时重算，`§A6` 就**验不到**「盘上的 `q` 是不是那个解」。
 ⇒ 落盘存 `q`，读回时**先比**（比不出来才红），再拿它去跑 `§A1`。
 「存一份再比」在这里是**判据的一部分**，不是冗余。
+
+---
+
+## ★ 跨进程落盘：**原子替换 + 重试**（2026-10-16，并发接口设计 §7 阶段 2）
+
+上面那些说的是**格式**（盘上存什么）。这一节说的是**怎么把字节放上去**。
+
+⚠️ 两件事**不是一回事**，而且**进程内的锁管不到后一件**：
+
+    进程内（`§10.2 D` 的 P8）  锥锁守的是**同一个 `Kernel` 实例**的共享状态
+    跨进程（面 B）             两个**独立进程**写同一个路径 —— 没有锁能覆盖它们
+
+⇒ 落盘走 `commit()`：**临时文件 + `os.replace`**（同卷改名 = 原子）。
+  `write()` 那一步的语义因此从「**清空再写**」变成「**要么旧整份、要么新整份**」。
+  ⚠️ 而 Windows 上「目标正被别的进程持着」会让改名被拒 ⇒ 配**重试**（实测见 `commit`）。
 """
 
 from __future__ import annotations
@@ -46,6 +61,8 @@ __all__ = [
     "FORMAT_KEY",
     "ViewPersistenceError",
     "default_path",
+    "commit",
+    "PLACE_ATTEMPTS",
     "to_dict",
     "from_dict",
     "read",
@@ -91,18 +108,104 @@ def default_path(nodes_dir: Any) -> Any:
     return _P(__file__).resolve().parent.parent / "checks" / VIEWS_NAME
 
 
+#: 「同卷改名被拒」时的重试次数与间隔。
+#: ⚠️ 这两个数**不是拍脑袋**：实测（`outputs/_probe_win_replace_vs_read.py`，win32）
+#:   写者 400 次 `os.replace` 有 **350 次**被拒 —— 因为读者持着目标句柄。
+#:   50 × 2 ms = 100 ms 的上限，比「读者读一份 2 MB 存档」的持有时间长两个量级。
+PLACE_ATTEMPTS = 50
+PLACE_PAUSE = 0.002
+
+
+def commit(p: Any, body: str) -> tuple[Any, int]:
+    """把 `body` **原子地**放到 `p` 上 —— 并发接口设计 §7 阶段 2 的落点。
+
+    返回 `(目标路径, 实际尝试次数)`。⚠️ **次数是读数**：POSIX 上恒为 **1**，
+    Windows 上会 > 1 —— 它把「这台机器上有没有并发读者」变成一个能看的数。
+
+    ## 为什么不能是 `p.write_text(body)`
+
+    `open(p, "w")` 返回的那一刻**目标路径已经被截断**（长度 0）。于是盘上
+    存在一个**确定的中间态**：`p` 既不是旧整份、也不是新整份。这个窗口里
+
+        另一个进程读   ⇒ 读到半份（JSON 解析抛，或字段缺一半）
+        写入中途失败   ⇒ 盘上**永久**停在半份（截断已经生效了）
+
+    ⇒ 这两条**不是概率问题**，是那条路径上的**必然状态**。两个进程同时落盘也归到这里
+      （「后写者覆盖前者」只是**最轻**的那一种后果）。
+
+    ## 取法：临时文件 + `os.replace`
+
+    `os.replace` 是**同一卷内**的原子改名 ⇒ 读者看到的 `p` **要么是旧整份、
+    要么是新整份**，没有第三种。⚠️ 所以临时文件必须建在**目标同目录**
+    （`dir=target.parent`）—— 跨卷时 `os.replace` 会退化成「复制 + 删」，就不再原子。
+
+    ## ⚠️ Windows 上必须重试（实测逼出来的一条）
+
+    Windows 的文件共享模型与 POSIX 不同：`MoveFileEx(MOVEFILE_REPLACE_EXISTING)`
+    要求对**目标**有删除权，而 Python 的 `open()` 走 CRT、**不含 `FILE_SHARE_DELETE`**
+    ⇒ **只要另一个进程正读着这个文件，改名就会被拒**（`PermissionError [WinError 5]`）。
+
+        实测（win32，`_probe_win_replace_vs_read.py`）：
+            写者 400 次 `os.replace`   ⇒ **350 次被拒**
+            读者 44812 次读           ⇒ 42 次被拒，**撕裂 0 次**
+        （POSIX 上不会：读者持的是**旧 inode**，改名永远成功。）
+
+    ⇒ 重试**不改变原子性**（每一次 `os.replace` 都是原子的），它只是
+      「上一次被拒了，再来一次」。**不重试**的后果是「有读者在读 = 写不进去」，
+      而那在 Windows 上是**常态**。
+
+    ## 失败时的行为（这一条**本身就是判据**）
+
+    写临时文件那一步抛（编码错 / 盘满 / 权限）⇒ 临时文件被删、`os.replace`
+    **没被调到** ⇒ `p` **原封不动**。⚠️ 这与非原子实现**正好相反**：
+    `p.write_text(body)` 在 `body` 编不出来时**也会先把 `p` 清空**。
+    """
+    from pathlib import Path as _P
+    import os
+    import tempfile
+    import time
+
+    target = _P(p)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=target.parent,
+                               prefix=target.name + ".", suffix=".tmp")
+    attempt = 0
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as fh:
+            fh.write(body)
+            fh.flush()
+            os.fsync(fh.fileno())          # 先落盘，再改名 —— 顺序反了等于没做
+        for attempt in range(1, PLACE_ATTEMPTS + 1):
+            try:
+                os.replace(tmp, target)    # ★ 原子：同卷改名
+                break
+            except PermissionError:        # ← Windows：目标正被别的进程持着
+                if attempt == PLACE_ATTEMPTS:
+                    raise
+                time.sleep(PLACE_PAUSE)
+    except BaseException:
+        try:
+            os.unlink(tmp)                 # 目标**没被动过**，这里只收拾临时文件
+        except OSError:
+            pass
+        raise
+    return target, attempt
+
+
 def write(path: Any, vs: Any) -> Any:
     """落盘。**只写权威边**（`to_dict` 的规矩），并**先过一遍读回**再返回。
 
     ⚠️ 「先读回」不是洁癖：写坏的存档与写对的存档在**只看文件存在**时长得一样。
        ⇒ 写完当场用 `from_dict` 的**构造部分**验一次结构（不重建视图，那要内核）。
+
+    ★ 2026-10-16：落盘改走 `commit()`（**原子替换 + 重试**）—— 见它的 docstring。
+      ⚠️ 这是**跨进程**那一面（面 B），与进程内的锥锁（P8）**不是一回事**。
     """
     from pathlib import Path as _P
 
     p = _P(path)
-    p.parent.mkdir(parents=True, exist_ok=True)
     body = dumps(vs)
-    p.write_text(body, encoding="utf-8")
+    commit(p, body)
     # ⚠️ 键名从 `to_dict` **一处取**（原来在这里写死了一个 `"format"` —— 而真键名是
     #    `"格式"` ⇒ 写一次就抛 `ViewPersistenceError`）。**两处各写一份就会这样。**
     back = json.loads(p.read_text(encoding="utf-8"))

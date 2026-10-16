@@ -3600,6 +3600,103 @@ def test_persistence() -> None:
               f"（{str(rt.assertions[0].detail)[:40]}…）")
 
 
+# ═══ 跨进程落盘（并发接口设计 §7 阶段 2） ═════════════════════════════════════
+#
+# ⚠️ 这一组与下面 `test_lock_scope` 守的**不是一回事**：
+#   `test_lock_scope` 守**进程内**的锥锁（`§10.2 D` 的 P8）；
+#   这一组守**面 B**（多个进程共享同一个落盘路径）—— 进程内的锁**管不到**另一个进程。
+
+def test_persist_atomic() -> None:
+    """★★ **阶段 2**：跨进程落盘 —— **不撕裂**。
+
+    两条判据，成色**不同**，如实分开写：
+
+      ① **落盘失败不留半份**（**确定性**）—— 写中途抛 ⇒ 盘上必须还是**旧整份**。
+         非原子实现（`open(p,"w")` 先截断再写）在这里**必红**：目标被清空。
+      ② **并发整份性** —— 两个**真子进程**同时写同一个路径，读者**只**见到完整份之一。
+         ⚠️ 这条**不是**确定性判据：它靠**窗口够大**（body 2 MB）才必现。
+         原子实现下它是**结构保证**（`os.replace` 是同卷改名，读者只会看到两种状态）。
+         ⇒ 它抓的是「撕裂**会**发生」，抓不到「撕裂**不会**发生」——
+           所以 ① 那一条（确定性的）才是主判据，② 是它的并发面补充。
+    """
+    import subprocess
+    import time
+
+    from ldv.core import view_persist as vp
+
+    repo = Path(__file__).resolve().parents[2]
+    root = Path(tempfile.mkdtemp(prefix="ldv-persist-atomic-"))
+    target = root / "views.json"
+
+    # ── ① 落盘失败不留半份（确定性） ────────────────────────────────────────
+    old_body = '{"格式": "ldv-views/1", "哨兵": "旧整份"}'
+    target.write_text(old_body, encoding="utf-8")
+    # 「写不进去」的 body：**孤立代理项** ⇒ UTF-8 编码抛 `UnicodeEncodeError`。
+    # ⚠️ 刻意不用「盘满 / 权限」造失败 —— 那两个要动环境；这个**当场必然抛**。
+    bad_body = '{"格式": "ldv-views/1", "哨兵": "\ud800"}'
+    raised = ""
+    try:
+        vp.commit(target, bad_body)
+    except Exception as e:                                   # noqa: BLE001
+        raised = type(e).__name__
+    after = target.read_text(encoding="utf-8")
+    ok("★★ [阶段2] ① 落盘失败 ⇒ 盘上仍是**旧整份**（不是空、不是半份）",
+       raised != "" and after == old_body,
+       f"抛 {raised or '（没抛！）'}｜盘上 {len(after)} 字节（旧整份 {len(old_body)}）"
+       + ("—— **目标被清空了**" if after == "" else ""))
+
+    # ── ② 并发整份性：两个**真子进程**同时写 ────────────────────────────────
+    CHILD = (
+        "import sys;sys.path.insert(0,sys.argv[1]);"
+        "from ldv.core import view_persist as vp;"
+        "b=open(sys.argv[3],encoding='utf-8').read();"
+        "[vp.commit(sys.argv[2],b) for _ in range(int(sys.argv[4]))]"
+    )
+    bodies = {ch: '{"格式": "' + vp.FORMAT + '", "哨兵": "' + ch * 2000000 + '"}'
+              for ch in ("A", "B")}
+    for ch, b in bodies.items():
+        (root / f"body_{ch}.txt").write_text(b, encoding="utf-8")
+    # ⚠️ **初始态必须是一份合法的整份**：① 刚把 `target` 写成 `old_body`
+    #    （完整、但**既非 A 也非 B**）⇒ 不清掉的话，② 一上来读到的那些
+    #    会被算成「撕裂」—— 那是**判据自己的毛病**，不是实现的。
+    #    （第一次跑就踩到：371 次读里 323 次「非完整份」，而子进程 stderr 是空的。）
+    target.write_text(bodies["A"], encoding="utf-8")
+    procs = [subprocess.Popen(
+        [sys.executable, "-c", CHILD, str(repo), str(target),
+         str(root / f"body_{ch}.txt"), "25"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE) for ch in ("A", "B")]
+
+    seen: set[str] = set()
+    bad_sample: list[int] = []
+    bad = n_read = 0
+    while any(pr.poll() is None for pr in procs):
+        try:
+            blob = target.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):        # 还没写出来 / 正在被换
+            time.sleep(0.001)
+            continue
+        n_read += 1
+        if blob == bodies["A"]:
+            seen.add("A")
+        elif blob == bodies["B"]:
+            seen.add("B")
+        else:
+            bad += 1
+            if len(bad_sample) < 3:          # 报**字节数**：残留与真撕裂长得不一样
+                bad_sample.append(len(blob))
+        time.sleep(0.001)                            # 给写者留出改名的窗口
+    err = "".join((pr.stderr.read() or b"").decode("utf-8", "replace")
+                  for pr in procs)
+    for pr in procs:
+        pr.wait()
+    ok("★★ [阶段2] ② 两个子进程并发落盘 ⇒ 读者**只**见到完整份（没撕裂）",
+       err.strip() == "" and bad == 0 and n_read >= 20 and seen == {"A", "B"},
+       f"读 {n_read} 次｜撕裂 {bad} 次（样本字节数 {bad_sample}）"
+       f"｜见到的整份 {sorted(seen) or '（一次都没读到）'}"
+       f"｜子进程 stderr {err.strip()[:60] or '（空）'}"
+       + ("—— **读到的不是完整份**" if bad else "")
+       + ("—— **读得太少，这条判据空转**" if n_read < 20 else ""))
+
 # ═══ 并发（§10.2 D 的 P8） ═══════════════════════════════════════════════════
 #
 # `§10.2 D` 的裁决：**锁沿路径局部化，根是公共争用点**。
@@ -6247,7 +6344,8 @@ def main() -> int:
                test_cover_leak_baseline, test_cover_oracle_transparency,
                test_b3_reduction_premise, test_reach_cache_premise,
                test_reach_cache_transparency, test_tree_premise,
-               test_deletion_path, test_persistence, test_versioning,
+               test_deletion_path, test_persistence, test_persist_atomic,
+               test_versioning,
                test_reusable_build, test_lock_scope,
                test_query_hit_items, test_spec_paths, test_maintain,
                test_view_oracles, test_influence_channels, test_views,
