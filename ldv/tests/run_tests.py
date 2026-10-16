@@ -4087,6 +4087,86 @@ def test_lock_scope() -> None:
     print(f"    · 短临界区链路：`_alloc` 进过 {a_ok} 次｜`_lk` 进过 {l_ok} 次"
           f"（对照：`_new` 绕过 `_alloc` ⇒ {a_bad}｜账本不进临界区 ⇒ {l_bad}）")
 
+    # --- ⑧ 接线：`--locked` 这条**路径**真的接上了锁（2026-10-15 补） -------------
+    #
+    # ⚠️ 判据 ⑥ 是「`LockedKernel` 与 `Kernel` **逐字相同**」——
+    #    它**证明不了「接上了」**：它**恒真**。把 `--locked` 整个忽略掉，
+    #    输出照样逐字相同 ⇒ 「接线漏了」与「接好了」**长得一模一样**。
+    #    ⇒ 接线要**两条一起**，缺一条就是本仓库最忌的那个形状：
+    #      ⑧a **等价** —— `--locked` 与不走的**追踪文本逐字相同**（三方向 + 删除）
+    #      ⑧b **链路** —— `--locked` 时内核**真的是 `LockedKernel`**，且
+    #                     `locks.taken` **真的非空**（锁被拿过）
+    #    ⚠️ **互不替代**：只有 ⑧a ⇒ 「锁没接上」照样绿；
+    #       只有 ⑧b ⇒ 「接了但改了行为」没人守。
+    from ldv import cli as _cli
+
+    # ⚠️ `_assemble` 收的是**方向名**（`keyset` / `reach` / `sequence`），
+    #    **不是** `cli` 那个 `all` —— `all` 只是 `main()` 里循环 `DIRECTIONS` 的写法。
+    _cases = (("keyset", 12, None, 12), ("reach", 7, None, 0),
+              ("sequence", 12, "r", 12), ("keyset", 12, "a", 0))
+    eq_bad: list[str] = []
+    for nm, ho, only, rm in _cases:
+        _ok1, t_plain = _cli.run_one(nm, ho, only, rm, loaded=loaded)
+        _ok2, t_lock = _cli.run_one(nm, ho, only, rm, loaded=loaded, locked=True)
+        if t_plain != t_lock:
+            eq_bad.append(f"{nm}/only={only}/ho={ho}/rm={rm}")
+    ok("★ [P8] **⑧a 接线·等价**：走 `--locked` 与不走，**追踪文本逐字相同**"
+       f"（{len(_cases)} 组：三方向 + 删除；⚠️ 这条**恒真** ⇒ 它**不能单独**证明接上了）",
+       not eq_bad, f"不同的：{eq_bad}")
+
+    k_lock, *_ = _cli._assemble("keyset", nodes, edges, 12, locked=True)
+    k_plain, *_ = _cli._assemble("keyset", nodes, edges, 12, locked=False)
+    _taken = getattr(getattr(k_lock, "locks", None), "taken", [])
+    ok("★ [P8] **⑧b 接线·链路**：`--locked` 时内核**真的是 `LockedKernel`**，"
+       "且**锁真的被拿过**（`locks.taken` 非空）",
+       isinstance(k_lock, LockedKernel) and len(_taken) > 0,
+       f"类型={type(k_lock).__name__}｜拿过 {len(_taken)} 次")
+    ok("★★ [P8] **已知答案对照**：**不走** `--locked` ⇒ 内核**不是** `LockedKernel`、"
+       "一次锁都没拿 ⇒ ⑧b 会红",
+       (not isinstance(k_plain, LockedKernel))
+       and not getattr(getattr(k_plain, "locks", None), "taken", []))
+    print(f"    · 接线：`--locked` 拿过锁 {len(_taken)} 次｜"
+          f"默认路径类型 {type(k_plain).__name__}（拿过 "
+          f"{len(getattr(getattr(k_plain, 'locks', None), 'taken', []))} 次）")
+
+    # --- ⑧c 参数：CLI 的 `--locked` 确实传到 run_one（2026-10-15 补） -----------
+    #
+    # ⑧a/⑧b 直接走 `run_one` / `_assemble`，测的是**运行链路**；
+    # 这条单独测**命令行入口有没有把开关传下去** —— 不重复构建语料。
+    from contextlib import redirect_stdout as _redirect_stdout
+    from io import StringIO as _StringIO
+
+    _orig_load, _orig_run_one = _cli.load, _cli.run_one
+    _seen_locked: list[bool] = []
+
+    def _stub_run_one(name, holdout, only, remove=0, loaded=None, locked=False):
+        _seen_locked.append(locked)
+        return True, "stubbed"
+
+    def _invoke_cli(with_flag: bool) -> tuple[int, str, list[bool]]:
+        _seen_locked.clear()
+        _out = _StringIO()
+        _argv = ["ldv.cli", "--plugin", "keyset", "a", "--holdout", "12"]
+        if with_flag:
+            _argv.append("--locked")
+        try:
+            _cli.load = lambda: loaded
+            _cli.run_one = _stub_run_one
+            with _redirect_stdout(_out):
+                _rc_cli = _cli.main(_argv)
+        finally:
+            _cli.load, _cli.run_one = _orig_load, _orig_run_one
+        return _rc_cli, _out.getvalue(), list(_seen_locked)
+
+    _rc_locked, _txt_locked, _seen_with_flag = _invoke_cli(True)
+    _rc_default, _txt_default, _seen_without_flag = _invoke_cli(False)
+    ok("★ [P8] **⑧c CLI 接线**：`--locked` 被解析并传到 run_one；默认不锁",
+       _rc_locked == 0 and _rc_default == 0
+       and "并发壳" in _txt_locked and "并发壳" not in _txt_default
+       and _seen_with_flag == [True] and _seen_without_flag == [False],
+       f"locked rc={_rc_locked} / 收到 {_seen_with_flag}｜"
+       f"default rc={_rc_default} / 收到 {_seen_without_flag}")
+
 
 def _spec_mechanical_mismatch(doc: dict, which: str, nodes, edges) -> list[str]:
     """committed 的 `view_spec.json` 里**机械那几栏**与生成器算出来的差在哪。

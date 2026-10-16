@@ -43,6 +43,7 @@ from .checks._fixtures import (
     sequences,
 )
 from .core.kernel import Kernel
+from .core.locking import LockedKernel
 from .flow import (
     insert_items,
     make_params,
@@ -65,7 +66,8 @@ INTENTS = {
 }
 
 
-def _assemble(name: str, nodes, edges, holdout: int, remove: int = 0):
+def _assemble(name: str, nodes, edges, holdout: int, remove: int = 0,
+              locked: bool = False):
     """造 `(内核, 查询集, 待插入的新项, 待删除的项 id, 覆盖 oracle)`。
 
     `holdout` 项**不放进 `build()` 的全集** —— 它们是流程 B 的「新项」。
@@ -73,6 +75,9 @@ def _assemble(name: str, nodes, edges, holdout: int, remove: int = 0):
 
     `remove` 项从**已进结构**的那些里挑（`init_items` 的尾部），
     这样删除才真的碰到结构；挑「没进结构的项」等于删空气。
+
+    `locked=True` ⇒ 内核换成 `core/locking.py` 的 **`LockedKernel`**（并发壳）。
+    ★ 它**不进构建缓存** —— 见下面那一段的理由。
     """
     ids = sorted(nodes)
     hold = set(ids[-holdout:]) if holdout > 0 else set()
@@ -117,13 +122,23 @@ def _assemble(name: str, nodes, edges, holdout: int, remove: int = 0):
         else:                                       # name == "sequence"
             plug = SequencePlugin(sequences(nodes, edges))
             root = frozenset({()})                  # 外生：空前缀覆盖一切
-        kernel = Kernel(plug, init_items)
+        kernel = (LockedKernel if locked else Kernel)(plug, init_items)
         kernel.build(root)
         for iid in sorted(init_items):              # 批建：把初始项纳入结构
             kernel.insert(iid)
         return kernel, plug
 
-    kernel, _plug = reusable_build(("assemble", name, holdout), nodes, edges, _build)
+    # ★ **锁壳不进构建缓存**（2026-10-15）：`reusable_build` 每次给一份
+    #   `copy.deepcopy`，而 `LockedKernel` 持有 `threading.Lock` / `RLock`
+    #   ⇒ **深拷贝会抛** `TypeError: cannot pickle '_thread.lock' object`。
+    #   ⇒ 这条路径**直接建**。代价可控：它是**可选入口**（默认路径不锁），
+    #      而且在随仓库那份 36 项语料上重建很便宜。
+    #   ⚠️ 这**不是**「缓存坏了」—— 是 `LockedKernel` **不可深拷贝**这条性质。
+    #      它是一条**组合性边界**，写在 `docs/并发接口设计.md` §4。
+    if locked:
+        kernel, _plug = _build()
+    else:
+        kernel, _plug = reusable_build(("assemble", name, holdout), nodes, edges, _build)
 
     new = [(i, all_items[i]) for i in sorted(hold)]
     removable = sorted(init_items)[-remove:] if remove > 0 else []
@@ -131,7 +146,7 @@ def _assemble(name: str, nodes, edges, holdout: int, remove: int = 0):
 
 
 def run_one(name: str, holdout: int, only: str | None,
-            remove: int = 0, loaded=None) -> tuple[bool, str]:
+            remove: int = 0, loaded=None, locked: bool = False) -> tuple[bool, str]:
     """跑一个方向。返回 `(护栏是否全过, 追踪文本)`。
 
     `loaded` 为 `None` 时自己 `load()`（**生产路径**：`python -m ldv.cli`）。
@@ -139,6 +154,9 @@ def run_one(name: str, holdout: int, only: str | None,
     而且不必为每条路径把语料重读一遍。
     ⚠️ 传进来的那份必须与 `load()` 同源（同一个 `LDV_CORPUS`），否则
     「判的是这一份、跑的是另一份」会**静默**成立 —— 那正是本仓库最忌的形状。
+
+    `locked=True` ⇒ 走**并发壳**（`LockedKernel`）。⚠️ **它不改输出**（`P8-5`）——
+    它是一条**可选入口**，给将来真的并发调用方用；单线程跑它只多付加解锁的代价。
     """
     if loaded is None:
         loaded = load()
@@ -146,7 +164,8 @@ def run_one(name: str, holdout: int, only: str | None,
         return False, "⚠ 找不到语料 —— 四条流程都跑不起来（这不是通过）"
     nodes, edges, _ = loaded
 
-    kernel, queries, new, removable, cover = _assemble(name, nodes, edges, holdout, remove)
+    kernel, queries, new, removable, cover = _assemble(
+        name, nodes, edges, holdout, remove, locked=locked)
     st0 = kernel.stats()
     head = (f"═══ 方向 {name} ═══\n"
             f"  初始：{st0['方向']} 个方向（§K2 判空 {st0['§K2 判空']}），"
@@ -240,6 +259,11 @@ def main(argv: list[str]) -> int:
     remove = 0
     if "--remove" in args:
         remove = int(args[args.index("--remove") + 1])
+    # ★ **可选入口：并发壳**（2026-10-15，`docs/并发接口设计.md` §7 阶段 1）。
+    #   默认**不锁** —— 接线本身不产生收益（当前没有并发调用方），
+    #   而默认路径每一步都要付一次加解锁。⇒ 做成**显式**入口，
+    #   并用判据证明「锁壳与裸内核**逐字相同**」（`run_tests.test_lock_scope` ⑧）。
+    locked = "--locked" in args
 
     steps = [a for a in which if a in ("a", "b", "d", "r")]
     only = steps[0] if len(steps) == 1 else None
@@ -248,12 +272,13 @@ def main(argv: list[str]) -> int:
     print(f"四条流程 · 流程 C（构建验收）在 `python -m ldv.run_checks`")
     print(f"本轮跑：{'A+B+D' if only is None else only.upper()}｜方向：{list(targets)}"
           f"｜维护新项 {holdout}"
-          + (f"｜删除 {remove}" if remove else "｜**不删**（`--remove N` 才跑 B′）"))
+          + (f"｜删除 {remove}" if remove else "｜**不删**（`--remove N` 才跑 B′）")
+          + ("｜**并发壳**（`--locked`）" if locked else ""))
     print()
 
     all_ok = True
     for name in targets:
-        ok, text = run_one(name, holdout, only, remove)
+        ok, text = run_one(name, holdout, only, remove, locked=locked)
         all_ok &= ok
         print(text)
         print()
