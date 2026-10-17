@@ -152,27 +152,70 @@ def cut_points(vals: dict[str, float]) -> tuple[list[float], dict[str, Any]]:
 def derive(nodes: dict[str, Any], edges: dict[str, frozenset[str]],
            rules: Iterable[Rule] = DEFAULT_RULES,
            budget: int = BUDGET) -> tuple[list[Predicate], list[Predicate], dict[str, Any]]:
-    """推导谓词。
+    """推导谓词。返回 `(采用的, 超预算的, 参数)`（**兼容旧签名**）。
 
-    返回 `(采用的, 超预算的, 参数)`。
-    - **采用的**：按区分度降序取前 `budget` 个（并列按谓词名字典序 —— 确定性）
-    - **超预算的**：**记录在案**，不静默丢弃（反思报告要报「M 个谓词没用上」）
+    内部走 `derive_buffered`（候选 / 采用 / 拒收三段）。
+    """
+    _cand, used, _rej, params = derive_buffered(nodes, edges, rules, budget)
+    # 超预算的 = 候选里既没采用也没拒收的
+    used_set = {p.谓词 for p in used}
+    rej_set = {x["谓词"] for x in _rej}
+    dropped = [p for p in _cand if p.谓词 not in used_set and p.谓词 not in rej_set]
+    return used, dropped, params
+
+
+def derive_buffered(nodes: dict[str, Any], edges: dict[str, frozenset[str]],
+                    rules: Iterable[Rule] = DEFAULT_RULES,
+                    budget: int = BUDGET
+                    ) -> tuple[list[Predicate], list[Predicate], list[dict[str, Any]],
+                               dict[str, Any]]:
+    """★ 带**缓冲区**的推导（2026-10-17）。
+
+    三段（`predicates.json` 里各一段，可审计）：
+
+        候选  所有推导出来的谓词（不筛）
+        采用  过判据 + 预算的（**进划分**）
+        拒收  判据不过的 + **理由**（留痕，不静默丢弃）
+
+    ### 提交判据（**自动筛选**，可复现）
+
+        ① **真二分**：`0 < 满足数 < 总数` —— 切出两个非空子集
+           （`满足数 == 0` ⇒ 没有节点满足，谓词是空的；`== 总数` ⇒ 一个都切不开）
+           ★ 这条同时是 `§K2 判空` 与 `B19 变细守卫` 在**谓词层**的前置检查：
+             切不出两个非空子集，就谈不上「变细」
+        ② **预算**：过 ① 的按区分度降序取前 `budget` 个（并列按谓词名）
+           ⚠️ 区分度**只排序**，不当阈值 —— 那是「不作分」红线的要求
+
+    ⇒ 「候选 → 采用」这一步是**判据驱动**的，不是「推导出来就用」。
     """
     total = len(nodes)
-    allp: list[Predicate] = []
+    cand: list[Predicate] = []
+    rejected: list[dict[str, Any]] = []
     params: dict[str, Any] = {"预算": budget, "规则": []}
+
     for rule in rules:
         vals = measure(nodes, edges, rule.量)
         cuts, p = cut_points(vals)
         params["规则"].append({"名": rule.名, "量": rule.量, "分档": rule.分档, **p})
         for c in cuts:
             hit = sum(1 for v in vals.values() if v > c)
-            allp.append(Predicate(谓词=f"{rule.名}>{c:g}", 规则=rule.名, 量=rule.量,
-                                  阈值=c, 满足数=hit,
-                                  区分度=(min(hit, total - hit) / total) if total else 0.0))
-    # 预算截断：区分度降序，并列按谓词名（**确定性**）
-    ordered = sorted(allp, key=lambda p: (-p.区分度, p.谓词))
-    return ordered[:budget], ordered[budget:], params
+            pred = Predicate(谓词=f"{rule.名}>{c:g}", 规则=rule.名, 量=rule.量,
+                             阈值=c, 满足数=hit,
+                             区分度=(min(hit, total - hit) / total) if total else 0.0)
+            cand.append(pred)
+            # ① 真二分（谓词层的 §K2 / B19 前置检查）
+            if total == 0 or hit == 0 or hit == total:
+                rejected.append({
+                    "谓词": pred.谓词, "满足数": hit, "总数": total,
+                    "理由": ("没有节点满足（空谓词）" if hit == 0
+                             else "所有节点都满足（切不开）"),
+                })
+
+    rej_set = {x["谓词"] for x in rejected}
+    usable = sorted([p for p in cand if p.谓词 not in rej_set],
+                    key=lambda p: (-p.区分度, p.谓词))
+    used = usable[:budget]
+    return cand, used, rejected, params
 
 
 def apply_to_nodes(nodes: dict[str, Any], edges: dict[str, frozenset[str]],
@@ -197,31 +240,48 @@ def apply_to_nodes(nodes: dict[str, Any], edges: dict[str, frozenset[str]],
 
 
 # ── 注册（可审计的显式清单）──────────────────────────────────────────
-def write_registry(corpus_dir: Path, corpus: str, used: Sequence[Predicate],
-                   dropped: Sequence[Predicate], params: dict[str, Any]) -> Path:
-    """把**采用的 + 超预算的**谓词都写进 `predicates.json`（显式清单）。
+def write_registry(corpus_dir: Path, corpus: str, cand: Sequence[Predicate],
+                   used: Sequence[Predicate], rejected: Sequence[dict[str, Any]],
+                   params: dict[str, Any]) -> Path:
+    """把**四段**写进 `predicates.json`（缓冲区 + 显式清单）。
 
-    ★ 为什么超预算的也要写：**事后要能分开「推导」与「生成」**。
-      只写采用的，就分不清「这个谓词没推导出来」和「推导出来了但没用上」。
+        候选  所有推导出来的（不筛）
+        采用  过判据 + 预算的（**进划分**）
+        超预算 过判据、但排在预算外的
+        拒收  判据不过的 + **理由**（留痕，不静默丢弃）
+
+    ★ 为什么四段都要写：**事后要能分开「没推导出来」「推导出来被拒」「推导出来没排上」**。
+      只写「采用」，这三种情况在留档里长得一模一样。
     """
     path = Path(corpus_dir) / "predicates.json"
+    used_set = {p.谓词 for p in used}
+    rej_set = {x["谓词"] for x in rejected}
+    dropped = [p for p in cand if p.谓词 not in used_set and p.谓词 not in rej_set]
     doc = {
         "_note": [
-            "谓词推导的**外生声明 + 内生参数**（`docs/多层涌现-模块化边界.md` §5）。",
+            "谓词推导的**外生声明 + 内生参数 + 缓冲区**（`docs/多层涌现-模块化边界.md` §5）。",
             "",
             "规则（人写）：按 out_degree / in_degree 取切分点，零值单列 + 非零三分。",
             "参数（算出来）：切分点 [0, P33, P67] —— 从这份材料算，同一份材料唯一。",
             "谓词（确定）：`量 > 切分点` 的**二分**谓词 ⇒ 可组合、可复现。",
             "",
+            "── 缓冲区三段（`候选` → `采用` 由判据自动筛选，可复现）──",
+            "`候选`    所有推导出来的谓词（不筛）",
+            "`采用`    过判据 + 预算的（**只有这一段进划分**）",
+            "`超预算`  过判据、但排在预算外的",
+            "`拒收`    判据不过的 + 理由（切不出两个非空子集）",
+            "",
             "⚠️ 预算 N 是**外生定死**的（不随材料自适应 —— 那会让 N 依赖历史）。",
-            "⚠️ `超预算` 里的谓词是**推导出来了但没进划分**的，留档以便审计。",
+            "⚠️ 区分度**只排序**，不当阈值（`docs/评估标准.md` 的「不作分」）。",
             "⚠️ 本文件由 `ldv/corpus/predicates.py` 生成；规则改了要重跑。",
         ],
         "语料": corpus,
         "预算": params.get("预算"),
         "参数": params,
+        "候选": [p.to_json() for p in cand],
         "采用": [p.to_json() for p in used],
         "超预算": [p.to_json() for p in dropped],
+        "拒收": list(rejected),
     }
     path.write_text(json.dumps(doc, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return path

@@ -4423,6 +4423,82 @@ def test_reflect() -> None:
        set(rep) == allowed, f"多出来的字段：{set(rep) - allowed}")
 
 
+
+
+def test_buffer() -> None:
+    """★ 缓冲区五条判据（谓词三段 + 记忆 `_staging/`，2026-10-17）。
+
+    谓词：`候选 → 采用` 由判据自动筛选（真二分 + 预算），拒收留理由。
+    记忆：新节点先落 `_staging/nodes/`（**不参与结构**），提交时四条判据筛。
+    """
+    import shutil
+    import tempfile
+    from pathlib import Path
+
+    from ldv.corpus import predicates as PR
+    from ldv.corpus.loader import load_nodes
+    from ldv.tools import staging as ST
+
+    data = Path(__file__).resolve().parents[2] / "_data"
+
+    # ── 谓词三段 ────────────────────────────────────────────────────
+    nodes = load_nodes(data / "pypi-deps" / "nodes")
+    from ldv.corpus.loader import load_edges
+    edges, _d = load_edges(nodes)
+    cand, used, rejected, params = PR.derive_buffered(nodes, edges)
+    used_set = {p.谓词 for p in used}
+    rej_set = {x["谓词"] for x in rejected}
+    dropped = {p.谓词 for p in cand} - used_set - rej_set
+
+    ok("★ [缓冲] ㉚ 谓词三段不重不漏：候选 = 采用 ∪ 超预算 ∪ 拒收",
+       len(cand) == len(used) + len(dropped) + len(rejected)
+       and not (used_set & rej_set),
+       f"候选 {len(cand)}｜采用 {len(used)}｜超预算 {len(dropped)}｜拒收 {len(rejected)}")
+
+    ok("★ [缓冲] ㉛ 拒收有理由：每条都带非空 `理由`",
+       all(x.get("理由") for x in rejected),
+       f"拒收 {[(x['谓词'], x['理由'][:12]) for x in rejected][:2]}")
+
+    # 拒收的确实是「切不开」的（满足数 0 或 = 总数）
+    total = len(nodes)
+    ok("★ [缓冲] ㉛b 拒收理由成立：满足数要么 0、要么 = 总数",
+       all(x["满足数"] == 0 or x["满足数"] == total for x in rejected),
+       f"拒收满足数 {[x['满足数'] for x in rejected]}（总数 {total}）")
+
+    # ── 记忆缓冲 ────────────────────────────────────────────────────
+    tmp = Path(tempfile.mkdtemp(prefix="ldv-buf-"))
+    try:
+        corpus = tmp / "corpus"
+        (corpus / "nodes").mkdir(parents=True)
+        # 先放一个「已有」节点
+        (corpus / "nodes" / "n1.md").write_text(
+            "---\nid: \"n1\"\ntype: 测试\n---\n\n正文\n", encoding="utf-8")
+        # 缓冲两个：一个正常、一个 id 撞
+        src_ok = tmp / "new.md"
+        src_ok.write_text("---\nid: \"n2\"\ntype: 测试\n---\n\n正文\n", encoding="utf-8")
+        src_dup = tmp / "dup.md"
+        src_dup.write_text("---\nid: \"n1\"\ntype: 测试\n---\n\n正文\n", encoding="utf-8")
+        ST.stage(corpus, src_ok)
+        ST.stage(corpus, src_dup)
+
+        # ㉜ 缓冲不参与结构
+        before = load_nodes(corpus / "nodes")
+        ok("★ [缓冲] ㉜ 缓冲不参与结构：`_staging/nodes/` 里的文件不进 `load_nodes`",
+           set(before) == {"n1"}, f"装载到 {sorted(before)}")
+
+        # ㉝ 提交：正常进 nodes、撞 id 进 rejected + 理由文件
+        res = ST.commit(corpus)
+        ok("★ [缓冲] ㉝ 提交判据：正常文件移进 `nodes/`、id 撞的进 `rejected/` + 理由",
+           res["已提交"] == ["new.md"] and len(res["拒收"]) == 1
+           and (corpus / "_staging" / "rejected" / "dup.md.理由.txt").is_file(),
+           f"提交 {res['已提交']}｜拒收 {[x['文件'] for x in res['拒收']]}")
+
+        # ㉞ 提交后结构包含
+        after = load_nodes(corpus / "nodes")
+        ok("★ [缓冲] ㉞ 提交后结构包含新节点",
+           set(after) == {"n1", "n2"}, f"装载到 {sorted(after)}")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 def test_memory_index() -> None:
     """★ 语料索引四条判据（`ldv/corpus/index.py`，2026-10-17）。
 
@@ -4547,7 +4623,10 @@ def test_predicates() -> None:
     # ⑳ 清单可导出（采用 + 超预算都在）
     tmp = Path(tempfile.mkdtemp(prefix="ldv-pred-"))
     try:
-        p = PR.write_registry(tmp, "pypi-deps", u1, d1, p1)
+        _cand, _used2, _rej2, _p2 = PR.derive_buffered(
+            load_nodes(data / "pypi-deps" / "nodes"),
+            load_edges(load_nodes(data / "pypi-deps" / "nodes"))[0])
+        p = PR.write_registry(tmp, "pypi-deps", _cand, _used2, _rej2, _p2)
         doc = __import__("json").loads(p.read_text(encoding="utf-8"))
         ok("★ [谓词] ⑳ 清单可导出：采用 / 超预算 / 参数都在，且能读回",
            len(doc["采用"]) == len(u1) and len(doc["超预算"]) == len(d1)
@@ -6821,6 +6900,7 @@ def main() -> int:
                test_predicates,
                test_reflect,
                test_memory_index,
+               test_buffer,
                test_query_hit_items, test_spec_paths, test_maintain,
                test_view_oracles, test_influence_channels, test_views,
                test_multilevel, test_retriever, test_cli_paths,
