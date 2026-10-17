@@ -39,6 +39,10 @@ from ..corpus.loader import parse_front_matter
 #: 缓冲目录名（与 `nodes/` 平级）
 STAGING = "_staging"
 
+#: 缓冲区**容量上限**（外生，2026-10-17）。超限**报出来**，不静默淘汰。
+#: ⚠️ 为什么要有上限：缓冲区一大，人就不看了 ⇒ 待提交越积越多 ⇒ 退化成仓库。
+CAPACITY = 100
+
 
 def _dirs(corpus_dir: Path) -> tuple[Path, Path, Path]:
     base = Path(corpus_dir) / STAGING
@@ -46,12 +50,53 @@ def _dirs(corpus_dir: Path) -> tuple[Path, Path, Path]:
 
 
 def stage(corpus_dir: Path, src: Path) -> Path:
-    """把一个新节点文件放进缓冲区（**不校验** —— 校验在提交时做）。"""
+    """把一个新节点文件放进缓冲区（**不校验** —— 校验在提交时做）。
+
+    ⚠️ 用 `copy`（**不**用 `copy2`）：要让 mtime = **进缓冲区的时刻**，
+       否则淘汰的 FIFO 顺序会变成「源文件的修改时间」，那取决于外部，
+       不可复现。
+    """
     inbox, _rej, _nodes = _dirs(corpus_dir)
     inbox.mkdir(parents=True, exist_ok=True)
     dst = inbox / Path(src).name
-    shutil.copy2(src, dst)
+    shutil.copy(src, dst)
     return dst
+
+
+def capacity_status(corpus_dir: Path, capacity: int = CAPACITY) -> dict[str, Any]:
+    """缓冲区容量状态（**只报不淘汰**）。"""
+    inbox, rej, nodes = _dirs(corpus_dir)
+    n = len(list(inbox.glob("*.md"))) if inbox.is_dir() else 0
+    return {
+        "待提交": n, "容量": capacity,
+        "超限": max(0, n - capacity),
+        "拒收": len(list(rej.glob("*.md"))) if rej.is_dir() else 0,
+        "正式节点数": len(list(nodes.glob("*.md"))) if nodes.is_dir() else 0,
+    }
+
+
+def evict(corpus_dir: Path, keep: int = CAPACITY) -> dict[str, Any]:
+    """淘汰缓冲区里的**未提交候选**（按进缓冲区时间 FIFO），保留最新 `keep` 个。
+
+    ⚠️ **只碰 `_staging/nodes/`**：
+       - `_staging/rejected/` 的理由文件是**审计链**（唯一能回答「为什么被拒」）⇒ 永不淘汰
+       - `nodes/` 里的已提交节点要删必须走 `remove` + 六条检查（`D1–D6`），
+         不能「静默遗忘」
+    ⚠️ 淘汰按 **mtime**（= 进缓冲区时间，见 `stage` 的 `copy`），
+       **不按访问次数** —— 后者依赖历史，会破坏可复现（`§5`）。
+    """
+    inbox, _rej, _nodes = _dirs(corpus_dir)
+    if not inbox.is_dir():
+        return {"淘汰": [], "保留": 0, "说明": "缓冲区为空"}
+    files = sorted(inbox.glob("*.md"), key=lambda p: (p.stat().st_mtime_ns, p.name))
+    over = len(files) - keep
+    if over <= 0:
+        return {"淘汰": [], "保留": len(files), "说明": "未超容量"}
+    gone = files[:over]
+    for f in gone:
+        f.unlink()
+    return {"淘汰": [f.name for f in gone], "保留": len(files) - over,
+            "说明": f"超容量 {over} 个，按进缓冲区时间 FIFO 淘汰"}
 
 
 def status(corpus_dir: Path) -> dict[str, Any]:
@@ -107,4 +152,6 @@ def commit(corpus_dir: Path) -> dict[str, Any]:
             (rej / f"{f.name}.理由.txt").write_text(reason + "\n", encoding="utf-8")
             rejected.append({"文件": f.name, "理由": reason})
 
-    return {"已提交": committed, "拒收": rejected}
+    # ★ 提交后**顺手报容量**（只报不淘汰 —— 淘汰由 `evict` 显式调用）
+    return {"已提交": committed, "拒收": rejected,
+            "容量": capacity_status(corpus_dir)}

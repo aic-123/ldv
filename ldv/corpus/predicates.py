@@ -50,6 +50,13 @@ from typing import Any, Iterable, Sequence
 #: N 个二分谓词 ⇒ 子方向上界 2^N = 8
 BUDGET = 3
 
+#: 组合谓词的**复杂度阈值**（外生，2026-10-17 用户拍板 K=2）
+#: 复杂度 = 合取项数；`复杂度 > K`（即 **3 项及以上**）⇒ 进「待命名」
+#: ⚠️ 为什么是「报给人命名」而不是「自动起名」：命名是**定义基础词汇**，
+#:    属于外生项（`§5`：什么算一个方向必须人声明）。系统只负责发现
+#:    「这个组合太复杂、人该给它起个名」。
+COMPLEXITY_K = 2
+
 
 # ── 规则声明（外生）──────────────────────────────────────────────────
 @dataclass(frozen=True)
@@ -218,6 +225,87 @@ def derive_buffered(nodes: dict[str, Any], edges: dict[str, frozenset[str]],
     return cand, used, rejected, params
 
 
+# ── 组合谓词（2026-10-17）────────────────────────────────────────────
+@dataclass(frozen=True)
+class Combination:
+    """一个**组合谓词**（若干单谓词的合取）。
+
+    ⚠️ 它**不进划分** —— 只进「待命名」（复杂度 > K）或「组合候选」（≤ K）。
+       进划分的只有单谓词（预算内）与**人命名后的基础谓词**。
+       理由：预算 N 管的是「进划分的谓词数」；组合也进划分会让预算失控，
+       而且会加剧细化（用户 2026-10-17 明确担心过）。
+    """
+
+    项: tuple[str, ...]          # ("出度档>2", "入度档>5")
+    满足数: int
+    区分度: float
+
+    @property
+    def 复杂度(self) -> int:
+        return len(self.项)
+
+    @property
+    def 谓词(self) -> str:
+        return " ∧ ".join(self.项)
+
+    def to_json(self) -> dict[str, Any]:
+        return {"谓词": self.谓词, "项": list(self.项), "复杂度": self.复杂度,
+                "满足数": self.满足数, "区分度": round(self.区分度, 6)}
+
+
+def combine(nodes: dict[str, Any], edges: dict[str, frozenset[str]],
+            used: Sequence[Predicate],
+            k: int = COMPLEXITY_K) -> tuple[list[Combination], list[Combination],
+                                            list[dict[str, Any]]]:
+    """从**已采用的单谓词**做合取，返回 `(待命名, 组合候选, 拒收)`。
+
+    - **待命名**：`复杂度 > k`（3 项及以上）—— 报给人命名
+    - **组合候选**：`复杂度 <= k` —— 可读、不需要命名（**仍不进划分**）
+    - **拒收**：切不开的（满足数 0 或 = 总数）—— 与单谓词同一条判据
+
+    ⚠️ 组合只从 `used`（采用的）里取 —— 不从被拒的里取（那些本身就切不开）。
+    """
+    from itertools import combinations
+
+    if len(used) < 2:
+        return [], [], []
+    # 每个单谓词 → 满足它的节点集
+    vals = {w: measure(nodes, edges, w) for w in {p.量 for p in used}}
+    sat = {p.谓词: {nid for nid in nodes if vals[p.量][nid] > p.阈值} for p in used}
+    spec_w = {p.谓词: p.量 for p in used}      # 项 → 量（判「同量冗余」用）
+    total = len(nodes)
+    to_name: list[Combination] = []
+    candidates: list[Combination] = []
+    rejected: list[dict[str, Any]] = []
+
+    for size in range(2, len(used) + 1):
+        for terms in combinations(sorted(sat), size):
+            # ⚠️ **同量冗余**：`出度>0 ∧ 出度>2` —— 后者蕴含前者 ⇒ 组合退化成单项。
+            #    这类不是「组合」，必须滤掉（否则待命名里全是假组合）。
+            same = {}
+            for t in terms:
+                w = spec_w[t]
+                same.setdefault(w, []).append(t)
+            if any(len(v) > 1 for v in same.values()):
+                dup = next(v for v in same.values() if len(v) > 1)
+                rejected.append({"谓词": " ∧ ".join(terms), "满足数": -1, "总数": total,
+                                 "理由": f"同量冗余（{' 与 '.join(dup)} 互相蕴含）"})
+                continue
+            hit = set.intersection(*[sat[t] for t in terms])
+            n = len(hit)
+            c = Combination(项=tuple(terms), 满足数=n,
+                            区分度=(min(n, total - n) / total) if total else 0.0)
+            if total == 0 or n == 0 or n == total:
+                rejected.append({"谓词": c.谓词, "满足数": n, "总数": total,
+                                 "理由": ("没有节点满足（空谓词）" if n == 0
+                                          else "所有节点都满足（切不开）")})
+            elif c.复杂度 > k:
+                to_name.append(c)
+            else:
+                candidates.append(c)
+    return to_name, candidates, rejected
+
+
 def apply_to_nodes(nodes: dict[str, Any], edges: dict[str, frozenset[str]],
                    preds: Sequence[Predicate]) -> int:
     """把谓词追加进每个节点的 `keys`（**就地**改 `Node.keys`）。
@@ -242,18 +330,32 @@ def apply_to_nodes(nodes: dict[str, Any], edges: dict[str, frozenset[str]],
 # ── 注册（可审计的显式清单）──────────────────────────────────────────
 def write_registry(corpus_dir: Path, corpus: str, cand: Sequence[Predicate],
                    used: Sequence[Predicate], rejected: Sequence[dict[str, Any]],
-                   params: dict[str, Any]) -> Path:
-    """把**四段**写进 `predicates.json`（缓冲区 + 显式清单）。
+                   params: dict[str, Any],
+                   to_name: Sequence[Combination] = (),
+                   combos_cand: Sequence[Combination] = (),
+                   combos_rej: Sequence[dict[str, Any]] = ()) -> Path:
+    """把**七段**写进 `predicates.json`（缓冲区 + 显式清单）。
 
-        候选  所有推导出来的（不筛）
-        采用  过判据 + 预算的（**进划分**）
-        超预算 过判据、但排在预算外的
-        拒收  判据不过的 + **理由**（留痕，不静默丢弃）
+        候选      所有推导出来的单谓词（不筛）
+        采用      过判据 + 预算的（**进划分**）
+        超预算    过判据、但排在预算外的
+        拒收      判据不过的 + **理由**（留痕，不静默丢弃）
+        待命名    组合谓词，复杂度 > K ⇒ **报给人命名**
+        组合候选  组合谓词，复杂度 <= K（可读，**仍不进划分**）
+        基础谓词  **人手写**的名字 + 合取定义（外生）—— 本函数**保留原样**
 
-    ★ 为什么四段都要写：**事后要能分开「没推导出来」「推导出来被拒」「推导出来没排上」**。
-      只写「采用」，这三种情况在留档里长得一模一样。
+    ★ `基础谓词` 是**人写的**：本函数重写文件时必须原样保留，不能覆盖。
+      （程序只生成「候选」，命名权在人 —— `§5` 的外生边界。）
     """
     path = Path(corpus_dir) / "predicates.json"
+    # ⚠️ 先读旧文件，把**人手写**的段保住
+    manual: dict[str, Any] = {}
+    if path.is_file():
+        try:
+            old = json.loads(path.read_text(encoding="utf-8"))
+            manual = {k: old[k] for k in ("基础谓词",) if k in old}
+        except Exception:
+            manual = {}
     used_set = {p.谓词 for p in used}
     rej_set = {x["谓词"] for x in rejected}
     dropped = [p for p in cand if p.谓词 not in used_set and p.谓词 not in rej_set]
@@ -265,11 +367,19 @@ def write_registry(corpus_dir: Path, corpus: str, cand: Sequence[Predicate],
             "参数（算出来）：切分点 [0, P33, P67] —— 从这份材料算，同一份材料唯一。",
             "谓词（确定）：`量 > 切分点` 的**二分**谓词 ⇒ 可组合、可复现。",
             "",
-            "── 缓冲区三段（`候选` → `采用` 由判据自动筛选，可复现）──",
+            "── 单谓词三段（`候选` → `采用` 由判据自动筛选，可复现）──",
             "`候选`    所有推导出来的谓词（不筛）",
             "`采用`    过判据 + 预算的（**只有这一段进划分**）",
             "`超预算`  过判据、但排在预算外的",
             "`拒收`    判据不过的 + 理由（切不出两个非空子集）",
+            "",
+            "── 组合谓词两段（**都不进划分**）──",
+            "`待命名`   复杂度 > K（默认 2 ⇒ 三项及以上）⇒ **请人给它起个名**",
+            "`组合候选` 复杂度 <= K —— 可读，不需要命名，但仍不进划分",
+            "",
+            "── 基础谓词（**人写**）──",
+            "`基础谓词` 人命名后的名字 + 合取定义（外生）。本段由**人**维护，",
+            "           程序重写本文件时**原样保留**。命名后它才作为键进划分。",
             "",
             "⚠️ 预算 N 是**外生定死**的（不随材料自适应 —— 那会让 N 依赖历史）。",
             "⚠️ 区分度**只排序**，不当阈值（`docs/评估标准.md` 的「不作分」）。",
@@ -277,12 +387,18 @@ def write_registry(corpus_dir: Path, corpus: str, cand: Sequence[Predicate],
         ],
         "语料": corpus,
         "预算": params.get("预算"),
+        "复杂度阈值": COMPLEXITY_K,
         "参数": params,
         "候选": [p.to_json() for p in cand],
         "采用": [p.to_json() for p in used],
         "超预算": [p.to_json() for p in dropped],
         "拒收": list(rejected),
+        "待命名": [c.to_json() for c in to_name],
+        "组合候选": [c.to_json() for c in combos_cand],
+        "组合拒收": list(combos_rej),
     }
+    if manual:
+        doc.update(manual)
     path.write_text(json.dumps(doc, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return path
 
@@ -296,3 +412,46 @@ def load_rules(corpus_dir: Path) -> tuple[list[Rule], int]:
     rules = [Rule(名=r["名"], 量=r["量"], 分档=r.get("分档", "零值单列+非零三分"))
              for r in doc.get("参数", {}).get("规则", [])]
     return (rules or list(DEFAULT_RULES)), int(doc.get("预算") or BUDGET)
+
+
+def load_basic(corpus_dir: Path) -> list[dict[str, Any]]:
+    """读**人命名**的基础谓词（`基础谓词` 段）。没有就返回空表。"""
+    path = Path(corpus_dir) / "predicates.json"
+    if not path.exists():
+        return []
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    return [b for b in doc.get("基础谓词", [])
+            if isinstance(b, dict) and b.get("名") and b.get("定义")]
+
+
+def apply_basic(nodes: dict[str, Any], edges: dict[str, frozenset[str]],
+                basic: Sequence[dict[str, Any]],
+                preds: Sequence[Predicate]) -> int:
+    """把**基础谓词**作为键追加进 `Node.keys`（**就地**）。
+
+    基础谓词 = 人起的名字 + 合取定义（`["出度档>2", "入度档>5"]`）。
+    ⇒ 节点满足**定义里所有项** ⇒ 加键 `名`。
+
+    ⚠️ 只有**人命名过**的才进划分 —— 未命名的组合谓词只躺在 `待命名` 段里。
+    """
+    if not basic:
+        return 0
+    # 项 → (量, 阈值)（从已采用的单谓词里查）
+    spec = {p.谓词: (p.量, p.阈值) for p in preds}
+    vals = {w: measure(nodes, edges, w) for w in {v[0] for v in spec.values()}}
+    touched = 0
+    for b in basic:
+        name = str(b["名"])
+        terms = [str(t) for t in b["定义"]]
+        missing = [t for t in terms if t not in spec]
+        if missing:                     # 定义里引用了不存在的谓词 ⇒ 跳过（不静默造键）
+            continue
+        hit = {nid for nid in nodes
+               if all(vals[spec[t][0]][nid] > spec[t][1] for t in terms)}
+        for nid in hit:
+            nodes[nid].keys = frozenset(set(nodes[nid].keys) | {name})
+            touched += 1
+    return touched

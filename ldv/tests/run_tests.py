@@ -4418,13 +4418,241 @@ def test_reflect() -> None:
        f"预展开 {len(applied['预展开'])} 个｜方向数 {len(before)} → {len(after)}")
 
     # ㉕ 无标量分：字段白名单
-    allowed = {"方向数", "待展开数", "展开序", "逐方向", "排序规则"}
+    # ⚠️ 白名单要**跟着报告一起改**：2026-10-17 加了 `矛盾`（结构层矛盾清单）。
+    #    白名单的意义是「报告里出现意料之外的字段就红」—— 加字段必须显式改这里，
+    #    这样「偷偷往报告里塞一个分数」会当场被这条判据抓住。
+    allowed = {"方向数", "待展开数", "展开序", "逐方向", "排序规则", "矛盾"}
     ok("★ [反思] ㉕ 无标量分：报告字段在白名单内（没有分数 / 健康度 / 优先级分）",
        set(rep) == allowed, f"多出来的字段：{set(rep) - allowed}")
 
 
 
 
+
+
+
+
+
+
+
+
+
+
+def test_capacity() -> None:
+    """★ 缓冲区容量四条判据（`ldv/tools/staging.py`，2026-10-17）。
+
+    边界：容量上限是**外生**的；淘汰**只碰未提交候选**（FIFO，不按访问次数），
+    `rejected/`（审计链）与 `nodes/`（已提交）**永不淘汰**。
+    """
+    import shutil
+    import tempfile
+    import time
+    from pathlib import Path
+
+    from ldv.tools import staging as ST
+
+    tmp = Path(tempfile.mkdtemp(prefix="ldv-cap-"))
+    try:
+        corpus = tmp / "c"
+        (corpus / "nodes").mkdir(parents=True)
+        # 一个已提交节点 + 一个拒收理由文件（用来验「淘汰不碰它们」）
+        (corpus / "nodes" / "n0.md").write_text(
+            '---\nid: "n0"\ntype: "测试"\n---\n\n正文\n', encoding="utf-8")
+        rej = corpus / "_staging" / "rejected"
+        rej.mkdir(parents=True)
+        # ⚠️ `capacity_status` 数的是 `*.md`（**被拒的原文件**），理由文件是
+        #    `*.md.理由.txt`（不算节点）。两个都要放，才能同时验「拒收计数」
+        #    与「理由文件不被淘汰」。（第一版只放了理由文件 ⇒ 拒收数 0 ⇒ 判据红）
+        (rej / "old.md").write_text('---\nid: "old"\n---\n\n被拒的原文件\n',
+                                    encoding="utf-8")
+        (rej / "old.md.理由.txt").write_text("审计链\n", encoding="utf-8")
+
+        # 造 5 个候选，**按时间先后**写入（FIFO 判据要能分辨）
+        for i in range(5):
+            f = tmp / f"c{i}.md"
+            f.write_text(f'---\nid: "c{i}"\ntype: "测试"\n---\n\n正文 {i}\n',
+                         encoding="utf-8")
+            ST.stage(corpus, f)
+            time.sleep(0.02)            # 让 mtime 可分辨
+
+        # ㊺ 容量可读
+        st = ST.capacity_status(corpus, capacity=3)
+        ok("★ [容量] ㊺ 容量可读：待提交 / 容量 / 超限 / 拒收 / 正式节点数 都在",
+           st["待提交"] == 5 and st["容量"] == 3 and st["超限"] == 2
+           and st["拒收"] == 1 and st["正式节点数"] == 1,
+           f"{st}")
+
+        # ㊽ 未超容量时不淘汰
+        r0 = ST.evict(corpus, keep=10)
+        ok("★ [容量] ㊽ 不静默淘汰：未超容量 ⇒ 一个都不删",
+           r0["淘汰"] == [] and len(list((corpus / "_staging" / "nodes").glob("*.md"))) == 5,
+           f"{r0}")
+
+        # ㊻ + ㊼ 淘汰：只碰未提交、FIFO
+        r = ST.evict(corpus, keep=3)
+        left = sorted(p.name for p in (corpus / "_staging" / "nodes").glob("*.md"))
+        ok("★ [容量] ㊼ FIFO：淘汰**最早进缓冲区**的（c0 / c1）",
+           r["淘汰"] == ["c0.md", "c1.md"], f"淘汰 {r['淘汰']}｜留下 {left}")
+        ok("★ [容量] ㊻ 淘汰只碰未提交：`rejected/` 与 `nodes/` 数量**不变**",
+           len(list(rej.glob("*.md"))) == 1 and len(list((corpus / "nodes").glob("*.md"))) == 1,
+           f"拒收 {len(list(rej.glob('*.md')))}｜正式 {len(list((corpus / 'nodes').glob('*.md')))}")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+def test_contradictions() -> None:
+    """★ 矛盾报告四条判据（`ldv/core/reflect.py` `contradictions`，2026-10-17）。
+
+    边界：**只在结构层**（边打架 / 子覆盖越出父 / 孤立方向）。
+    语义矛盾（材料互相冲突）**不做** —— 要理解内容 ⇒ 撞「禁止模型代填」。
+    """
+    from types import SimpleNamespace
+
+    from ldv.cli import _assemble
+    from ldv.core import reflect as RF
+    from ldv.checks._fixtures import load as _load
+
+    loaded = _load()
+    assert loaded is not None
+    nodes, edges, _d = loaded
+    k, _q, *_ = _assemble("keyset", nodes, edges, 12)
+
+    def _sig(kern):
+        return tuple((d.did, d.parent, len(kern.children_of(d)), len(kern.members_of(d)))
+                     for d in kern.all_directions())
+
+    before = _sig(k)
+    c = RF.contradictions(k)
+    after = _sig(k)
+
+    # ㊶ 可重算：抽查每条「边打架」确实成立
+    recomputable = True
+    for row in c["矛盾"]:
+        if row["类型"] == "边打架":
+            d = k.direction(row["方向"])
+            p = k.direction(row["父"])
+            if d.did in [x.did for x in k.children_of(p)]:
+                recomputable = False        # 报告说打架、实际不打架 ⇒ 报告错了
+    ok("★ [矛盾] ㊶ 可重算：清单里每条都能从结构验（抽查边打架）",
+       recomputable and c["矛盾数"] == len(c["矛盾"]),
+       f"矛盾数 {c['矛盾数']}")
+
+    # ㊷ 查了什么可读（「没查」与「查了没发现」必须分得开）
+    cov = c["覆盖读数"]
+    ok("★ [矛盾] ㊷ 查了什么可读：覆盖读数里有方向数与三项计数",
+       cov.get("方向数", 0) > 0 and all(kk in cov for kk in
+                                       ("边打架", "子覆盖越出父", "孤立方向")),
+       f"{cov}")
+
+    # ㊸ 只报不改
+    ok("★ [矛盾] ㊸ 只报不改：调用前后结构签名逐字相同",
+       before == after, f"方向数 {len(before)} → {len(after)}")
+
+    # ㊹ 注入矛盾能被抓（构造一个「边打架」的最小 kernel）
+    class _D:
+        def __init__(self, did, parent):
+            self.did, self.parent = did, parent
+
+    fake = SimpleNamespace()
+    fake.all_directions = lambda: [_D("D0", None), _D("D1", "D0"), _D("D2", "D0")]
+    fake.direction = lambda did: {"D0": _D("D0", None), "D1": _D("D1", "D0"),
+                                  "D2": _D("D2", "D0")}[did]
+    # D0 的子列表里**只有 D1** ⇒ D2 声明了父 D0 却不在子列表 ⇒ 边打架
+    fake.children_of = lambda d: ([_D("D1", "D0")] if d.did == "D0" else [])
+    fake.members_of = lambda d: {"D0": frozenset({"a", "b"}),
+                                 "D1": frozenset({"a"}),
+                                 "D2": frozenset({"b"})}[d.did]
+    c2 = RF.contradictions(fake)
+    ok("★ [矛盾] ㊹ 注入矛盾被抓：构造「D2 声明父 D0 但不在子列表」⇒ 清单必须报",
+       c2["矛盾数"] >= 1 and any(r["类型"] == "边打架" and r["方向"] == "D2"
+                                 for r in c2["矛盾"]),
+       f"矛盾数 {c2['矛盾数']}｜{[r['类型'] + ':' + r['方向'] for r in c2['矛盾']]}")
+def test_combination() -> None:
+    """★ 组合谓词六条判据（`ldv/corpus/predicates.py` `combine`，2026-10-17）。
+
+    边界：组合谓词**一律不进划分** —— 只进「待命名」（复杂度 > K）或
+    「组合候选」。进划分的只有单谓词（预算内）与**人命名后的基础谓词**。
+    """
+    import json
+    import shutil
+    import tempfile
+    from pathlib import Path
+
+    from ldv.corpus import predicates as PR
+    from ldv.corpus.loader import load_edges, load_nodes
+
+    data = Path(__file__).resolve().parents[2] / "_data"
+    nodes = load_nodes(data / "pypi-deps" / "nodes")
+    edges, _d = load_edges(nodes)
+    _cand, used, _rej, _p = PR.derive_buffered(nodes, edges)
+
+    # ㉟ 复杂度 = 项数
+    to_name, cands, crej = PR.combine(nodes, edges, used)
+    allc = list(to_name) + list(cands)
+    ok("★ [组合] ㉟ 复杂度可算：复杂度 == 合取项数",
+       all(c.复杂度 == len(c.项) for c in allc) and all(c.复杂度 >= 2 for c in allc),
+       f"{[(c.谓词, c.复杂度) for c in allc][:3]}")
+
+    # ㊱ 超 K 进待命名（构造**不同量**的 3 项组合 —— 真实语料上 3 项常被同量冗余挡掉）
+    #    ⇒ 手工造三个不同量的谓词，各自满足「一半左右」的节点
+    total = len(nodes)
+    ids = sorted(nodes)
+    fake_vals = {
+        "量A": {nid: float(i < total // 2) for i, nid in enumerate(ids)},
+        "量B": {nid: float(i % 2 == 0) for i, nid in enumerate(ids)},
+        "量C": {nid: float(i % 3 != 0) for i, nid in enumerate(ids)},
+    }
+    import ldv.corpus.predicates as _pr
+    _orig_measure = _pr.measure
+
+    def _fake_measure(ns, es, which):
+        return fake_vals[which]
+
+    try:
+        _pr.measure = _fake_measure
+        fake_used = [PR.Predicate(谓词=f"{w}>0", 规则=w, 量=w, 阈值=0.0,
+                                  满足数=int(sum(1 for v in fake_vals[w].values() if v > 0)),
+                                  区分度=0.0) for w in ("量A", "量B", "量C")]
+        tn, cd, cr = PR.combine(nodes, edges, fake_used, k=2)
+        ok("★ [组合] ㊱ 超 K 进待命名：3 项（不同量）⇒ 进「待命名」",
+           any(c.复杂度 == 3 for c in tn) and all(c.复杂度 == 2 for c in cd),
+           f"待命名 {[(c.谓词, c.复杂度) for c in tn]}｜候选 {[c.复杂度 for c in cd]}")
+    finally:
+        _pr.measure = _orig_measure
+
+    # ㊲ 同量冗余被拒
+    dup_rej = [x for x in crej if "同量冗余" in x.get("理由", "")]
+    ok("★ [组合] ㊲ 同量冗余被拒：`出度>0 ∧ 出度>2` ⇒ 拒收并写明「互相蕴含」",
+       bool(dup_rej), f"{[x['谓词'] for x in dup_rej][:2]}")
+
+    # ㊳ 组合不进划分：`apply_to_nodes` 只吃单谓词，组合谓词不在 keys 里
+    probe = {k: type(v)(id=v.id, fields=v.fields, body=v.body, keys=v.keys)
+             for k, v in nodes.items()}
+    PR.apply_to_nodes(probe, edges, used)
+    combo_names = [c.谓词 for c in allc]
+    leaked = [nid for nid, n in probe.items()
+              if any(cn in n.keys for cn in combo_names)]
+    ok("★ [组合] ㊳ 组合不进划分：节点键里**没有**组合谓词（含 ∧ 的字符串）",
+       not leaked and not any("∧" in k for n in probe.values() for k in n.keys),
+       f"泄漏 {len(leaked)} 个节点")
+
+    # ㊴ 基础谓词保留（程序重写文件不覆盖人写的段）
+    tmp = Path(tempfile.mkdtemp(prefix="ldv-combo-"))
+    try:
+        manual = {"基础谓词": [{"名": "枢纽节点", "定义": ["入度档>1", "出度档>2"]}]}
+        (tmp / "predicates.json").write_text(
+            json.dumps(manual, ensure_ascii=False), encoding="utf-8")
+        PR.write_registry(tmp, "测试", _cand, used, _rej, _p, to_name, cands, crej)
+        doc = json.loads((tmp / "predicates.json").read_text(encoding="utf-8"))
+        ok("★ [组合] ㊴ 基础谓词保留：重写后「基础谓词」段原样还在",
+           doc.get("基础谓词") == manual["基础谓词"],
+           f"{doc.get('基础谓词')}")
+
+        # ㊵ 未命名不进划分：有待命名时，节点键里没有它
+        keys_all = set().union(*[n.keys for n in probe.values()])
+        unnamed = [c.谓词 for c in allc if c.谓词 not in keys_all]
+        ok("★ [组合] ㊵ 未命名不进划分：组合谓词**都不在**节点键里",
+           len(unnamed) == len(allc), f"未在键里 {len(unnamed)}/{len(allc)}")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 def test_buffer() -> None:
     """★ 缓冲区五条判据（谓词三段 + 记忆 `_staging/`，2026-10-17）。
 
@@ -6901,6 +7129,9 @@ def main() -> int:
                test_reflect,
                test_memory_index,
                test_buffer,
+               test_combination,
+               test_contradictions,
+               test_capacity,
                test_query_hit_items, test_spec_paths, test_maintain,
                test_view_oracles, test_influence_channels, test_views,
                test_multilevel, test_retriever, test_cli_paths,

@@ -36,6 +36,64 @@ from typing import Any
 SORT_KEY = "成员数降序·did 升序"
 
 
+def contradictions(kernel: Any) -> dict[str, Any]:
+    """**结构层**的矛盾清单（2026-10-17，用户拍板「就在结构层」）。
+
+    只聚合**结构上能直接验**的三类，**不碰语义**（语义矛盾要理解内容 ⇒ 撞红线）：
+
+        边打架       方向 `d` 声明了 `parent=p`，但 `d` 不在 `p` 的子列表里
+        （`B13` 良基树检查的同一件事）
+        子覆盖越出父 子方向的成员并集 ⊄ 父方向成员（`§I4` 覆盖嵌套的同一件事）
+        孤立方向     没有父、也不是根（`parent` 为空但 `did != 根`）
+
+    ⚠️ 本函数**只报不改**，且**不新增判据** —— 它把已有检查的读数汇总成一份清单。
+       `checks/` 里的判据仍然各管各的（`B13` / `§I4` / …），这里不替代它们。
+
+    ⚠️ 清单为空时也要**明说本趟查了什么**（否则「没查」与「查了没发现」长得一样）。
+    """
+    rows: list[dict[str, Any]] = []
+    dirs = kernel.all_directions()
+    checked = {"边打架": 0, "子覆盖越出父": 0, "孤立方向": 0}
+
+    for d in dirs:
+        # ① 边打架
+        if d.parent:
+            checked["边打架"] += 1
+            try:
+                p = kernel.direction(d.parent)
+                kids = [c.did for c in kernel.children_of(p)]
+                if d.did not in kids:
+                    rows.append({"类型": "边打架", "方向": d.did, "父": d.parent,
+                                 "说明": "声明了父，但不在父的子列表里"})
+            except Exception:
+                rows.append({"类型": "边打架", "方向": d.did, "父": d.parent,
+                             "说明": "声明的父不存在"})
+        # ② 子覆盖越出父
+        kids = kernel.children_of(d)
+        if kids:
+            checked["子覆盖越出父"] += 1
+            union = set()
+            for k in kids:
+                union |= set(kernel.members_of(k))
+            if not union <= set(kernel.members_of(d)):
+                rows.append({"类型": "子覆盖越出父", "方向": d.did,
+                             "越出": len(union - set(kernel.members_of(d))),
+                             "说明": "子方向的成员并集不在父方向成员里"})
+        # ③ 孤立方向（既无父、也不是根 —— 根是 `D0`）
+        if not d.parent and d.did != "D0":
+            checked["孤立方向"] += 1
+            rows.append({"类型": "孤立方向", "方向": d.did,
+                         "说明": "没有父，也不是根 D0"})
+
+    return {
+        "矛盾数": len(rows),
+        "矛盾": rows,
+        # ★ 查了什么（「没查」与「查了没发现」必须分得开）
+        "检查项": ["边打架", "子覆盖越出父", "孤立方向"],
+        "覆盖读数": {"方向数": len(dirs), **checked},
+    }
+
+
 def report(kernel: Any) -> dict[str, Any]:
     """生成反思报告（**全是内生量**，每个数都能从结构重算）。
 
@@ -61,6 +119,8 @@ def report(kernel: Any) -> dict[str, Any]:
         "展开序": [r["did"] for r in rows if r["待展开"]],
         "逐方向": rows,
         "排序规则": SORT_KEY,
+        # ★ **结构层**矛盾清单（2026-10-17）—— 只聚合已有检查，不新增判据
+        "矛盾": contradictions(kernel),
     }
 
 

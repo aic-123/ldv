@@ -115,10 +115,16 @@ def load(predicates: bool = False, indexed: bool = False) -> tuple[dict[str, Nod
         nodes = load_nodes(root)
     edges, dangling = load_edges(nodes)
     if predicates:
-        from ..corpus.predicates import apply_to_nodes, derive, load_rules
+        from ..corpus.predicates import (apply_basic, apply_to_nodes, derive,
+                                         load_basic, load_rules)
         rules, budget = load_rules(root.parent)
         used, _dropped, _params = derive(nodes, edges, rules, budget)
         apply_to_nodes(nodes, edges, used)
+        # ★ **人命名**的基础谓词（`基础谓词` 段）—— 只有命名过的才进划分。
+        #   未命名的组合谓词躺在 `待命名` 段里，**不进结构**。
+        basic = load_basic(root.parent)
+        if basic:
+            apply_basic(nodes, edges, basic, used)
     return nodes, edges, dangling
 
 
