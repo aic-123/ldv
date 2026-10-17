@@ -4440,6 +4440,114 @@ def test_reflect() -> None:
 
 
 
+
+
+
+
+
+
+
+
+
+
+def test_direction_request() -> None:
+    """★ 方向请求六条判据（`ldv/core/request.py`，2026-10-17）。
+
+    边界：系统**只提问不回答** —— 不定义方向、不加键、不改结构；
+    请求的是**新维度**（字段 / 度量），不是方向函数。
+    """
+    import json
+    import shutil
+    import tempfile
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    from ldv.core import request as RQ
+    from ldv.checks._fixtures import load as _load, coverage_of
+    from ldv.cli import _assemble
+
+    loaded = _load()
+    assert loaded is not None
+    nodes, edges, _d = loaded
+    k, _q, *_ = _assemble("keyset", nodes, edges, 12)
+    cov = coverage_of("keyset", nodes, edges)
+
+    # ── 假内核：一条 11 连的「没变细」链 ──────────────────────────────
+    #    D0→D1→…→D11，每个方向的 cover 都一样 ⇒ 没有任何子的覆盖严格小于父
+    class _D:
+        def __init__(self, did, parent, payload):
+            self.did, self.parent, self.payload = did, parent, payload
+            # ⚠️ `progress_profile` 读 `rank` —— 假方向也要有（2026-10-17 踩到）
+            self.rank = int(did[1:])
+
+    # 12 个方向 ⇒ 11 连（不含叶）≥ 阈值 10 —— 10 个方向只有 9 连，差一个
+    dirs = [_D(f"D{i}", None if i == 0 else f"D{i-1}", 0) for i in range(12)]
+    fake = SimpleNamespace()
+    fake.root = dirs[0]
+    fake.all_directions = lambda: list(dirs)
+    fake.children_of = lambda d: [dirs[int(d.did[1:]) + 1]] if d.did != "D11" else []
+    fake.members_of = lambda d: frozenset({"a", "b", "c"})
+    fake_cov = lambda payload: frozenset({"a", "b", "c"})
+
+    def _sig(kern):
+        return tuple((d.did, d.parent, len(kern.children_of(d)),
+                      len(kern.members_of(d))) for d in kern.all_directions())
+
+    # ㊀ 只读
+    before = _sig(k)
+    r_default = RQ.direction_requests(k, cov)
+    after = _sig(k)
+    ok("★ [请求] ㊀ 只读：生成请求前后结构签名逐字相同",
+       before == after, f"{len(before)} 方向")
+
+    # ㊅ 不触发时也要说
+    ok("★ [请求] ㊅ 不触发时也要说：请求为空，但 `本趟查了` 说清查了多少",
+       r_default["请求"] == [] and "最长连续段" in r_default["本趟查了"]
+       and "不是「没查」" in r_default["说明"],
+       f"{r_default['本趟查了']}｜{r_default['说明'][:36]}")
+
+    # 构造触发
+    r_fire = RQ.direction_requests(fake, fake_cov, used_preds=(), n=10)
+    reqs = r_fire["请求"]
+    ok("★ [请求] ㊀b 构造 11 连 ⇒ 触发（证明机制会响）",
+       len(reqs) == 1 and reqs[0]["阈值"] == 10,
+       f"信号：{reqs[0]['信号'] if reqs else '（无）'}")
+
+    # ㊁ 可复现
+    r_again = RQ.direction_requests(fake, fake_cov, used_preds=(), n=10)
+    ok("★ [请求] ㊁ 可复现：同结构两次逐字相同",
+       r_fire == r_again, f"请求 {len(reqs)} vs {len(r_again['请求'])}")
+
+    # ㊂ 每条带证据
+    r0 = reqs[0] if reqs else {}
+    ok("★ [请求] ㊂ 每条带证据：`涉及的项` 非空 + `判据编号` + `已经试过` 在",
+       bool(r0.get("涉及的项")) and r0.get("判据编号") == "B19"
+       and "已经试过" in r0 and "当前状态" in r0,
+       f"涉及 {r0.get('涉及的项数')} 项｜链 {len(r0.get('链', []))} 个方向")
+
+    tmp = Path(tempfile.mkdtemp(prefix="ldv-req-"))
+    try:
+        p = RQ.write_requests(tmp, r_fire)
+        doc = json.loads(p.read_text(encoding="utf-8"))
+        ok("★ [请求] ㊃b 写盘：`请求` 与 `本趟查了` 都落文件",
+           doc["请求"] == reqs and doc["本趟查了"] == r_fire["本趟查了"],
+           f"{p.name}｜请求 {len(doc['请求'])} 条")
+
+        # 人处置：把这条的项写进「已拒绝」
+        doc["已拒绝"] = [{"涉及的项": r0.get("涉及的项", []), "理由": "这 3 项确实无区别"}]
+        p.write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
+        handled = RQ.already_handled(tmp, r0.get("涉及的项", []))
+        ok("★ [请求] ㊃ 处置过的不再请求：人写进 `已拒绝` 后不再重复出现",
+           handled, "already_handled 为真")
+
+        # ㊄ 人写段不被覆盖（重新写请求，人写的两段还在）
+        RQ.write_requests(tmp, r_fire)
+        doc2 = json.loads(p.read_text(encoding="utf-8"))
+        ok("★ [请求] ㊄ 人写段不被覆盖：重写后 `已拒绝` 原样保留",
+           doc2.get("已拒绝") == doc.get("已拒绝"),
+           f"已拒绝 {len(doc2.get('已拒绝', []))} 条")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 def test_impact() -> None:
     """★ 影响分析四条判据（`ldv/core/impact.py`，2026-10-17）。
 
@@ -7184,6 +7292,7 @@ def main() -> int:
                test_contradictions,
                test_capacity,
                test_impact,
+               test_direction_request,
                test_query_hit_items, test_spec_paths, test_maintain,
                test_view_oracles, test_influence_channels, test_views,
                test_multilevel, test_retriever, test_cli_paths,
