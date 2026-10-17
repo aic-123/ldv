@@ -4421,6 +4421,74 @@ def test_reflect() -> None:
     allowed = {"方向数", "待展开数", "展开序", "逐方向", "排序规则"}
     ok("★ [反思] ㉕ 无标量分：报告字段在白名单内（没有分数 / 健康度 / 优先级分）",
        set(rep) == allowed, f"多出来的字段：{set(rep) - allowed}")
+
+
+def test_memory_index() -> None:
+    """★ 语料索引四条判据（`ldv/corpus/index.py`，2026-10-17）。
+
+    短期 = 进程内 `_NODE_CACHE`；长期 = 跨进程派生索引（`~/.cache/ldv/`）。
+    ⚠️ 索引里**没有 body** ⇒ 等价判据只比 id / keys / fields。
+    """
+    import shutil
+    import tempfile
+    import time
+    from pathlib import Path
+
+    from ldv.corpus.index import load_nodes_indexed
+    from ldv.corpus.loader import load_nodes
+
+    data = Path(__file__).resolve().parents[2] / "_data"
+    src = data / "pypi-deps" / "nodes"
+    tmp = Path(tempfile.mkdtemp(prefix="ldv-idx-rt-"))
+    try:
+        # 直读基线
+        direct = load_nodes(src)
+        # 首次（索引不存在 ⇒ 全读）与二次（命中）
+        t0 = time.time()
+        n1, s1 = load_nodes_indexed(src, tmp)
+        t_first = time.time() - t0
+        t0 = time.time()
+        n2, s2 = load_nodes_indexed(src, tmp)
+        t_second = time.time() - t0
+
+        # ㉖ 等价（id / keys / fields）
+        same_ids = set(direct) == set(n2)
+        diff_keys = [k for k in direct if direct[k].keys != n2[k].keys]
+        diff_fields = [k for k in direct if direct[k].fields != n2[k].fields]
+        ok("★ [索引] ㉖ 等价：索引路径与直读 ⇒ id / keys / fields 逐字相同",
+           same_ids and not diff_keys and not diff_fields,
+           f"id 同 {same_ids}｜keys 差 {len(diff_keys)}｜fields 差 {len(diff_fields)}")
+
+        # ㉗ 命中：第二次**全命中、零重读**（正确性判据，不依赖语料大小）
+        #    ⚠️ 加速比**只作读数**：小语料（60 节点）上固定开销占主导，
+        #    实测 1.4×；大语料上才是 7.4×（ext-coauth，见 outputs 探针留档）。
+        speed = t_first / t_second if t_second > 0 else 0
+        ok("★ [索引] ㉗ 命中：二次装载全命中、零重读（加速比作读数）",
+           s2["命中"] == len(direct) and s2["重读"] == 0,
+           f"首次 {t_first:.2f}s → 二次 {t_second:.2f}s（{speed:.1f}×，小语料）"
+           f"｜命中 {s2['命中']} / 重读 {s2['重读']}")
+
+        # ㉘ 失效：改一个文件 ⇒ 只重读 1 个
+        victim = sorted(src.glob("*.md"))[0]
+        orig = victim.read_text(encoding="utf-8")
+        try:
+            # 改内容并保证 mtime 变化（size 也可能不变 ⇒ 靠 mtime_ns）
+            victim.write_text(orig + "\n<!-- index-probe -->\n", encoding="utf-8")
+            os.utime(victim, None)
+            _n3, s3 = load_nodes_indexed(src, tmp)
+            ok("★ [索引] ㉘ 失效：改一个文件 ⇒ **只重读它**（其余仍命中）",
+               s3["重读"] == 1 and s3["命中"] == len(direct) - 1,
+               f"重读 {s3['重读']} / 命中 {s3['命中']}")
+        finally:
+            victim.write_text(orig, encoding="utf-8")
+            os.utime(victim, None)
+
+        # ㉙ 不污染：索引不在语料目录
+        in_corpus = list(src.glob("*.index.json")) + list((src.parent).glob("*.index.json"))
+        ok("★ [索引] ㉙ 不污染：索引写在缓存目录，语料目录里没有索引文件",
+           not in_corpus, f"语料目录里发现：{[p.name for p in in_corpus][:3]}")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 def test_predicates() -> None:
     """★ 谓词推导的六条判据（`ldv/corpus/predicates.py`，2026-10-17）。
 
@@ -6752,6 +6820,7 @@ def main() -> int:
                test_service_shell,
                test_predicates,
                test_reflect,
+               test_memory_index,
                test_query_hit_items, test_spec_paths, test_maintain,
                test_view_oracles, test_influence_channels, test_views,
                test_multilevel, test_retriever, test_cli_paths,

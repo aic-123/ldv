@@ -151,7 +151,8 @@ def _assemble(name: str, nodes, edges, holdout: int, remove: int = 0,
 
 def run_one(name: str, holdout: int, only: str | None,
             remove: int = 0, loaded=None, locked: bool = False,
-            predicates: bool = False, reflect: bool = False) -> tuple[bool, str]:
+            predicates: bool = False, reflect: bool = False,
+            indexed: bool = False) -> tuple[bool, str]:
     """跑一个方向。返回 `(护栏是否全过, 追踪文本)`。
 
     `loaded` 为 `None` 时自己 `load()`（**生产路径**：`python -m ldv.cli`）。
@@ -164,7 +165,7 @@ def run_one(name: str, holdout: int, only: str | None,
     它是一条**可选入口**，给将来真的并发调用方用；单线程跑它只多付加解锁的代价。
     """
     if loaded is None:
-        loaded = load(predicates=predicates)
+        loaded = load(predicates=predicates, indexed=indexed)
     if loaded is None:
         return False, "⚠ 找不到语料 —— 四条流程都跑不起来（这不是通过）"
     nodes, edges, _ = loaded
@@ -282,6 +283,9 @@ def main(argv: list[str]) -> int:
     # ★ **可选入口：反思层**（2026-10-17）。只调展开顺序，不改结构 ——
     #   默认**不带**，因为它会改变「展开次数」这类读数。
     reflect = "--reflect" in args
+    # ★ **可选入口：语料索引**（2026-10-17）—— 跨进程派生索引（长期缓冲）。
+    #   默认**不带**：索引会把 `Node.body` 留空（主流程不用正文，但对照工具用）。
+    indexed = "--index" in args
 
     steps = [a for a in which if a in ("a", "b", "d", "r")]
     only = steps[0] if len(steps) == 1 else None
@@ -293,13 +297,14 @@ def main(argv: list[str]) -> int:
           + (f"｜删除 {remove}" if remove else "｜**不删**（`--remove N` 才跑 B′）")
           + ("｜**并发壳**（`--locked`）" if locked else "")
           + ("｜**推导谓词**（`--predicates`）" if predicates else "")
-          + ("｜**反思层**（`--reflect`，只调顺序）" if reflect else ""))
+          + ("｜**反思层**（`--reflect`，只调顺序）" if reflect else "")
+          + ("｜**语料索引**（`--index`，跨进程）" if indexed else ""))
     print()
 
     all_ok = True
     for name in targets:
         ok, text = run_one(name, holdout, only, remove, locked=locked,
-                           predicates=predicates, reflect=reflect)
+                           predicates=predicates, reflect=reflect, indexed=indexed)
         all_ok &= ok
         print(text)
         print()

@@ -94,7 +94,7 @@ def find_corpus() -> Path | None:
     return None
 
 
-def load(predicates: bool = False) -> tuple[dict[str, Node], dict[str, frozenset[str]], frozenset[str]] | None:
+def load(predicates: bool = False, indexed: bool = False) -> tuple[dict[str, Node], dict[str, frozenset[str]], frozenset[str]] | None:
     """读语料。`predicates=True` ⇒ **追加推导谓词**（`corpus/predicates.py`）。
 
     ⚠️ 默认 `False` —— 现有全部套件（`run_checks` 97 / `run_tests` 624 / 注入 71）
@@ -105,7 +105,14 @@ def load(predicates: bool = False) -> tuple[dict[str, Node], dict[str, frozenset
     root = find_corpus()
     if root is None:
         return None
-    nodes = load_nodes(root)
+    # ★ **长期缓冲（可选入口）**：跨进程派生索引，避免重复读盘。
+    #   实测 ext-coauth：直读 4.66s → 索引命中 0.63s（**7.4×**）。
+    #   ⚠️ 索引里**没有 body**（主流程一处都不用正文）⇒ 索引路径的 `Node.body` 是空串。
+    if indexed:
+        from ..corpus.index import load_nodes_indexed
+        nodes, _stats = load_nodes_indexed(root)
+    else:
+        nodes = load_nodes(root)
     edges, dangling = load_edges(nodes)
     if predicates:
         from ..corpus.predicates import apply_to_nodes, derive, load_rules
