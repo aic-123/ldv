@@ -4438,6 +4438,57 @@ def test_reflect() -> None:
 
 
 
+
+
+def test_impact() -> None:
+    """★ 影响分析四条判据（`ldv/core/impact.py`，2026-10-17）。
+
+    这是**结构推理**的最后一层：**预测**删掉某些项会让哪些方向变空，
+    再在副本上**实测**验证。纯结构、不碰语义、不依赖历史。
+    """
+    from ldv.cli import _assemble
+    from ldv.core import impact as IM
+    from ldv.checks._fixtures import load as _load
+
+    loaded = _load()
+    assert loaded is not None
+    nodes, edges, _d = loaded
+    k, _q, *_ = _assemble("keyset", nodes, edges, 12)
+
+    def _sig(kern):
+        return tuple((d.did, d.parent, len(kern.children_of(d)), len(kern.members_of(d)))
+                     for d in kern.all_directions())
+
+    ids = sorted(k.placed)[:3]
+    before = _sig(k)
+    r1 = IM.removal_impact(k, ids)
+    br = IM.blast_radius(k, "D0")
+    after = _sig(k)
+
+    # ㊾ 只读
+    ok("★ [影响] ㊾ 只读：`removal_impact` / `blast_radius` 前后结构签名逐字相同",
+       before == after, f"方向数 {len(before)} → {len(after)}")
+
+    # ⑤① 可复现
+    r2 = IM.removal_impact(k, ids)
+    ok("★ [影响] ⑤① 可复现：同结构两次调用逐字相同", r1 == r2,
+       f"会空 {r1['会变空数']} vs {r2['会变空数']}")
+
+    # ㊿ 预测 == 实测（在**另一份装配**上真删 —— 不碰上面那个只读的内核）
+    k2, _q2, *_ = _assemble("keyset", nodes, edges, 12)
+    cmp = IM.compare_prediction(k2, ids)
+    ok("★ [影响] ㊿ 预测 == 实测：预测「会空 / 会缩」的方向集与真删后一致",
+       cmp["会空一致"] and cmp["缩一致"],
+       f"会空 预测{cmp['预测会空']} 实测{cmp['实测会空']}｜"
+       f"缩 预测{len(cmp['预测缩'])} 实测{len(cmp['实测缩'])}")
+
+    # ⑤② 影响 0 也要明说（「没算」与「算了没影响」必须分得开）
+    r3 = IM.removal_impact(k, ["_根本不存在的项_"])
+    ok("★ [影响] ⑤② 影响 0 明说：删不在结构里的项 ⇒ 明确报「没有任何方向受影响」",
+       r3["会变空数"] == 0 and r3["成员减少数"] == 0
+       and r3["说明"] == "没有任何方向受影响"
+       and r3["不在结构里"] == ["_根本不存在的项_"],
+       f"{r3['说明']}｜不在结构里 {r3['不在结构里']}")
 def test_capacity() -> None:
     """★ 缓冲区容量四条判据（`ldv/tools/staging.py`，2026-10-17）。
 
@@ -7132,6 +7183,7 @@ def main() -> int:
                test_combination,
                test_contradictions,
                test_capacity,
+               test_impact,
                test_query_hit_items, test_spec_paths, test_maintain,
                test_view_oracles, test_influence_channels, test_views,
                test_multilevel, test_retriever, test_cli_paths,
