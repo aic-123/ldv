@@ -4332,7 +4332,12 @@ def test_lock_scope() -> None:
     _orig_load, _orig_run_one = _cli.load, _cli.run_one
     _seen_locked: list[bool] = []
 
-    def _stub_run_one(name, holdout, only, remove=0, loaded=None, locked=False):
+    def _stub_run_one(name, holdout, only, remove=0, loaded=None, locked=False,
+                      predicates=False, reflect=False, **_kwargs):
+        # ⚠️ 桩的签名要跟着 `run_one` 的接口走 —— 2026-10-17 加了 `predicates`
+        #    与 `reflect`，两次都忘了补 ⇒ `cli.main` 传关键字时 `TypeError`。
+        #    ⇒ 末尾加 `**_kwargs` 兜底：以后再加可选参数，这个桩不会再炸。
+        #    （`locked` 仍显式收 —— ⑧c 判的就是它，不能被 kwargs 吞掉。）
         _seen_locked.append(locked)
         return True, "stubbed"
 
@@ -4363,6 +4368,134 @@ def test_lock_scope() -> None:
 
 
 
+
+
+
+
+def test_reflect() -> None:
+    """★ 反思层四条判据（`ldv/core/reflect.py`，2026-10-17）。
+
+    边界：**只读内生量、只调展开顺序**。不改方向函数 / 判据 / 外生项；
+    不引入标量分（`docs/评估标准.md` 的「不作分」）。
+    """
+    from ldv.cli import _assemble
+    from ldv.core import reflect as RF
+    from ldv.checks._fixtures import load as _load
+
+    loaded = _load()
+    assert loaded is not None
+    nodes, edges, _d = loaded
+
+    k1, _q1, *_ = _assemble("keyset", nodes, edges, 12)
+    rep = RF.report(k1)
+
+    # ㉒ 字段全内生：每个「逐方向」行的数都能从 kernel 重算
+    bad = []
+    for row in rep["逐方向"]:
+        d = k1.direction(row["did"])
+        if row["成员数"] != len(k1.members_of(d)) or row["子方向数"] != len(k1.children_of(d)):
+            bad.append(row["did"])
+    ok("★ [反思] ㉒ 字段全内生：报告每个数都能从结构重算",
+       not bad, f"对不上的方向：{bad[:3]}")
+
+    # ㉓ 顺序确定：同结构两次 ⇒ 逐字相同
+    order1 = RF.expand_order(k1)
+    order2 = RF.expand_order(k1)
+    ok("★ [反思] ㉓ 顺序确定：同结构两次 `expand_order` 逐字相同",
+       order1 == order2, f"{order1[:3]} vs {order2[:3]}")
+
+    # ㉔ 结构不变：预展开后最终方向树与不预展开逐字相同
+    def _sig(k):
+        return tuple((d.did, d.parent, len(k.children_of(d)), len(k.members_of(d)))
+                     for d in k.all_directions())
+
+    k2, _q2, *_ = _assemble("keyset", nodes, edges, 12)
+    before = _sig(k2)
+    applied = RF.apply(k2)
+    after = _sig(k2)
+    ok("★ [反思] ㉔ 结构不变：按报告预展开后，方向树逐字相同（只调顺序）",
+       before == after,
+       f"预展开 {len(applied['预展开'])} 个｜方向数 {len(before)} → {len(after)}")
+
+    # ㉕ 无标量分：字段白名单
+    allowed = {"方向数", "待展开数", "展开序", "逐方向", "排序规则"}
+    ok("★ [反思] ㉕ 无标量分：报告字段在白名单内（没有分数 / 健康度 / 优先级分）",
+       set(rep) == allowed, f"多出来的字段：{set(rep) - allowed}")
+def test_predicates() -> None:
+    """★ 谓词推导的六条判据（`ldv/corpus/predicates.py`，2026-10-17）。
+
+    边界：规则**外生**（人写「按出度取切分点」），参数**内生**（切分点从材料算）
+    ⇒ 谓词由两者唯一确定 ⇒ 可复现。**预算 N 外生定死**（不随材料自适应）。
+    """
+    import shutil
+    import tempfile
+    from pathlib import Path
+
+    from ldv.corpus import predicates as PR
+    from ldv.corpus.loader import load_edges, load_nodes
+
+    data = Path(__file__).resolve().parents[2] / "_data"
+
+    def _derive(name: str):
+        nodes = load_nodes(data / name / "nodes")
+        edges, _d = load_edges(nodes)
+        return PR.derive(nodes, edges)
+
+    # ⑯ 可复现：同材料两次 ⇒ 逐字相同
+    u1, d1, p1 = _derive("pypi-deps")
+    u2, d2, p2 = _derive("pypi-deps")
+    sig = lambda us: [(p.谓词, p.阈值, p.满足数, round(p.区分度, 6)) for p in us]
+    ok("★ [谓词] ⑯ 可复现：同材料两次 derive ⇒ 谓词清单逐字相同",
+       sig(u1) == sig(u2) and p1 == p2,
+       f"{sig(u1)[:2]} vs {sig(u2)[:2]}")
+
+    # ⑰ 跟着材料变：两份语料的阈值/谓词不同
+    u3, _d3, _p3 = _derive("ext-coauth")
+    ok("★ [谓词] ⑰ 跟着材料变：两份语料的谓词不同（不是写死的常量）",
+       sig(u1) != sig(u3),
+       f"pypi {sig(u1)[:1]} vs coauth {sig(u3)[:1]}")
+
+    # ⑱ 预算生效 + 不静默丢弃
+    total = len(u1) + len(d1)
+    ok("★ [谓词] ⑱ 预算生效：采用数 = N，超预算的都记在案（不静默丢弃）",
+       len(u1) == PR.BUDGET and len(d1) == total - PR.BUDGET and total > PR.BUDGET,
+       f"采用 {len(u1)} / 超预算 {len(d1)} / 共 {total}｜N={PR.BUDGET}")
+
+    # ⑲ 可组合：任意两个采用谓词的合取非空（防互斥档位）
+    nodes = load_nodes(data / "pypi-deps" / "nodes")
+    edges, _d = load_edges(nodes)
+    vals = {w: PR.measure(nodes, edges, w) for w in {p.量 for p in u1}}
+    combos_empty = []
+    for i in range(len(u1)):
+        for j in range(i + 1, len(u1)):
+            a, b = u1[i], u1[j]
+            both = sum(1 for nid in nodes
+                       if vals[a.量][nid] > a.阈值 and vals[b.量][nid] > b.阈值)
+            if both == 0:
+                combos_empty.append((a.谓词, b.谓词))
+    ok("★ [谓词] ⑲ 可组合：任意两个采用谓词的合取**非空**（不是互斥档位）",
+       not combos_empty, f"空合取：{combos_empty[:3]}")
+
+    # ⑳ 清单可导出（采用 + 超预算都在）
+    tmp = Path(tempfile.mkdtemp(prefix="ldv-pred-"))
+    try:
+        p = PR.write_registry(tmp, "pypi-deps", u1, d1, p1)
+        doc = __import__("json").loads(p.read_text(encoding="utf-8"))
+        ok("★ [谓词] ⑳ 清单可导出：采用 / 超预算 / 参数都在，且能读回",
+           len(doc["采用"]) == len(u1) and len(doc["超预算"]) == len(d1)
+           and doc["预算"] == PR.BUDGET and doc["语料"] == "pypi-deps",
+           f"采用 {len(doc['采用'])}｜超预算 {len(doc['超预算'])}｜预算 {doc['预算']}")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    # ㉑ 默认路径不变：`load()` 不带谓词 ⇒ 键集里没有 `>` 形式的谓词
+    from ldv.checks._fixtures import load as _load
+    loaded = _load()
+    assert loaded is not None
+    n_default = loaded[0]
+    has_gt = any(">" in k for n in n_default.values() for k in n.keys)
+    ok("★ [谓词] ㉑ 默认路径不变：`load()` 不带谓词 ⇒ 键集无 `>` 谓词",
+       not has_gt, "默认键集里出现了 `>` 谓词 ⇒ 默认基线被污染")
 def test_service_shell() -> None:
     """★ 服务壳四阶段判据的**快版**（`docs/服务化设计.md` §3 阶段 3.1–3.4）。
 
@@ -6617,6 +6750,8 @@ def main() -> int:
                test_versioning,
                test_reusable_build, test_lock_scope,
                test_service_shell,
+               test_predicates,
+               test_reflect,
                test_query_hit_items, test_spec_paths, test_maintain,
                test_view_oracles, test_influence_channels, test_views,
                test_multilevel, test_retriever, test_cli_paths,

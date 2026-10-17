@@ -1,0 +1,89 @@
+# -*- coding: utf-8 -*-
+"""反思层 —— **内生量的报告 + 只调展开顺序**（2026-10-17）。
+
+## 它在边界内的哪一侧
+
+    §5 的表：  层内哪个方向值得展开   → 内生，**可自我优化**
+               什么算一个方向 / 外生项 → **不许碰**
+
+本模块**只**做前者：读结构的**内生量**（成员数 / 子方向数 / 是否待展开），
+给出一份**机器可读**的报告，并据此调整**展开顺序**。
+
+    ✗ 不改方向函数、不改判据、不改任何外生项
+    ✗ 不引入标量分（`docs/评估标准.md` 的「不作分」红线）
+    ✗ 不做「健康度打分」—— 那会让系统实质上充当裁判
+
+## ★ 前提是一条实测
+
+「只调展开顺序」安全，前提是**顺序不影响最终结构**。2026-10-17 实测：
+
+    同一份语料，按正序 / 反序跑完全部查询
+    ⇒ 方向数 19 / 19，结构签名（did / parent / 子数 / 成员数）**逐字相同**
+
+⇒ 所以「读报告后结构不变」可以写成判据（`test_predicates` ㉒）。
+
+## 排序规则（外生写死，可复现）
+
+    待展开的方向按「成员数降序，并列按方向 id 升序」
+    —— 只依赖结构，不依赖访问历史 ⇒ 同结构两次给出同一顺序
+"""
+from __future__ import annotations
+
+from typing import Any
+
+#: 「值得先展开」的排序规则 —— **外生写死**（不按访问频率，那会依赖历史）
+#: 成员数降序（大的先展开，收益大）；并列按 did 升序（确定性）
+SORT_KEY = "成员数降序·did 升序"
+
+
+def report(kernel: Any) -> dict[str, Any]:
+    """生成反思报告（**全是内生量**，每个数都能从结构重算）。
+
+    字段：
+    - `方向数` / `待展开数`：结构规模
+    - `展开序`：建议先展开的方向 id（**外生规则**排序）
+    - `逐方向`：每个方向的成员数 / 子方向数 / 是否待展开
+    - `排序规则`：写死的那条规则名（可审计）
+
+    ⚠️ 报告里**没有**「分数」「健康度」「优先级分」这类字段 —— 有意为之。
+    """
+    rows: list[dict[str, Any]] = []
+    for d in kernel.all_directions():
+        m = len(kernel.members_of(d))
+        c = len(kernel.children_of(d))
+        rows.append({"did": d.did, "成员数": m, "子方向数": c,
+                     # 「待展开」= 还有东西可分但没分 —— **结构性**判据
+                     "待展开": m > 1 and c == 0})
+    rows.sort(key=lambda r: (-r["成员数"], r["did"]))     # 外生排序规则
+    return {
+        "方向数": len(rows),
+        "待展开数": sum(1 for r in rows if r["待展开"]),
+        "展开序": [r["did"] for r in rows if r["待展开"]],
+        "逐方向": rows,
+        "排序规则": SORT_KEY,
+    }
+
+
+def expand_order(kernel: Any) -> list[str]:
+    """系统消费的接口：建议的展开顺序（方向 id 列表）。"""
+    return report(kernel)["展开序"]
+
+
+def apply(kernel: Any, limit: int = 8) -> dict[str, Any]:
+    """按报告顺序**预展开**（`limit` 个），返回执行摘要。
+
+    ⚠️ 这是「系统使用报告」的唯一落点 —— 它只调**顺序**，不改结构：
+       最终方向树与不预展开时**逐字相同**（前提见模块 docstring 的实测）。
+    ⚠️ `limit` 是**外生定死**的（不按材料自适应 —— 那会让行为依赖历史）。
+    """
+    order = expand_order(kernel)[:limit]
+    done: list[str] = []
+    for did in order:
+        try:
+            d = kernel.direction(did)
+            if not kernel.is_expanded(d):
+                kernel.expand(d)
+                done.append(did)
+        except Exception:                      # 单方向失败不拖垮整趟
+            continue
+    return {"预展开": done, "请求数": len(order)}

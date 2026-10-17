@@ -94,12 +94,24 @@ def find_corpus() -> Path | None:
     return None
 
 
-def load() -> tuple[dict[str, Node], dict[str, frozenset[str]], frozenset[str]] | None:
+def load(predicates: bool = False) -> tuple[dict[str, Node], dict[str, frozenset[str]], frozenset[str]] | None:
+    """读语料。`predicates=True` ⇒ **追加推导谓词**（`corpus/predicates.py`）。
+
+    ⚠️ 默认 `False` —— 现有全部套件（`run_checks` 97 / `run_tests` 624 / 注入 71）
+       走的都是**不带谓词**的那条路，基线一个数都不变。
+    ⚠️ 谓词是**追加**进 `Node.keys`（`keyset` 只读 `item["keys"]` ⇒ 插件不用改），
+       不是替换现有键 —— 所以 `type` 那批手写档位仍在，两者并存。
+    """
     root = find_corpus()
     if root is None:
         return None
     nodes = load_nodes(root)
     edges, dangling = load_edges(nodes)
+    if predicates:
+        from ..corpus.predicates import apply_to_nodes, derive, load_rules
+        rules, budget = load_rules(root.parent)
+        used, _dropped, _params = derive(nodes, edges, rules, budget)
+        apply_to_nodes(nodes, edges, used)
     return nodes, edges, dangling
 
 

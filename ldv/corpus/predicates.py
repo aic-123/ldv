@@ -1,0 +1,238 @@
+# -*- coding: utf-8 -*-
+"""谓词推导 —— **从材料算参数，规则由人声明**（`docs/多层涌现-模块化边界.md` §5）。
+
+## 这件事在边界内的哪一侧
+
+    §5 的表：  什么算一个方向        → 外生，必须人声明
+               层内局部权衡 / 收益   → 内生，可自我优化
+
+本模块做的是**中间那层**：
+
+    规则（外生，人写）  「按 out_degree 的切分点分档：零值单列 + 非零三分」
+    参数（内生，算出来）切分点 = [0, P33=2, P67=5]   ← 从这份材料算，可复现
+    谓词（确定）        `出度>0` / `出度>2` / `出度>5` —— 三个**二分**谓词
+
+⇒ **规则没变，值从材料来**。同一份材料 ⇒ 分位数唯一 ⇒ 谓词唯一 ⇒ 划分唯一。
+
+## ★ 为什么谓词必须是「二分」而不是「档位标签」
+
+第一版按「档位标签」产出（`出度档=低` / `=中` / `=高`），**错了**：
+
+- 同一条规则的两个档是**互斥**的（一个节点不可能同时在「低」和「中」）
+- 预算截断按区分度挑，很可能**同时选中两个互斥档** ⇒ 组合起来是空方向
+  （`§K2` 判空会报红，但报的是症状不是病）
+
+改成**二分切分点**（`出度>2`）后：任意两个谓词可组合（合取有意义），
+零值单列 = 切分点 0（`出度>0`）。这也是 FCA 里「布尔属性」的正确形状。
+
+## 为什么参数不能由系统自己调
+
+「让 B19 不报红的最大预算」这种自适应 N 会让 **N 依赖历史** ⇒ 外生项自我优化 ⇒
+同材料不同历史得到不同结构。⇒ 预算 `N` **外生定死**，超了如实报「预算用尽」。
+
+## 预算截断在哪一层
+
+在**谓词清单层**截断（按区分度降序取前 N 个），**不是**在每个节点的键上截断 ——
+这样 `keyset` 插件一行都不用改（它只读 `item["keys"]`）。
+
+⚠️ 「区分度」**只用于排序**，不用于判断好坏（`docs/评估标准.md` 的「不作分」）——
+排序选 N 个是合法的；一旦变成「区分度低于 X 的删掉」就是系统在当裁判。
+"""
+from __future__ import annotations
+
+import json
+import math
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Iterable, Sequence
+
+#: 谓词预算（**外生定死**，2026-10-17 用户拍板 N=3）
+#: N 个二分谓词 ⇒ 子方向上界 2^N = 8
+BUDGET = 3
+
+
+# ── 规则声明（外生）──────────────────────────────────────────────────
+@dataclass(frozen=True)
+class Rule:
+    """一条**人声明**的谓词规则：按哪个量、怎么取切分点。"""
+
+    名: str            # 「出度档」
+    量: str            # 「out_degree」/「in_degree」
+    分档: str = "零值单列+非零三分"
+
+    def to_json(self) -> dict[str, Any]:
+        return {"名": self.名, "量": self.量, "分档": self.分档}
+
+
+#: 默认规则集（两条：出度、入度）—— 只做**数值分布**这一类来源
+DEFAULT_RULES: tuple[Rule, ...] = (
+    Rule(名="出度档", 量="out_degree"),
+    Rule(名="入度档", 量="in_degree"),
+)
+
+
+@dataclass(frozen=True)
+class Predicate:
+    """一个**推导出来**的谓词（二分；可审计：能被点名）。"""
+
+    谓词: str                # 「出度>2」
+    规则: str                # 「出度档」
+    量: str                  # 「out_degree」
+    阈值: float              # 2.0
+    满足数: int              # 有多少节点满足 `量 > 阈值`
+    区分度: float            # min(满足, 不满足) / 总数 —— **只用于排序**
+
+    def to_json(self) -> dict[str, Any]:
+        return {"谓词": self.谓词, "规则": self.规则, "量": self.量,
+                "阈值": self.阈值, "满足数": self.满足数,
+                "区分度": round(self.区分度, 6)}
+
+
+# ── 量的计算（从结构算，不从 front matter 读）────────────────────────
+def measure(nodes: dict[str, Any], edges: dict[str, frozenset[str]],
+            which: str) -> dict[str, float]:
+    """算每个节点的一个数值量。目前只支持出度 / 入度。
+
+    ⚠️ 这两个量**必须从结构算**（`edges`），不能从 front matter 读 ——
+       语料里的 `type: 出度0` 那类是**摄入时手写死的**，正是本模块要取代的东西。
+    """
+    if which == "out_degree":
+        return {nid: float(len(edges.get(nid, frozenset()))) for nid in nodes}
+    if which == "in_degree":
+        indeg: dict[str, int] = {nid: 0 for nid in nodes}
+        for _src, outs in edges.items():
+            for dst in outs:
+                if dst in indeg:
+                    indeg[dst] += 1
+        return {nid: float(v) for nid, v in indeg.items()}
+    raise ValueError(f"不支持的量：{which!r}（只支持 out_degree / in_degree）")
+
+
+def _quantile_nearest_rank(sorted_vals: Sequence[float], k: int, q: int) -> float:
+    """最近秩分位数（**确定性**，不依赖插值实现）。
+
+    k/q 处：取第 `ceil(k/q * n)` 个（1-based），即下标 `ceil(...) - 1`。
+    """
+    n = len(sorted_vals)
+    if n == 0:
+        return 0.0
+    rank = max(1, math.ceil(k / q * n))
+    return sorted_vals[min(rank, n) - 1]
+
+
+def cut_points(vals: dict[str, float]) -> tuple[list[float], dict[str, Any]]:
+    """「零值单列 + 非零三分」⇒ **切分点** + 参数。
+
+    切分点 = `[0] + [P33, P67]`（非零部分），每个切分点产出一个二分谓词
+    `量 > 切分点` ⇒ 4 个区间（=0 / (0,P33] / (P33,P67] / (P67,∞)）。
+
+    ⚠️ 为什么不能纯四分位：出度这类量**零值常占大头**（实测 30%–60%），
+       P25 会等于 0 ⇒ 切分点退化（两个相同）⇒ 去掉重复，如实记。
+    """
+    zero_n = sum(1 for v in vals.values() if v == 0)
+    nz = sorted(v for v in vals.values() if v > 0)
+    params: dict[str, Any] = {"零值数": zero_n, "非零数": len(nz), "切分点": [0.0]}
+    cuts = [0.0]
+    if not nz:
+        params["退化"] = "全零 —— 只有切分点 0"
+        return cuts, params
+    p33 = _quantile_nearest_rank(nz, 1, 3)
+    p67 = _quantile_nearest_rank(nz, 2, 3)
+    params.update({"P33": p33, "P67": p67})
+    for c in (p33, p67):
+        if c in cuts:                     # 切分点重合 ⇒ 去重，如实记
+            params.setdefault("退化切分点", []).append(c)
+            continue
+        cuts.append(c)
+    params["切分点"] = cuts
+    return cuts, params
+
+
+# ── 推导 ─────────────────────────────────────────────────────────────
+def derive(nodes: dict[str, Any], edges: dict[str, frozenset[str]],
+           rules: Iterable[Rule] = DEFAULT_RULES,
+           budget: int = BUDGET) -> tuple[list[Predicate], list[Predicate], dict[str, Any]]:
+    """推导谓词。
+
+    返回 `(采用的, 超预算的, 参数)`。
+    - **采用的**：按区分度降序取前 `budget` 个（并列按谓词名字典序 —— 确定性）
+    - **超预算的**：**记录在案**，不静默丢弃（反思报告要报「M 个谓词没用上」）
+    """
+    total = len(nodes)
+    allp: list[Predicate] = []
+    params: dict[str, Any] = {"预算": budget, "规则": []}
+    for rule in rules:
+        vals = measure(nodes, edges, rule.量)
+        cuts, p = cut_points(vals)
+        params["规则"].append({"名": rule.名, "量": rule.量, "分档": rule.分档, **p})
+        for c in cuts:
+            hit = sum(1 for v in vals.values() if v > c)
+            allp.append(Predicate(谓词=f"{rule.名}>{c:g}", 规则=rule.名, 量=rule.量,
+                                  阈值=c, 满足数=hit,
+                                  区分度=(min(hit, total - hit) / total) if total else 0.0))
+    # 预算截断：区分度降序，并列按谓词名（**确定性**）
+    ordered = sorted(allp, key=lambda p: (-p.区分度, p.谓词))
+    return ordered[:budget], ordered[budget:], params
+
+
+def apply_to_nodes(nodes: dict[str, Any], edges: dict[str, frozenset[str]],
+                   preds: Sequence[Predicate]) -> int:
+    """把谓词追加进每个节点的 `keys`（**就地**改 `Node.keys`）。
+
+    ⚠️ `keyset` 插件只读 `item["keys"]`（来自 `Node.keys`）⇒ 追加即生效，
+       **插件一行都不用改**。这也是为什么预算要在**清单层**截断。
+    ⚠️ 每个量**只算一次**（入度要遍历全图 —— 逐节点算会退化成 O(n·m)）。
+    """
+    if not preds:
+        return 0
+    needed = {p.量 for p in preds}
+    vals = {w: measure(nodes, edges, w) for w in needed}
+    touched = 0
+    for nid, node in nodes.items():
+        hit = {p.谓词 for p in preds if vals[p.量][nid] > p.阈值}
+        if hit:
+            node.keys = frozenset(set(node.keys) | hit)
+            touched += 1
+    return touched
+
+
+# ── 注册（可审计的显式清单）──────────────────────────────────────────
+def write_registry(corpus_dir: Path, corpus: str, used: Sequence[Predicate],
+                   dropped: Sequence[Predicate], params: dict[str, Any]) -> Path:
+    """把**采用的 + 超预算的**谓词都写进 `predicates.json`（显式清单）。
+
+    ★ 为什么超预算的也要写：**事后要能分开「推导」与「生成」**。
+      只写采用的，就分不清「这个谓词没推导出来」和「推导出来了但没用上」。
+    """
+    path = Path(corpus_dir) / "predicates.json"
+    doc = {
+        "_note": [
+            "谓词推导的**外生声明 + 内生参数**（`docs/多层涌现-模块化边界.md` §5）。",
+            "",
+            "规则（人写）：按 out_degree / in_degree 取切分点，零值单列 + 非零三分。",
+            "参数（算出来）：切分点 [0, P33, P67] —— 从这份材料算，同一份材料唯一。",
+            "谓词（确定）：`量 > 切分点` 的**二分**谓词 ⇒ 可组合、可复现。",
+            "",
+            "⚠️ 预算 N 是**外生定死**的（不随材料自适应 —— 那会让 N 依赖历史）。",
+            "⚠️ `超预算` 里的谓词是**推导出来了但没进划分**的，留档以便审计。",
+            "⚠️ 本文件由 `ldv/corpus/predicates.py` 生成；规则改了要重跑。",
+        ],
+        "语料": corpus,
+        "预算": params.get("预算"),
+        "参数": params,
+        "采用": [p.to_json() for p in used],
+        "超预算": [p.to_json() for p in dropped],
+    }
+    path.write_text(json.dumps(doc, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def load_rules(corpus_dir: Path) -> tuple[list[Rule], int]:
+    """从 `predicates.json` 读规则与预算（没有就返回默认）。"""
+    path = Path(corpus_dir) / "predicates.json"
+    if not path.exists():
+        return list(DEFAULT_RULES), BUDGET
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    rules = [Rule(名=r["名"], 量=r["量"], 分档=r.get("分档", "零值单列+非零三分"))
+             for r in doc.get("参数", {}).get("规则", [])]
+    return (rules or list(DEFAULT_RULES)), int(doc.get("预算") or BUDGET)

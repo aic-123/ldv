@@ -67,7 +67,7 @@ INTENTS = {
 
 
 def _assemble(name: str, nodes, edges, holdout: int, remove: int = 0,
-              locked: bool = False):
+              locked: bool = False, predicates: bool = False):
     """造 `(内核, 查询集, 待插入的新项, 待删除的项 id, 覆盖 oracle)`。
 
     `holdout` 项**不放进 `build()` 的全集** —— 它们是流程 B 的「新项」。
@@ -138,7 +138,11 @@ def _assemble(name: str, nodes, edges, holdout: int, remove: int = 0,
     if locked:
         kernel, _plug = _build()
     else:
-        kernel, _plug = reusable_build(("assemble", name, holdout), nodes, edges, _build)
+        # ⚠️ **`predicates` 必须进 tag** —— 否则「开谓词」与「不开」两种装配
+        #    会撞同一份缓存（`reusable_build` 的 docstring 明说：tag 必须把
+        #    「哪份装配」说全，否则两种装配会撞）。
+        kernel, _plug = reusable_build(("assemble", name, holdout, predicates),
+                                       nodes, edges, _build)
 
     new = [(i, all_items[i]) for i in sorted(hold)]
     removable = sorted(init_items)[-remove:] if remove > 0 else []
@@ -146,7 +150,8 @@ def _assemble(name: str, nodes, edges, holdout: int, remove: int = 0,
 
 
 def run_one(name: str, holdout: int, only: str | None,
-            remove: int = 0, loaded=None, locked: bool = False) -> tuple[bool, str]:
+            remove: int = 0, loaded=None, locked: bool = False,
+            predicates: bool = False, reflect: bool = False) -> tuple[bool, str]:
     """跑一个方向。返回 `(护栏是否全过, 追踪文本)`。
 
     `loaded` 为 `None` 时自己 `load()`（**生产路径**：`python -m ldv.cli`）。
@@ -159,13 +164,13 @@ def run_one(name: str, holdout: int, only: str | None,
     它是一条**可选入口**，给将来真的并发调用方用；单线程跑它只多付加解锁的代价。
     """
     if loaded is None:
-        loaded = load()
+        loaded = load(predicates=predicates)
     if loaded is None:
         return False, "⚠ 找不到语料 —— 四条流程都跑不起来（这不是通过）"
     nodes, edges, _ = loaded
 
     kernel, queries, new, removable, cover = _assemble(
-        name, nodes, edges, holdout, remove, locked=locked)
+        name, nodes, edges, holdout, remove, locked=locked, predicates=predicates)
     st0 = kernel.stats()
     head = (f"═══ 方向 {name} ═══\n"
             f"  初始：{st0['方向']} 个方向（§K2 判空 {st0['§K2 判空']}），"
@@ -179,6 +184,12 @@ def run_one(name: str, holdout: int, only: str | None,
     if only in (None, "b"):
         b = insert_items(kernel, new)
     n.append(len(kernel.ledger))
+    # ★ **可选入口：反思层**（2026-10-17）—— 只调**展开顺序**，不改结构。
+    #   前提已实测：正序 / 反序跑完 ⇒ 方向数与结构签名**逐字相同**。
+    #   ⇒ 预展开只是「先做哪几个」，最终方向树不变。
+    if reflect:
+        from .core.reflect import apply as _reflect_apply
+        _refl = _reflect_apply(kernel)
     if only in (None, "a"):
         # 跑三条查询 —— 记录累积下来给流程 D 用
         for q in queries[:3]:
@@ -264,6 +275,13 @@ def main(argv: list[str]) -> int:
     #   而默认路径每一步都要付一次加解锁。⇒ 做成**显式**入口，
     #   并用判据证明「锁壳与裸内核**逐字相同**」（`run_tests.test_lock_scope` ⑧）。
     locked = "--locked" in args
+    # ★ **可选入口：推导谓词**（2026-10-17）。默认**不带** ——
+    #   谓词会加宽键集 ⇒ 方向变细；默认路径的 97 条断言 / 624 条测试
+    #   都建立在**不带谓词**的键集上，一个数都不能动。
+    predicates = "--predicates" in args
+    # ★ **可选入口：反思层**（2026-10-17）。只调展开顺序，不改结构 ——
+    #   默认**不带**，因为它会改变「展开次数」这类读数。
+    reflect = "--reflect" in args
 
     steps = [a for a in which if a in ("a", "b", "d", "r")]
     only = steps[0] if len(steps) == 1 else None
@@ -273,12 +291,15 @@ def main(argv: list[str]) -> int:
     print(f"本轮跑：{'A+B+D' if only is None else only.upper()}｜方向：{list(targets)}"
           f"｜维护新项 {holdout}"
           + (f"｜删除 {remove}" if remove else "｜**不删**（`--remove N` 才跑 B′）")
-          + ("｜**并发壳**（`--locked`）" if locked else ""))
+          + ("｜**并发壳**（`--locked`）" if locked else "")
+          + ("｜**推导谓词**（`--predicates`）" if predicates else "")
+          + ("｜**反思层**（`--reflect`，只调顺序）" if reflect else ""))
     print()
 
     all_ok = True
     for name in targets:
-        ok, text = run_one(name, holdout, only, remove, locked=locked)
+        ok, text = run_one(name, holdout, only, remove, locked=locked,
+                           predicates=predicates, reflect=reflect)
         all_ok &= ok
         print(text)
         print()
