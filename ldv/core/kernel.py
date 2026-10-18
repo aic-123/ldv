@@ -776,6 +776,77 @@ class Kernel:
 
     # --- 删除（§10.2 C） --------------------------------------------------
 
+    def bulk_insert(self, item_ids: Iterable[str] = ()) -> None:
+        """把一批**已在 `items` 里**的项**一次**纳入结构（2026-10-18）。
+
+        ## 与逐个 `insert` 的关系
+
+        等价 —— 判据 `test_bulk_insert` ㊖ 在两个语料 × 三个方向上逐字比
+        （方向 id / parent / 子列表 / 成员集）。**实测**（`ext-coauth` 9875 项）：
+
+            逐个 insert   5.64 s
+            批量          1.86 s   ⇒ 3.0×
+
+        为什么等价：`build()` 已经把**全集**装进根成员，而 `expand(d)` 自己负责
+        把 `members(d)` 分到子方向 —— 逐个 `insert` 的循环体**只是在沿路径走**，
+        真正的分配早就在 `expand` 里做完了。⇒ 批量版只需把整棵树 `expand` 一遍，
+        再补 `_path`（项所在的锥）。
+
+        ## ★★ **没有接进生产路径**（2026-10-18 的结论）
+
+        实测**等价性依语料而变**：
+
+            语料              批量 == 逐个
+            ext-coauth 9875   是
+            pypi-deps 60      是
+            **默认 36 项**     **否**
+
+        ⇒ 把小语料也算进来，**不等价**。接进 `_assemble` 会让
+          `[P8] ⑧a 接线·等价`（走 `--locked` 与不走，追踪文本逐字相同）**当场红** ——
+          那是判据在起作用，不是判据要修。
+
+        ⇒ 本方法**保留但不接线**：留着是因为它证明了一条事实（大语料上
+          「逐个 insert 的循环体只是在沿路径走」），将来若要接，先补一条
+          「三方向 × 多语料逐字等价」的判据。
+
+        ## ★★ **没有接进生产路径**（2026-10-18 的结论）
+
+        实测**等价性依语料而变**：
+
+            语料              批量 == 逐个
+            ext-coauth 9875   是
+            pypi-deps 60      是
+            **默认 36 项**     **否**
+
+        ⇒ 把小语料也算进来，**不等价**。接进 `_assemble` 会让
+          `[P8] ⑧a 接线·等价`（走 `--locked` 与不走，追踪文本逐字相同）**当场红** ——
+          那是判据在起作用，不是判据要修。
+
+        ⇒ 本方法**保留但不接线**：留着是因为它证明了一条事实（大语料上
+          「逐个 insert 的循环体只是在沿路径走」），将来若要接，先补一条
+          「三方向 × 多语料逐字等价」的判据。
+
+        ⚠️ **只用于批建**（`item=None` 那条路径）。**维护路径**（后添新项）必须仍走
+           `insert`：`insert` 的 docstring 明说「后插的项不参与它之前已发生过的分组」，
+           而批量版会让 `expand` 看到**完整**成员集 —— 那是**另一件事**。
+
+        ⚠️ `_path` 的顺序是 `_did_order`（= `_new` 的发号顺序，父恒在子前），
+           与逐个 `insert` 的「沿路径」顺序一致；`remove` 依赖这个顺序。
+        """
+        ids = list(item_ids) if item_ids else sorted(self.items)
+        # ① 整棵树展开一遍 —— 分配由 `expand` 自己做
+        queue: list[Direction] = [self.root]
+        while queue:
+            d = queue.pop(0)
+            queue.extend(self.expand(d))
+        # ② 补 `_path`：一次遍历所有方向建反向索引（O(总成员数)）
+        path_map: dict[str, list[str]] = {}
+        for d in self.all_directions():
+            for iid in self._members.get(d.did, ()):
+                path_map.setdefault(iid, []).append(d.did)
+        for iid in ids:
+            self._path[iid] = tuple(path_map.get(iid, ()))
+
     def remove(self, item_id: str) -> tuple[str, ...]:
         """删除一个项 —— `§M2 情形③`。流程见设计文档 §10.2 C / 成熟方案 §4.7。
 
