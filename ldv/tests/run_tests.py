@@ -4450,6 +4450,71 @@ def test_reflect() -> None:
 
 
 
+
+
+def test_loader_sharded() -> None:
+    """★ 分片语料目录三条判据（`loader.load_nodes` / `index.load_nodes_indexed`）。
+
+    起因（2026-10-18）：把 28 万节点摄入成分片目录后，`load_nodes` 已改成 `rglob`，
+    但 `index.py` 还是 `glob` ⇒ 读出 **0 个节点**且**不报错** ⇒ 探针五条判据
+    在空语料上全部「通过」（假绿）。⇒ 三处一起修 + 判据钉住。
+    """
+    import shutil
+    import tempfile
+    from pathlib import Path
+
+    from ldv.corpus.index import load_nodes_indexed
+    from ldv.corpus.loader import CorpusError, load_edges, load_nodes
+    from ldv.checks._fixtures import load as _load
+
+    loaded = _load()
+    assert loaded is not None
+    nodes, edges, _d = loaded
+
+    tmp = Path(tempfile.mkdtemp(prefix="ldv-shard-"))
+    try:
+        flat = tmp / "flat"
+        sharded = tmp / "sharded"
+        (flat / "nodes").mkdir(parents=True)
+        (sharded / "nodes").mkdir(parents=True)
+        # 把默认语料的每个节点写两份：一份扁平、一份按 id 前两位分桶
+        for nid, n in nodes.items():
+            body = (f"---\nid: \"{nid}\"\ntype: \"{n.fields.get('type')}\"\n"
+                    f"relations: {list(n.relations())!r}\n---\n\n正文\n")
+            (flat / "nodes" / f"{nid}.md").write_text(body, encoding="utf-8")
+            sub = sharded / "nodes" / (nid[:2] if len(nid) >= 2 else "00")
+            sub.mkdir(parents=True, exist_ok=True)
+            (sub / f"{nid}.md").write_text(body, encoding="utf-8")
+
+        a, b = load_nodes(flat / "nodes"), load_nodes(sharded / "nodes")
+        same = (set(a) == set(b)
+                and all(a[k].keys == b[k].keys for k in a)
+                and all(a[k].fields == b[k].fields for k in a))
+        ok("★ [分片] ㊏ 分片 == 扁平：同一批节点，两种布局装载结果逐字相同",
+           same and len(b) == len(nodes),
+           f"扁平 {len(a)}｜分片 {len(b)}｜原有 {len(nodes)}")
+
+        # ㊐ 索引也读分片
+        ia, sa = load_nodes_indexed(flat / "nodes", tmp / "idx")
+        # 第一次建索引（全读），第二次才命中 —— 判据要看**第二次**
+        _ib0, _sb0 = load_nodes_indexed(sharded / "nodes", tmp / "idx")
+        ib, sb = load_nodes_indexed(sharded / "nodes", tmp / "idx")
+        ok("★ [分片] ㊐ 索引也读分片：命中数 == 节点数（不再读出 0 个）",
+           sb["命中"] == len(b) and len(ib) == len(nodes),
+           f"命中 {sb['命中']} / 节点 {len(b)}｜索引文件 {Path(sb['索引']).name}")
+
+        # ㊑ 空目录报错（不静默返回空）
+        empty = tmp / "empty"
+        (empty / "nodes").mkdir(parents=True)
+        raised = False
+        try:
+            load_nodes_indexed(empty / "nodes", tmp / "idx")
+        except CorpusError:
+            raised = True
+        ok("★ [分片] ㊑ 空目录要报错：索引路径遇到没有 .md 的目录 ⇒ CorpusError",
+           raised, "抛了 CorpusError" if raised else "静默返回空 ⇒ 假绿")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 def test_direction_request() -> None:
     """★ 方向请求六条判据（`ldv/core/request.py`，2026-10-17）。
 
@@ -7293,6 +7358,7 @@ def main() -> int:
                test_capacity,
                test_impact,
                test_direction_request,
+               test_loader_sharded,
                test_query_hit_items, test_spec_paths, test_maintain,
                test_view_oracles, test_influence_channels, test_views,
                test_multilevel, test_retriever, test_cli_paths,

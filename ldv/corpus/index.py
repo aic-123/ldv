@@ -42,7 +42,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from .loader import Node, keys_of, parse_front_matter
+from .loader import CorpusError, Node, keys_of, parse_front_matter
 
 #: 缓存根（派生数据，随时可删）
 def cache_root() -> Path:
@@ -64,12 +64,19 @@ def load_nodes_indexed(directory: str | Path,
     `统计`：`命中` / `重读` / `丢弃` / `新增` / `索引`（路径或 None）。
     """
     d = Path(directory)
-    files = sorted(d.glob("*.md"))
+    # ⚠️ **`rglob` 而不是 `glob`**（2026-10-18）：与 `loader.load_nodes` 保持一致 ——
+    #    摄入侧可以把节点分片到子目录。第一版用 `glob`，分片语料读出 **0 个节点**，
+    #    而且**没报错**（下文没有空值守卫）⇒ 下游全部判据在空语料上「通过」＝假绿。
+    files = sorted(d.rglob("*.md"))
+    if not files:
+        raise CorpusError(f"{d} 里没有 .md 节点（分片目录也要用 rglob 读）")
     # ① stat 全量（0.47s/万节点 —— 比读盘便宜一个数量级）
     stat: dict[str, tuple[int, int]] = {}
     for f in files:
         st = f.stat()
-        stat[f.name] = (st.st_mtime_ns, st.st_size)
+        # ⚠️ key 是**相对路径**（`arg/arg-0001.md`），不是文件名 ——
+        #    分片目录下文件在子目录里，用 `f.name` 会在 `d / fname` 处找不到它。
+        stat[str(f.relative_to(d))] = (st.st_mtime_ns, st.st_size)
 
     ip = _index_path(d, root)
     old: dict[str, dict] = {}
@@ -93,7 +100,7 @@ def load_nodes_indexed(directory: str | Path,
             hit += 1
         else:
             # ③ 未命中：读这一个文件
-            f = d / fname
+            f = d / fname          # fname 是相对路径 ⇒ 分片也找得到
             fields, body = parse_front_matter(
                 f.read_text(encoding="utf-8", errors="replace"), str(f))
             nid = str(fields.get("id") or f.stem)

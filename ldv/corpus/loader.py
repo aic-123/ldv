@@ -171,11 +171,22 @@ def _node_of(path: Path) -> Node:
 
 
 def load_nodes(directory: str | Path) -> dict[str, Node]:
+    """读语料目录下的全部 `.md` 节点。
+
+    ⚠️ **`rglob` 而不是 `glob`**（2026-10-18）：单层目录在 **28 万文件**量级会退化
+       （实测 `ls -S` 列目录 300 s 超时；装载 >103 分钟仍未完成）。
+       允许摄入侧把节点**分片**到子目录（`nodes/<id 后两位>/xxx.md`），
+       把单个目录的项数降到几千 —— 目录枚举从「一个巨大目录」变成「上百个小目录」。
+
+       - 向后兼容：扁平目录 `rglob("*.md")` 与 `glob("*.md")` 结果**逐字相同**
+         （判据 `test_loader_sharded` 钉这条）
+       - 不读 `_staging/`：缓冲目录在语料目录下，与 `nodes/` 平级 ⇒ 不受影响
+    """
     d = Path(directory)
     if not d.is_dir():
         raise CorpusError(f"语料目录不存在：{d}")
     out: dict[str, Node] = {}
-    for path in sorted(d.glob("*.md")):
+    for path in sorted(d.rglob("*.md")):
         node = _node_of(path)
         if node.id in out:
             raise CorpusError(f"重复的 id：{node.id}")
