@@ -84,7 +84,11 @@ def find_corpus() -> Path | None:
         _HERE.parent.parent / "corpus" / "nodes",
     )
     for cand in pool:
-        if cand.is_dir() and any(cand.glob("*.md")):
+        # ⚠️ **`rglob` + 短路**（2026-10-18）：摄入侧会把节点分片到子目录，
+        #    `glob("*.md")` 在分片目录下**一个都找不到** ⇒ 判定「这不是语料」。
+        #    用 `next(rglob(...), None)` 而不是 `any(rglob(...))` —— 后者会把
+        #    10 万个文件全遍历一遍，这里只要知道「有没有」。
+        if cand.is_dir() and next(cand.rglob("*.md"), None) is not None:
             return cand
     if env:
         raise CorpusError(
