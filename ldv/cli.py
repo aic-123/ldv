@@ -67,7 +67,8 @@ INTENTS = {
 
 
 def _assemble(name: str, nodes, edges, holdout: int, remove: int = 0,
-              locked: bool = False, predicates: bool = False):
+              locked: bool = False, predicates: bool = False,
+              reuse: bool = True):
     """造 `(内核, 查询集, 待插入的新项, 待删除的项 id, 覆盖 oracle)`。
 
     `holdout` 项**不放进 `build()` 的全集** —— 它们是流程 B 的「新项」。
@@ -135,7 +136,12 @@ def _assemble(name: str, nodes, edges, holdout: int, remove: int = 0,
     #      而且在随仓库那份 36 项语料上重建很便宜。
     #   ⚠️ 这**不是**「缓存坏了」—— 是 `LockedKernel` **不可深拷贝**这条性质。
     #      它是一条**组合性边界**，写在 `docs/并发接口设计.md` §4。
-    if locked:
+    if locked or not reuse:
+        # `locked`：`LockedKernel` 不可深拷贝（见上）。
+        # `not reuse`：**免掉 `reusable_build` 的 `deepcopy`**（2026-10-18）。
+        #   实测 3000 节点上 `deepcopy` 占 cProfile 的 **13%**（23.9 万次递归调用）。
+        #   ⚠️ 只给**探针/一次性调用**用：生产路径必须留深拷贝 ——
+        #      共享同一对象会让 `CL3`（`only="d"`，必须红）**静默变绿**（见上面那段）。
         kernel, _plug = _build()
     else:
         # ⚠️ **`predicates` 必须进 tag** —— 否则「开谓词」与「不开」两种装配

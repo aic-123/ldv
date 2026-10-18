@@ -30,6 +30,7 @@ B 要遍历整张图才能回答，遇到大方向它会**拒绝遍历**。所�
 
 from __future__ import annotations
 
+from collections import Counter
 from typing import Any, Sequence
 
 from ..core.direction import Direction
@@ -158,7 +159,21 @@ class KeysetPlugin:
         if not candidates:
             return None                             # 所有项键集相同 ⇒ 分不开
         n = len(items)
-        best = min(candidates, key=lambda k: (abs(sum(1 for ks in keysets if k in ks) / n - 0.5), k))
+        # ★ **一次遍历算全部键的频次**（2026-10-18 优化，与旧式**逐字等价**）：
+        #
+        #     旧：min(candidates, key=lambda k: sum(1 for ks in keysets if k in ks))
+        #         ⇒ O(|候选| × |成员|) —— 对每个键把全部成员各扫一遍
+        #     新：Counter 一次 update 全部成员 ⇒ O(|成员| × avg_keys)
+        #
+        #     `counts[k]` 与 `sum(1 for ks in keysets if k in ks)` 是**同一个数**
+        #     （每个 `ks` 是 frozenset，`update` 为其中每个键计一次）。
+        #     ⇒ 选出的 `best` 逐字相同（判据 `test_split_cost` ㊒ 钉这条）。
+        #     ⚠️ 并列时的次序也必须一样：键仍是 `candidates`（已 sorted），
+        #        `min` 取第一个最小值 ⇒ 字典序最小的那个，与旧式同。
+        counts: Counter[str] = Counter()
+        for ks in keysets:
+            counts.update(ks)
+        best = min(candidates, key=lambda k: (abs(counts.get(k, 0) / n - 0.5), k))
         # ★ 两个字段都**只从父续**。这样 `覆盖(父) ⊆ 覆盖(子1) ∪ 覆盖(子2)` 是
         #   **结构上成立**的：x 满足父 ⇒ 要么有 `best`（落子 1，代价 0），
         #   要么没有（落子 2，代价 0）—— 两半合起来恰好是父的覆盖。

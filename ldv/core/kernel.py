@@ -222,6 +222,12 @@ class Kernel:
         self._path: dict[str, tuple[str, ...]] = {}
         self._counter = 0
         self._root: Direction | None = None
+        #: `all_directions()` 的**排序结果缓存**（2026-10-18 优化）。
+        #: 实测它在 3000 节点上被调 6081 次、`sorted` 占 cProfile 的 **27%** ——
+        #: 而 `_dirs` 只在 `_new` 里增长 ⇒ 两次 `_new` 之间排序结果恒定。
+        #: ⚠️ 失效点是 `_new`（唯一增加方向的地方）；漏了会让方向数少报，判据会抓。
+        self._all_cache: list[Direction] | None = None
+        self._all_ver: tuple[int, int] | None = None
         # 记账位（§8.1）—— 内核知道它**展示过**什么，所以倾向由内核填
         #: **展示**顺序 —— 由 `show()` 显式设。倾向权重的位次从这里来。
         self._shown: tuple[str, ...] = ()
@@ -251,6 +257,7 @@ class Kernel:
         d = Direction(did=did, rank=rank, payload=payload, witness=witness,
                       origin=origin, parent=parent)
         self._dirs[did] = d
+        self._all_cache = None            # ← 排序缓存失效（快速路径）
         self.ledger.append(EVENT_BORN, did, rank=rank, origin=origin, parent=parent)
         return d
 
@@ -283,7 +290,25 @@ class Kernel:
         return self._dirs[did]
 
     def all_directions(self) -> list[Direction]:
-        return [self._dirs[k] for k in sorted(self._dirs, key=_did_order)]
+        """全部方向，按 `_did_order` 排 —— **结果缓存**（`_new` 时失效）。
+
+        ⚠️ 返回的是**同一个 list 对象**（缓存复用）⇒ 调用方**不许就地改它**。
+           现有调用方全部只读（`for d in ...` / `len(...)` / 切片），
+           判据 `test_split_cost` ㊓ 会用结构签名比对，改坏会当场红。
+        """
+        # ⚠️ **失效判据用 `(len, _counter)` 而不是「只靠 `_new` 清空」**
+        #    （2026-10-18 被判据当场抓到）：`run_tests` 的 `_DeleteDir` 注入版
+        #    用 `self._dirs.pop(did)` **直接删**、绕过 `_new` ⇒ 只靠 `_new` 清空
+        #    的缓存**读不到这次删除** ⇒ 注入无效 ⇒ 三条反向对照全变成「基线=0 注入=0」
+        #    （空转）。⇒ 每读一次就比 `(方向数, 已发号数)`：
+        #       增（`_new`）    len+1、counter+1  ⇒ 变
+        #       删（pop）       len−1            ⇒ 变
+        #       改对象内容      缓存存的是**同一引用** ⇒ 自动跟着变
+        ver = (len(self._dirs), self._counter)
+        if self._all_cache is None or self._all_ver != ver:
+            self._all_cache = [self._dirs[k] for k in sorted(self._dirs, key=_did_order)]
+            self._all_ver = ver
+        return self._all_cache
 
     def children_of(self, d: Direction) -> tuple[Direction, ...]:
         return tuple(self._dirs[k] for k in self._children.get(d.did, ()))
