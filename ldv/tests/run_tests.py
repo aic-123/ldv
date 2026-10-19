@@ -4563,6 +4563,63 @@ def test_loader_sharded() -> None:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+
+
+def test_contradiction_requests() -> None:
+    """★ 矛盾 ⇒ 请求（`reflect.contradiction_requests`，2026-10-19）。
+
+    用户裁定：矛盾的修订方式是**加新谓词 / 请求新方向** ⇒ 要产出请求，
+    走 `directions.json` 那条通道（人拍板 ⇒ `request.apply_approved` 执行）。
+    """
+    from ldv.core import reflect as RF
+    from ldv.core.kernel import Kernel
+    from ldv.checks._fixtures import load as _load
+    from ldv.plugins.keyset import KeysetPlugin
+
+    loaded = _load()
+    assert loaded is not None
+    nodes, _e, _d = loaded
+
+    def _build():
+        items = {i: n.as_item() for i, n in nodes.items()}
+        k = Kernel(KeysetPlugin(), items)
+        k.build(k.plugin.merge([]))
+        k.bulk_insert(sorted(items))
+        return k
+
+    # ── ㊞ 没矛盾 ⇒ 0 条请求，但明说查了什么 ─────────────────────────────
+    k0 = _build()
+    r0 = RF.contradiction_requests(k0)
+    ok("★ [矛盾→请求] ㊞ 没矛盾 ⇒ 0 条请求，且**明说查了什么**",
+       r0["请求"] == [] and "查了" in r0["说明"] and bool(r0["本趟查了"]),
+       f"请求 {len(r0['请求'])} 条｜说明 {r0['说明'][:50]}｜查了 {list(r0['本趟查了'])}")
+
+    # ── ㊟ 请求不改结构 ──────────────────────────────────────────────────
+    sig0 = [(d.did, d.parent, tuple(sorted(k0.members_of(d))))
+            for d in k0.all_directions()]
+    RF.contradiction_requests(k0)
+    sig1 = [(d.did, d.parent, tuple(sorted(k0.members_of(d))))
+            for d in k0.all_directions()]
+    ok("★ [矛盾→请求] ㊟ 请求**不改结构**（调用前后方向与成员逐字不变）",
+       sig0 == sig1, "结构未变" if sig0 == sig1 else "**结构被改了**")
+
+    # ── ㊝ 造一个「边打架」⇒ 必须产出一条请求，且带证据 ──────────────────
+    k1 = _build()
+    dirs = [d for d in k1.all_directions() if d.parent]
+    assert dirs, "语料里没有带父的方向"
+    victim = dirs[-1]
+    par = victim.parent
+    # 只从**父的子列表**里摘掉它 —— 声明（parent）还在 ⇒ 边打架
+    kids = tuple(c for c in k1._children.get(par, ()) if c != victim.did)
+    k1._children[par] = kids
+    r1 = RF.contradiction_requests(k1)
+    hit = [x for x in r1["请求"] if x["信号"] == "矛盾：边打架"]
+    ok("★ [矛盾→请求] ㊝ 有矛盾 ⇒ 一条矛盾一条请求，且**带证据**",
+       len(r1["请求"]) == len(RF.contradictions(k1)["矛盾"]) and bool(hit)
+       and hit[0]["方向"] == victim.did and hit[0]["判据编号"] == "矛盾"
+       and "新谓词" in hit[0]["请求"],
+       f"矛盾 {len(RF.contradictions(k1)['矛盾'])} 条 ⇒ 请求 {len(r1['请求'])} 条"
+       f"｜首条 {hit[0]['信号'] if hit else '（无）'} @ {hit[0]['方向'] if hit else '-'}")
 def test_approved_loop() -> None:
     """★ 反思层闭环：`directions.json` 的 `已批准` **真的被用上**（2026-10-19）。
 
@@ -7527,6 +7584,7 @@ def main() -> int:
                test_impact,
                test_direction_request,
                test_approved_loop,
+               test_contradiction_requests,
                test_loader_sharded,
                test_query_hit_items, test_spec_paths, test_maintain,
                test_view_oracles, test_influence_channels, test_views,

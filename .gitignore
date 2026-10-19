@@ -35,3 +35,6 @@ _data/snap-hepth/*
 _data/snap-hepth-dag/*
 !_data/snap-hepth-dag/view_spec.json
 !_data/snap-hepth-dag/views.json
+
+# 反思层的请求登记（运行时产物，不是语料）—— 由 cli --reflect --write-requests 生成
+directions.json

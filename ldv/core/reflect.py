@@ -51,24 +51,22 @@ def contradictions(kernel: Any) -> dict[str, Any]:
 
     ⚠️ 清单为空时也要**明说本趟查了什么**（否则「没查」与「查了没发现」长得一样）。
 
-    ## ★★ 为什么这一份**不做闭环**（2026-10-19，与「方向请求」不同）
+    ## ★★ 修订方式：**加新谓词 / 请求新方向**（2026-10-19 用户裁定）
 
-    `request.apply_approved` 那条路是**闭环**的：人批准新维度 ⇒ 系统真的把它用上。
-    这一份**刻意不闭环**，理由：
+    这三类矛盾都指向同一件事：**当前谓词与方向切不开这批项** ——
 
-        这三类全是**系统自己建出来的结构损坏** —— 边打架 / 子覆盖越出父 / 孤立方向，
-        正是 `B13`（良基树）与 `§I4`（覆盖嵌套）判据抓的同一件事。
-        ⇒ 它们是 **bug 指示器**，不是「待办清单」。
+        边打架       d 声明了父 p，但不在 p 的子列表里 ⇒ 归属与声明对不上
+        子覆盖越出父 子方向的成员并集 ⊄ 父方向成员 ⇒ 有一条路把项送到了错的层
+        孤立方向     既没父也不是根 ⇒ 它没有「从哪来」
 
-    如果这里自动「修」（补子列表、裁掉越界的成员、给孤立方向挂个父），
-    **等于把 bug 掩盖掉**：判据从此不红，而结构仍然错 —— 那是最坏的一种绿。
+    ⇒ 修订动作**不是**「系统自己补子列表 / 裁成员」（那会把 bug 掩盖成绿），
+      而是 **`contradiction_requests()` 产出一条请求**：要一个能把这些项
+      归到正确位置的新谓词，或一个新方向。
 
-    ⇒ 正确处置：**报红**（判据各管各的），人来修代码。
-      这份清单只是把读数**汇总给人看**，不产生任何自动修正。
+    ⇒ 请求进 `directions.json` 的 `请求` 段，与 `B19` 那条**同一个通道**：
+      人拍板 ⇒ 写 `已批准` ⇒ `request.apply_approved` 真的用上（闭环）。
 
-    对比：方向请求报的是「**材料**不够」（缺一个新维度），修正动作是**人加维度**
-    ⇒ 系统执行人的决定是安全的；矛盾报告报的是「**系统**坏了」，修正动作是**改代码**
-    ⇒ 系统不能自己改自己。
+    ⚠️ 仍然**不自动改结构**：加谓词/加方向是**人的决定**，系统只产证据 + 执行决定。
     """
     rows: list[dict[str, Any]] = []
     dirs = kernel.all_directions()
@@ -110,6 +108,66 @@ def contradictions(kernel: Any) -> dict[str, Any]:
         # ★ 查了什么（「没查」与「查了没发现」必须分得开）
         "检查项": ["边打架", "子覆盖越出父", "孤立方向"],
         "覆盖读数": {"方向数": len(dirs), **checked},
+    }
+
+
+def contradiction_requests(kernel: Any, contra: dict[str, Any] | None = None
+                           ) -> dict[str, Any]:
+    """把矛盾清单**转成方向请求**（2026-10-19，用户裁定：修订方式是加谓词/加方向）。
+
+    每一类矛盾都指向「**当前谓词与方向切不开这批项**」，所以请求的内容是同一个：
+
+        需要一个能把这批项**归到正确位置**的新谓词（或一个新方向）
+
+    ⚠️ **只产证据，不改结构** —— 与 `request.direction_requests` 同一个原则：
+       系统只提问、不回答；人拍板后由 `request.apply_approved` 执行。
+
+    ⚠️ 清单为空时**明说查了什么**（否则「没查」与「查了没发现」长得一样）。
+
+    返回结构与 `request.direction_requests` 对齐（`请求` / `本趟查了` / `说明`），
+    这样 `request.write_requests` 可以直接把它并进 `directions.json`。
+    """
+    c = contra if contra is not None else contradictions(kernel)
+    rows = c.get("矛盾", []) or []
+    reqs: list[dict[str, Any]] = []
+    for r in rows:
+        kind = str(r.get("类型", ""))
+        did = str(r.get("方向", ""))
+        # 涉及的项：尽量窄 —— 只取**真正有关**的那批，不是整个语料
+        involved: list[str] = []
+        try:
+            d = kernel.direction(did)
+            involved = sorted(kernel.members_of(d))
+        except Exception:
+            involved = []
+        if kind == "子覆盖越出父":
+            # 越出的那部分才是问题所在（父的成员之外的那些）
+            try:
+                p = kernel.direction(did)
+                union: set[str] = set()
+                for k in kernel.children_of(p):
+                    union |= set(kernel.members_of(k))
+                involved = sorted(union - set(kernel.members_of(p)))
+            except Exception:
+                pass
+        reqs.append({
+            "信号": f"矛盾：{kind}",
+            "方向": did,
+            "父": r.get("父"),
+            "涉及的项": involved,
+            "涉及的项数": len(involved),
+            "当前状态": str(r.get("说明", "")),
+            "请求": ("需要一个能把这批项**归到正确位置**的新谓词（或一个新方向）"
+                     "—— 当前谓词与方向切不开它们"),
+            "判据编号": "矛盾",
+        })
+    return {
+        "请求": reqs,
+        "本趟查了": c.get("覆盖读数", {}),
+        "说明": (f"矛盾 {len(reqs)} 条 ⇒ {len(reqs)} 条请求 —— "
+                 if reqs else
+                 f"矛盾 0 条（查了 {c.get('检查项')}）—— ")
+                + "人拍板后写进 `directions.json` 的 `已批准` / `已拒绝`",
     }
 
 

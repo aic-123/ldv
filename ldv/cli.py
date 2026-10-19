@@ -158,8 +158,8 @@ def _assemble(name: str, nodes, edges, holdout: int, remove: int = 0,
 def run_one(name: str, holdout: int, only: str | None,
             remove: int = 0, loaded=None, locked: bool = False,
             predicates: bool = False, reflect: bool = False,
-            indexed: bool = False, apply_approved: bool = False
-            ) -> tuple[bool, str]:
+            indexed: bool = False, apply_approved: bool = False,
+            write_requests: bool = False) -> tuple[bool, str]:
     """跑一个方向。返回 `(护栏是否全过, 追踪文本)`。
 
     `loaded` 为 `None` 时自己 `load()`（**生产路径**：`python -m ldv.cli`）。
@@ -175,7 +175,13 @@ def run_one(name: str, holdout: int, only: str | None,
         loaded = load(predicates=predicates, indexed=indexed)
     if loaded is None:
         return False, "⚠ 找不到语料 —— 四条流程都跑不起来（这不是通过）"
-    nodes, edges, corpus_dir = loaded
+    nodes, edges, _dangling = loaded
+    # ⚠️ **`load()` 的第三个是悬挂边集合，不是目录**（2026-10-19 踩到：
+    #    直接把 frozenset 当 `corpus_dir` 传 ⇒ `TypeError: not 'frozenset'`）。
+    #    `directions.json` 在**语料根**（`nodes/` 的父目录）。
+    from .checks._fixtures import find_corpus as _find_corpus
+    _root = _find_corpus()
+    corpus_dir = _root.parent if _root is not None else None
 
     # ★ **闭环：把 `directions.json` 的 `已批准` 维度真的用上**（2026-10-19）
     #
@@ -186,7 +192,7 @@ def run_one(name: str, holdout: int, only: str | None,
     #      ⇒ 会**静默改变所有既有读数**。默认关 = 既有基线一个字不动。
     #   ⚠️ 红线不变：只执行**人写进 `已批准`** 的，系统不自己加维度。
     ledger_ap: dict = {}
-    if apply_approved:
+    if apply_approved and corpus_dir is not None:
         from ldv.core import request as RQ
         nodes, ledger_ap = RQ.apply_approved(nodes, corpus_dir)
 
@@ -211,6 +217,24 @@ def run_one(name: str, holdout: int, only: str | None,
     if reflect:
         from .core.reflect import apply as _reflect_apply
         _refl = _reflect_apply(kernel)
+        # ★ **请求落盘**（2026-10-19）：在这之前 `write_requests` **只在测试里被调用**，
+        #   磁盘上从来没有 `directions.json` ⇒ 请求不落盘 ⇒ 人看不到 ⇒
+        #   「报告 → 人拍板 → 系统真的做」这条闭环**入口就是断的**。
+        #
+        #   ⚠️ 只在 `--write-requests` 时写：它会**改语料目录**（副作用），
+        #      默认不写，免得跑一次测试就往语料里丢文件。
+        if write_requests and corpus_dir is not None:
+            from .core.reflect import contradiction_requests
+            from .core.request import direction_requests, write_requests as _wr
+            req = direction_requests(kernel, cover)
+            creq = contradiction_requests(kernel)
+            merged = dict(req)
+            merged["请求"] = list(req.get("请求", [])) + list(creq.get("请求", []))
+            merged["说明"] = (f"方向请求 {len(req.get('请求', []))} 条 + "
+                              f"矛盾请求 {len(creq.get('请求', []))} 条 —— "
+                              + str(req.get("说明", "")))
+            path_w = _wr(corpus_dir, merged)
+            print(f"  请求已写：{path_w}（{len(merged['请求'])} 条）")
     if only in (None, "a"):
         # 跑三条查询 —— 记录累积下来给流程 D 用
         for q in queries[:3]:
@@ -294,6 +318,8 @@ def main(argv: list[str]) -> int:
     # ★ 闭环开关（2026-10-19）：把 `directions.json` 的 `已批准` 维度真的用上。
     #   默认**关** —— 开了会改变键集 ⇒ 改变方向数 ⇒ 改变全部读数。
     do_apply_approved = "--apply-approved" in args
+    # ★ 请求落盘（2026-10-19）：`--reflect --write-requests` 才写 `directions.json`。
+    do_write_requests = "--write-requests" in args
     # ★ **可选入口：并发壳**（2026-10-15，`docs/并发接口设计.md` §7 阶段 1）。
     #   默认**不锁** —— 接线本身不产生收益（当前没有并发调用方），
     #   而默认路径每一步都要付一次加解锁。⇒ 做成**显式**入口，
@@ -329,7 +355,8 @@ def main(argv: list[str]) -> int:
     for name in targets:
         ok, text = run_one(name, holdout, only, remove, locked=locked,
                            predicates=predicates, reflect=reflect, indexed=indexed,
-                           apply_approved=do_apply_approved)
+                           apply_approved=do_apply_approved,
+                           write_requests=do_write_requests)
         all_ok &= ok
         print(text)
         print()
