@@ -198,6 +198,34 @@ def approved_dimensions(corpus_dir: Path) -> list[dict[str, Any]]:
     return out
 
 
+def approved_predicates(corpus_dir: Path) -> list[dict[str, Any]]:
+    """读 `已批准` 里声明了**谓词定义**的那些条目。
+
+    条目格式（人写，与 `predicates.json` 的 `基础谓词` **同一种形状**）：
+
+        {"信号": "矛盾：边打架", "谓词": {"名": "……", "定义": ["出度档>2", "入度档>5"]}}
+
+    ⚠️ 只认**形状完整**的（有名 + 有定义）—— 半条定义不猜。
+    """
+    path = Path(corpus_dir) / "directions.json"
+    if not path.is_file():
+        return []
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    out: list[dict[str, Any]] = []
+    for row in doc.get("已批准", []) or []:
+        if not isinstance(row, dict):
+            continue
+        p = row.get("谓词")
+        if isinstance(p, dict) and str(p.get("名") or "").strip() \
+                and isinstance(p.get("定义"), list) and p.get("定义"):
+            out.append({"名": str(p["名"]).strip(),
+                        "定义": [str(x) for x in p["定义"]]})
+    return out
+
+
 def _field_of(fields: dict[str, Any], name: str) -> Any:
     """按点路径取值（`source.kind`）。取不到 ⇒ `None`。"""
     cur: Any = fields
@@ -208,8 +236,9 @@ def _field_of(fields: dict[str, Any], name: str) -> Any:
     return cur
 
 
-def apply_approved(nodes: dict[str, Any], corpus_dir: Path
-                   ) -> tuple[dict[str, Any], dict[str, Any]]:
+def apply_approved(nodes: dict[str, Any], corpus_dir: Path,
+                   edges: dict[str, frozenset[str]] | None = None,
+                   preds: Any = ()) -> tuple[dict[str, Any], dict[str, Any]]:
     """把 `已批准` 的维度**注入成键**（`维度=值`），返回 `(新 nodes, 账本)`。
 
     **纯函数**：不改入参，返回新的 `Node` 对象。
@@ -222,12 +251,26 @@ def apply_approved(nodes: dict[str, Any], corpus_dir: Path
 
     ⚠️ 「未生效」不是错误 —— 它可能是：批准的是**还没摄入**的字段（得先补材料），
        或者人写错了字段名。两种情况都要人看见，所以**必须报**，不能静默。
+
+    ## 第二条路：批准一个**谓词**（2026-10-19）
+
+    人在 `已批准` 里写 `{"谓词": {"名": …, "定义": ["…", "…"]}}` ⇒ 走
+    `predicates.apply_basic`，给满足合取的节点加键 `名`。
+
+    ⚠️ 需要 `edges` 与 `preds`（推导出的单谓词）—— 没有它们**不生效**，
+       并记一条「未生效：没推导谓词」而不是假装成功。
+    ⚠️ `apply_basic` **就地改** `Node.keys` ⇒ 这里先造一份**可安全改的副本**，
+       保证函数仍是纯函数（判据 ㊘b）。
     """
     from dataclasses import replace
 
     dims = approved_dimensions(corpus_dir)
-    ledger: dict[str, Any] = {"生效": [], "未生效": [], "生效项数": 0, "已批准条目": len(dims)}
-    if not dims:
+    pred_rows = approved_predicates(corpus_dir)
+    ledger: dict[str, Any] = {"生效": [], "未生效": [], "生效项数": 0,
+                              "已批准条目": len(dims), "批准的谓词": len(pred_rows)}
+    # ⚠️ 两处都要查：只批准**谓词**（没有维度）时**不许**在这里返回 ——
+    #    第一版就是 `if not dims: return` ⇒ 谓词路径永远走不到（判据 ㊠/㊡ 当场红）。
+    if not dims and not pred_rows:
         return nodes, ledger
 
     # ① 先判「材料里到底有没有」—— 这一趟只看，不改
@@ -249,7 +292,10 @@ def apply_approved(nodes: dict[str, Any], corpus_dir: Path
         else:
             ledger["生效"].append({"维度": d["维度"], "取值": d["取值"], "项数": hit})
 
-    if not ledger["生效"]:
+    # ⚠️ **只在「既没有生效的维度、也没有批准的谓词」时才提前返回** ——
+    #    第一版在这把谓词路径一起挡掉了（维度没生效就 return ⇒
+    #    批准了谓词也永远不生效，判据 ㊠/㊡ 当场红）。
+    if not ledger["生效"] and not approved_predicates(corpus_dir):
         return nodes, ledger
 
     # ② 真的加键（`维度=值`，与 `keys_of` 的枚举字段同一种形状）
@@ -268,6 +314,31 @@ def apply_approved(nodes: dict[str, Any], corpus_dir: Path
             ledger["生效项数"] += 1
         else:
             new[nid] = n
+
+    # ③ 第二条路：批准**谓词**（`predicates.apply_basic`）
+    if pred_rows:
+        if edges is None or not list(preds):
+            ledger["未生效"].append({
+                "维度": "（谓词）", "取值": [r["名"] for r in pred_rows],
+                "原因": ("批准了谓词，但**没有 `edges` / 推导出的单谓词**"
+                         "—— 先跑 `--predicates`（或让调用方把它们传进来）"),
+            })
+        else:
+            from dataclasses import replace as _replace
+            from ldv.corpus.predicates import apply_basic
+            work = {nid: _replace(n) for nid, n in new.items()}   # 可安全就地改的副本
+            touched = apply_basic(work, edges, pred_rows, list(preds))
+            if touched == 0:
+                ledger["未生效"].append({
+                    "维度": "（谓词）", "取值": [r["名"] for r in pred_rows],
+                    "原因": "**没有任何节点满足**这些谓词的合取 —— 定义对了但材料不对",
+                })
+            else:
+                ledger["生效"].append({
+                    "维度": "（谓词）", "取值": [r["名"] for r in pred_rows],
+                    "项数": touched,
+                })
+                new = work
     return new, ledger
 
 

@@ -4702,6 +4702,47 @@ def test_approved_loop() -> None:
            bool(led3["生效"]) and led3["生效"][0]["项数"] == len(hit) > 0
            and led3["生效项数"] == len(hit),
            f"取值 {some_type!r} ⇒ {led3['生效项数']} 项（实测命中 {len(hit)}）")
+
+        # ── 谓词路径：批准一个**谓词定义** ⇒ 真的加键（2026-10-19）──────
+        from ldv.corpus import predicates as PR
+
+        _root_c = Path(__file__).resolve().parents[2] / "ldv" / "corpus"
+        rules, budget = PR.load_rules(_root_c)
+        used0, _dr, _pm = PR.derive(nodes, _edges, rules, budget)
+        first = str(used0[0].谓词) if used0 else ""
+        if not first:
+            PASS.append("★ [闭环] ㊠-㊢ 谓词路径（**跳过**：这份语料没有推导出单谓词）")
+
+        t2 = Path(tempfile.mkdtemp(prefix="ldv-approved-pred-"))
+        try:
+            # ㊠ 有 preds ⇒ 加键
+            (t2 / "directions.json").write_text(json.dumps(
+                {"已批准": [{"谓词": {"名": "人起的名字", "定义": [first]}}]},
+                ensure_ascii=False), encoding="utf-8")
+            np_, lp_ = RQ.apply_approved(nodes, t2, edges=_edges, preds=used0)
+            hit_ = [i for i in np_ if "人起的名字" in np_[i].keys]
+            ok("★ [闭环] ㊠ 批准谓词 + 有 preds ⇒ 满足合取的节点真的加键「名」",
+               bool(lp_["生效"]) and lp_["生效"][0]["维度"] == "（谓词）"
+               and len(hit_) == lp_["生效"][0]["项数"] > 0,
+               f"定义 [{first!r}] ⇒ 命中 {lp_['生效'][0]['项数'] if lp_['生效'] else 0} 项")
+
+            # ㊡ 没 preds ⇒ 未生效（不假装）
+            _np2, lp2 = RQ.apply_approved(nodes, t2, edges=_edges, preds=())
+            ok("★ [闭环] ㊡ 批准谓词但**没有** preds ⇒ 记「未生效」",
+               not lp2["生效"] and any("谓词" in str(x.get("维度")) for x in lp2["未生效"]),
+               f"未生效 {[x.get('维度') for x in lp2['未生效']]}")
+
+            # ㊢ 定义引用不存在的谓词 ⇒ 不加键
+            (t2 / "directions.json").write_text(json.dumps(
+                {"已批准": [{"谓词": {"名": "空名字", "定义": ["不存在的谓词>9"]}}]},
+                ensure_ascii=False), encoding="utf-8")
+            np3, lp3 = RQ.apply_approved(nodes, t2, edges=_edges, preds=used0)
+            ghost = [i for i in np3 if "空名字" in np3[i].keys]
+            ok("★ [闭环] ㊢ 定义引用不存在的谓词 ⇒ **不加键**、不静默造",
+               not ghost and not lp3["生效"],
+               f"加了 {len(ghost)} 个键（应为 0）")
+        finally:
+            shutil.rmtree(t2, ignore_errors=True)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 def test_direction_request() -> None:

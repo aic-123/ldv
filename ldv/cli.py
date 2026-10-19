@@ -194,7 +194,15 @@ def run_one(name: str, holdout: int, only: str | None,
     ledger_ap: dict = {}
     if apply_approved and corpus_dir is not None:
         from ldv.core import request as RQ
-        nodes, ledger_ap = RQ.apply_approved(nodes, corpus_dir)
+        # ★ 谓词路径要 `edges` + 推导出的单谓词 —— 只在开了 `--predicates` 时推导。
+        #   ⚠️ 没开时**不猜**：`apply_approved` 会记一条「未生效：没推导谓词」。
+        _preds = ()
+        if predicates:
+            from .corpus import predicates as PR
+            _rules, _budget = PR.load_rules(corpus_dir)
+            _preds, _dropped, _params = PR.derive(nodes, edges, _rules, _budget)
+        nodes, ledger_ap = RQ.apply_approved(nodes, corpus_dir,
+                                             edges=edges, preds=_preds)
 
     kernel, queries, new, removable, cover = _assemble(
         name, nodes, edges, holdout, remove, locked=locked, predicates=predicates)
