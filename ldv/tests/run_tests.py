@@ -3625,6 +3625,39 @@ def test_persistence() -> None:
 #   `test_lock_scope` 守**进程内**的锥锁（`§10.2 D` 的 P8）；
 #   这一组守**面 B**（多个进程共享同一个落盘路径）—— 进程内的锁**管不到**另一个进程。
 
+def _reader_blocks_replace() -> tuple[bool, str]:
+    """**前置探针**：本环境里「持一个读句柄」是否真的挡得住 `os.replace`。
+
+    ⚠️ `test_persist_atomic` 的 ⑤⑥ 以这个现象为前提，而它**不是代码保证的** ——
+       取决于解释器/平台给 `open()` 的共享语义（`FILE_SHARE_DELETE` 之类）。
+       2026-10-19 实测：windows + Python 3.14 上一次⑤报「尝试 1 次」= 没挡住，
+       判据红而被测代码一点没变 ⇒ **拿运气当判据**。
+
+    用一个**隔离的实验**测它（临时目录 + 两个文件 + 一个读句柄 + 一次 replace），
+    返回 `(是否挡住, 原因)`。挡不住 ⇒ 调用方**点名跳过**，不红。
+    """
+    import os as _os
+    import shutil as _sh
+    import tempfile as _tf
+    from pathlib import Path as _P
+
+    d = _P(_tf.mkdtemp())
+    try:
+        a, b = d / "a.md", d / "b.md"
+        a.write_text("x", encoding="utf-8")
+        b.write_text("y", encoding="utf-8")
+        h = open(a, "rb")
+        try:
+            _os.replace(b, a)
+            return False, "持读句柄时 os.replace 仍成功"
+        except PermissionError:
+            return True, "持读句柄时 os.replace 被拒（PermissionError）"
+        finally:
+            h.close()
+    finally:
+        _sh.rmtree(d, ignore_errors=True)
+
+
 def test_persist_atomic() -> None:
     """★★ **阶段 2**：跨进程落盘 —— **不撕裂**。
 
@@ -3735,9 +3768,38 @@ def test_persist_atomic() -> None:
     # ⚠️ **不 return**：⑤⑥ 之后还有 ③（读者 `read()` 一次都不许抛），
     #    提前退出会把它一起跳过 —— 那是「跳过变成静默省略」。
     _is_win = _sys.platform == "win32"
+    # ★★ **先验证前提，再判 ⑤⑥**（2026-10-19 修 CI 偶发红）
+    #
+    #    ⑤⑥ 的前提是「**持一个读句柄 ⇒ `os.replace` 被拒**」。这个前提
+    #    **不是代码保证的**，它取决于解释器/平台给 `open()` 的共享语义
+    #    （`FILE_SHARE_DELETE` 之类）。实测：`9007cb8` 在
+    #    **windows-latest · Python 3.14** 上⑤报「尝试 **1** 次」——
+    #    也就是句柄**没挡住**替换 ⇒ 判据红，而被测代码一点没变。
+    #
+    #    ⇒ 拿运气当判据。改成：**先用一个隔离实验测这个前提**，
+    #       前提不成立 ⇒ **点名跳过并写清实测原因**，而不是红。
+    #       （「跳过 ≠ 通过」，所以消息里带实测值与判据编号。）
+    _blocks, _why = _reader_blocks_replace()
+    _can_judge = _is_win and _blocks
+    if not _can_judge:
+        PASS.append("★★ [阶段2] ⑤⑥ 持句柄挡住 os.replace（**跳过**："
+                    f"{'POSIX 的 rename 是原子的' if not _is_win else '本环境实测'}"
+                    f" ⇒ 持读句柄时 os.replace 仍成功（{_why}）"
+                    " —— 这两条只对「句柄挡得住替换」的环境有意义）")
+
+    # ── 前置探针本身要**双向都能判**（否则「跳过」可能只是探针坏了） ───────
+    #    POSIX 上它必须报「挡不住」；若报「挡住了」，说明探针坏了 ⇒
+    #    下面的 ⑤⑥ 会在 Linux 上被当成 Windows 判 ⇒ 必然红。
     if not _is_win:
-        PASS.append("★★ [阶段2] ⑤⑥ 持句柄挡住 os.replace（**跳过**：POSIX 的 rename "
-                    "是原子的、读者持旧 inode ⇒ 这个现象不存在；这两条只对 Windows 有意义）")
+        ok("★ [阶段2] 前置探针在 POSIX 上如实报「挡不住」（探针自身没坏）",
+           _blocks is False and "仍成功" in _why, f"探针实测：{_why}")
+
+    # ── 前置探针本身要**双向都能判**（否则「跳过」可能只是探针坏了） ───────
+    #    POSIX 上它必须报「挡不住」；若报「挡住了」，说明探针坏了 ⇒
+    #    下面的 ⑤⑥ 会在 Linux 上被当成 Windows 判 ⇒ 必然红。
+    if not _is_win:
+        ok("★ [阶段2] 前置探针在 POSIX 上如实报「挡不住」（探针自身没坏）",
+           _blocks is False and "仍成功" in _why, f"探针实测：{_why}")
 
     # ── ⑤ 写者重试**接上了**（**确定性**）─────────────────────────────────────
     #    ⚠️ 同进程持一个读句柄就**必然**挡住 `os.replace`（Windows 的共享模型是
@@ -3756,7 +3818,7 @@ def test_persist_atomic() -> None:
         c5d = f"尝试 **{n_try}** 次｜{time.time() - t0:.3f}s｜落盘内容 {'对' if c5 else '**错**'}"
     except Exception as e:                                   # noqa: BLE001
         c5, c5d = False, f"**抛了** {type(e).__name__} —— 句柄 50 ms 后已释放，不该抛"
-    if _is_win:
+    if _can_judge:
         ok("★★ [阶段2] ⑤ 持句柄 50 ms 后释放 ⇒ `commit` **重试后成功**（确定性）",
            c5, c5d)
     else:
@@ -3778,7 +3840,7 @@ def test_persist_atomic() -> None:
         c6, c6d = False, f"抛的是 {type(e).__name__}（该抛 `PermissionError`）"
     finally:
         hold2.close()
-    if _is_win:
+    if _can_judge:
         ok("★★ [阶段2] ⑥ 一直持句柄 ⇒ 如实抛 `PermissionError`，且**耗时 ≤ 1 s**（有界）",
            c6, c6d)
     else:

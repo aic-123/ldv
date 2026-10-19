@@ -12,7 +12,7 @@
 > 它的**内核**是**分层方向视图** —— 把「方向」做成可插拔的分层结构：
 > 一层比一层细，每一层只产出下层表达不出的东西。**Layer = Direction** · **Deeper = Finer**
 
-**当前版本 v0.1.29** ｜ [历次发布](https://github.com/aic-123/ldv/releases) ｜
+**当前版本 v0.1.30** ｜ [历次发布](https://github.com/aic-123/ldv/releases) ｜
 **零第三方**（标准库 + 纯内存）｜ [Apache-2.0](LICENSE) ｜
 家族位置：`Scaffold` → `arena` → `dce` → **`ldv`（结构层：记录 / 检索 / 推导 / 推理）**
 
