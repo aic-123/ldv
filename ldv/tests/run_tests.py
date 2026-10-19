@@ -4565,6 +4565,81 @@ def test_loader_sharded() -> None:
 
 
 
+
+
+def test_leaf_cap_requests() -> None:
+    """★ 叶容量 ⇒ 请求（`request.leaf_cap_requests`，2026-10-19）。
+
+    ⚠️ 与死路表 §1.2 那条的区别：那条否的是**把「增量≡全量」当正确性标准**；
+       这里叶容量是**缺陷信号**（产请求），不挪对象、不改覆盖。
+    """
+    from ldv.core import request as RQ
+    from ldv.core.kernel import Kernel
+    from ldv.checks._fixtures import load as _load
+    from ldv.corpus.loader import CorpusError, load_nodes
+    from ldv.plugins.keyset import KeysetPlugin
+
+    loaded = _load()
+    assert loaded is not None
+    nodes, _e, _d = loaded
+
+    def _build():
+        items = {i: n.as_item() for i, n in nodes.items()}
+        k = Kernel(KeysetPlugin(), items)
+        k.build(k.plugin.merge([]))
+        k.bulk_insert(sorted(items))
+        return k
+
+    k0 = _build()
+
+    # ── ㊉″ 小口径：默认语料最大叶 10 < 阈值 50 ⇒ 0 条，但明说查了 ─────────
+    r0 = RQ.leaf_cap_requests(k0)
+    maxleaf = max((len(k0.members_of(d)) for d in k0.all_directions()
+                   if not k0.children_of(d)), default=0)
+    ok("★ [叶容量] ㊉″ 小口径 0 条，且**明说查了**",
+       r0["请求"] == [] and r0["本趟查了"]["查过的叶"] > 0
+       and "查了" in r0["说明"] and r0["本趟查了"]["最大叶容量"] == maxleaf,
+       f"最大叶 {maxleaf}｜查了 {r0['本趟查了']['查过的叶']} 个叶｜"
+       f"阈值 {r0['本趟查了']['叶容量阈值']}")
+
+    # ── ㊉ 阈值是外生参数：cap=3 ⇒ 同一个 kernel 请求变多 ─────────────────
+    r3 = RQ.leaf_cap_requests(k0, cap=3)
+    manual = sum(1 for d in k0.all_directions()
+                 if not k0.children_of(d) and len(k0.members_of(d)) > 3)
+    ok("★ [叶容量] ㊉ 条数对：超阈值的叶 == 请求条数（人工数）",
+       len(r3["请求"]) == manual,
+       f"cap=3 ⇒ 报 {len(r3['请求'])} 条，人工数 {manual} 个叶")
+    ok("★ [叶容量] ㊉⁗ 阈值是**外生参数**（cap=3 比默认 50 报得多）",
+       len(r3["请求"]) >= len(r0["请求"]),
+       f"cap=3 {len(r3['请求'])} 条 ≥ 默认 {len(r0['请求'])} 条")
+
+    # ── ㊉⁗b 请求只请「新维度/新谓词」，不提别的动作 ──────────────────────
+    ok("★ [叶容量] ㊉⁗b 请求只请**新维度/新谓词**（不提改算法/挪对象）",
+       all("新维度" in x["请求"] or "新谓词" in x["请求"] for x in r3["请求"]),
+       f"例：{r3['请求'][0]['请求'][:40] if r3['请求'] else '（无）'}")
+
+    # ── ㊉′ 真语料（wiki-vote，本地有 `_data/`；CI 上没有 ⇒ 走 main() 兜底跳过）──
+    try:
+        from pathlib import Path
+        wv = load_nodes(Path(__file__).resolve().parents[2]
+                        / "_data" / "ext-wiki-vote" / "nodes")
+        items = {i: n.as_item() for i, n in wv.items()}
+        kw = Kernel(KeysetPlugin(), items)
+        kw.build(kw.plugin.merge([]))
+        kw.bulk_insert(sorted(items))
+        rw = RQ.leaf_cap_requests(kw)
+        maxw = max((len(kw.members_of(d)) for d in kw.all_directions()
+                   if not kw.children_of(d)), default=0)
+        ok(f"★ [叶容量] ㊉′ 真语料 wiki-vote 会触发（最大叶 {maxw}）",
+           len(rw["请求"]) >= 1 and maxw > RQ.LEAF_CAP,
+           f"{len(wv)} 节点 ⇒ 报 {len(rw['请求'])} 条｜最大叶 {maxw}｜"
+           f"方向 {len(kw.all_directions())}")
+    except CorpusError:
+        # ⚠️ **只吞 CorpusError**（外部语料不在）；`NameError` 这类**代码错**必须照抛 ——
+        #    第一版是 `except Exception`，把漏 import 的 NameError 当成「语料不在」
+        #    ⇒ 判据报跳过。那正是「跳过 ≠ 通过」要防的：**假的跳过比红更坏**。
+        PASS.append("★ [叶容量] ㊉′ 真语料 wiki-vote（**跳过**："
+                    "`_data/ext-wiki-vote` 不在 —— 外部语料不进仓库，见 .gitignore）")
 def test_contradiction_requests() -> None:
     """★ 矛盾 ⇒ 请求（`reflect.contradiction_requests`，2026-10-19）。
 
@@ -7626,6 +7701,7 @@ def main() -> int:
                test_direction_request,
                test_approved_loop,
                test_contradiction_requests,
+               test_leaf_cap_requests,
                test_loader_sharded,
                test_query_hit_items, test_spec_paths, test_maintain,
                test_view_oracles, test_influence_channels, test_views,

@@ -233,16 +233,32 @@ def run_one(name: str, holdout: int, only: str | None,
         #      默认不写，免得跑一次测试就往语料里丢文件。
         if write_requests and corpus_dir is not None:
             from .core.reflect import contradiction_requests
-            from .core.request import direction_requests, write_requests as _wr
+            from .core.request import (direction_requests, leaf_cap_requests,
+                                       write_requests as _wr)
+            # ★ **三类信号**并成一个请求清单（都写进 `directions.json` 的 `请求` 段）：
+            #   ① B19（连续 N 次展开没变细）② 矛盾（结构打架）
+            #   ③ **叶容量超阈值**（2026-10-19 加：每次展开都分开、但分完叶还是巨大）
             req = direction_requests(kernel, cover)
             creq = contradiction_requests(kernel)
+            lreq = leaf_cap_requests(kernel)
             merged = dict(req)
-            merged["请求"] = list(req.get("请求", [])) + list(creq.get("请求", []))
-            merged["说明"] = (f"方向请求 {len(req.get('请求', []))} 条 + "
-                              f"矛盾请求 {len(creq.get('请求', []))} 条 —— "
-                              + str(req.get("说明", "")))
+            merged["请求"] = (list(req.get("请求", []))
+                              + list(creq.get("请求", []))
+                              + list(lreq.get("请求", [])))
+            merged["说明"] = (
+                f"B19 {len(req.get('请求', []))} 条 + "
+                f"矛盾 {len(creq.get('请求', []))} 条 + "
+                f"叶容量超阈值 {len(lreq.get('请求', []))} 条 —— "
+                + str(req.get("说明", "")))
+            merged["本趟查了"] = {
+                "B19": req.get("本趟查了", {}),
+                "矛盾": creq.get("本趟查了", {}),
+                "叶容量": lreq.get("本趟查了", {}),
+            }
             path_w = _wr(corpus_dir, merged)
-            print(f"  请求已写：{path_w}（{len(merged['请求'])} 条）")
+            print(f"  请求已写：{path_w}（{len(merged['请求'])} 条："
+                  f"B19 {len(req.get('请求', []))} / 矛盾 {len(creq.get('请求', []))} / "
+                  f"叶容量 {len(lreq.get('请求', []))}）")
     if only in (None, "a"):
         # 跑三条查询 —— 记录累积下来给流程 D 用
         for q in queries[:3]:

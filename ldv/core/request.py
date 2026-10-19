@@ -342,6 +342,75 @@ def apply_approved(nodes: dict[str, Any], corpus_dir: Path,
     return new, ledger
 
 
+# ── ★ 第二个信号：**叶容量超阈值**（2026-10-19，三份独立数据逼出来）──────────
+#
+# 为什么 B19 不够：B19 判的是「连续 N 次展开**没变细**」（一个项都没分开）。
+# 实测三份语料都撞上同一件事 —— **每次展开都分开了，但分完叶还是巨大**：
+#
+#     默认 36 项        37 个方向，叶容量 最大 10 / 平均 2.77
+#     ext-coauth …     叶容量 小
+#     web-Stanford-30k  37 个方向，叶容量 **最大 12302 / 平均 1874**
+#     ext-wiki-vote     37 个方向，叶容量 **最大 3187 / 平均 373.84**
+#
+# ⇒ 第二种情形下 B19 **一条都不报**（因为它每次都"变细"了），
+#   而系统其实分不开那批项 —— 只是切成了一层层大叶。
+#   **这正是不变的分辨率不足**：不是「切不动」，是「切了也白切」。
+#
+# ⚠️ 与死路表 §1.2 那条的区别：那条否的是**把「增量≡全量」当正确性标准**，
+#    并记录「当时叶容量逐项相同」；这里叶容量是**缺陷信号**（产请求），
+#    既不挪对象也不改覆盖 —— 与 R-tree forced reinsert / CondenseTree 都无关。
+
+#: 叶容量阈值（**外生参数**，与 `DEFAULT_N` 同一性质：人给的，不是系统学出来的）
+LEAF_CAP = 50
+
+
+def leaf_cap_requests(kernel: Any, cap: int = LEAF_CAP) -> dict[str, Any]:
+    """**叶容量 > cap** 的方向 ⇒ 一条请求（**只读**，不改结构）。
+
+    只看**叶**（没有子方向的方向）—— 内部方向成员多是正常的（它还要往下分），
+    叶才有「再也分不下去」的意思。
+
+    返回结构与 `direction_requests` 对齐，可直接并进 `directions.json`。
+    """
+    reqs: list[dict[str, Any]] = []
+    checked = {"叶容量阈值": int(cap), "查过的叶": 0, "超阈值的叶": 0,
+               "最大叶容量": 0}
+    for d in kernel.all_directions():
+        kids = kernel.children_of(d)
+        if kids:
+            continue                              # 内部方向：成员多不等于分不动
+        n_mem = len(kernel.members_of(d))
+        checked["查过的叶"] += 1
+        checked["最大叶容量"] = max(checked["最大叶容量"], n_mem)
+        if n_mem <= cap:
+            continue
+        checked["超阈值的叶"] += 1
+        items = sorted(kernel.members_of(d))
+        reqs.append({
+            "信号": f"叶容量超阈值（{n_mem} > {cap}）",
+            "方向": d.did,
+            "阈值": int(cap),
+            "涉及的项": items,
+            "涉及的项数": len(items),
+            "当前状态": (f"这个**叶**有 {n_mem} 个项（全语料最大叶 "
+                         f"{checked['最大叶容量']}），超过阈值 {cap} —— "
+                         f"每次展开都分开了，但分完还是这么大"),
+            "请求": ("需要一个能切开这批项的**新维度**"
+                     "（一个 front matter 字段，或一个新谓词）"),
+            "判据编号": "叶容量",
+        })
+    return {
+        "请求": reqs,
+        "本趟查了": checked,
+        "说明": (f"叶容量超阈值 {len(reqs)} 处（最大 {checked['最大叶容量']}，"
+                 f"阈值 {cap}）—— "
+                 if reqs else
+                 f"叶容量 0 处超阈值（最大 {checked['最大叶容量']}，阈值 {cap}，"
+                 f"查了 {checked['查过的叶']} 个叶）—— ")
+                + "人拍板后写进 `directions.json` 的 `已批准` / `已拒绝`",
+    }
+
+
 def already_handled(corpus_dir: Path, items: Sequence[str]) -> bool:
     """这批项是不是**已经被处置过**（批准或拒绝过）—— 用来防重复请求。"""
     path = Path(corpus_dir) / "directions.json"
