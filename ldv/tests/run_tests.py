@@ -4811,6 +4811,158 @@ def test_contra_merged() -> None:
        f"｜{capreq[0]['请求'][:26] if capreq else '-'}…")
 
 
+SNAPSHOT_VERSION_UNKNOWN = 999          # 判据里伪造一个「更老的版本」
+
+
+def test_tree_snapshot() -> None:
+    """★ 方向树落盘 / 恢复（`core/snapshot`，2026-10-19）—— **可选项，默认关**。
+
+    为什么做：每次调用全量重造，而建树**超线性** ——
+    7115 项 6.7 s / 30k 216.6 s / 100k 3239.2 s（每项 0.94 → 7.22 → 32.39 ms）。
+    进程内的 `reusable_build` 只活在内存里，**重启即归零**。
+
+    ⚠️ 与死路表 §3 那条（进程内 signature 记忆化是**算法的一部分**）不是一回事：
+       那个省「同一次建造里的重复计算」，这个省「下一次的整棵树」。
+
+    判据覆盖的正是**最危险的几种形状**：
+      ㊓ 材料改一个键  ⇒ 必须重建（不是「差不多就复用」）
+      ㊔ 参数变         ⇒ 必须重建
+      ㊕ 快照坏         ⇒ 必须重建，**不许崩**（可选开关不许变成可用性炸弹）
+      ㊖ 版本不符       ⇒ 必须重建
+      ㊗ 恢复出来的树   ⇒ 照样能维护，且与从零建的**逐字相同**
+    """
+    import inspect
+    import json
+    import shutil
+    import tempfile
+    from pathlib import Path as _P
+
+    from ldv import cli as _cli
+    from ldv.core import snapshot as SN
+    from ldv.core.kernel import Kernel
+    from ldv.checks._fixtures import load as _load
+    from ldv.plugins.keyset import KeysetPlugin
+
+    loaded = _load()
+    assert loaded is not None
+    nodes, _e, _d = loaded
+    base = {i: n.as_item() for i, n in nodes.items()}
+    holdout_n = 12
+    hold = sorted(base)[-holdout_n:]
+    init = {k: v for k, v in base.items() if k not in set(hold)}
+
+    def build(items):
+        k = Kernel(KeysetPlugin(), items)
+        k.build(k.plugin.merge([]))
+        for iid in sorted(items):
+            k.insert(iid)
+        return k
+
+    def sig(k):
+        """结构签名 —— 判据比的是「逐字相同」，不是「看起来差不多」。"""
+        return (
+            sorted(d.did for d in k.all_directions()),
+            [(d.did, d.parent, d.rank, tuple(d.witness), d.origin)
+             for d in k.all_directions()],
+            {d.did: len(k.members_of(d)) for d in k.all_directions()},
+            {iid: tuple(v) for iid, v in sorted(k._path.items())},
+            {k2: sorted(v) for k2, v in sorted(k._tried.items())},
+            len(k.ledger),
+        )
+
+    tmp = _P(tempfile.mkdtemp())
+    try:
+        plug = KeysetPlugin()
+        extra = {"holdout": holdout_n, "predicates": False}
+
+        # ── ㊐ **默认关**（签名检查，不是「我记得关着」） ──────────────────
+        dflt = inspect.signature(_cli._assemble).parameters["use_snapshot"].default
+        ok("★ [树快照] ㊐ `_assemble(use_snapshot=…)` **默认 False**（可选项）",
+           dflt is False, f"默认值 = {dflt!r}")
+
+        # ── ㊑ 第一次：新建 + 落盘 ────────────────────────────────────────
+        k1, r1 = SN.with_snapshot(Kernel, plug, lambda: build(init), init, "keyset",
+                                  None, extra, root=tmp)
+        p1 = tmp / SN.tree_path("keyset",
+                                SN.fingerprint(init, None, {"方向函数": "keyset", **extra}),
+                                tmp).name
+        ok("★ [树快照] ㊑ 第一次 ⇒ **新建并落盘**",
+           r1["结果"] == "新建" and "还没有快照" in r1["原因"]
+           and p1.is_file(),
+           f"{r1['结果']}｜{r1['原因']}｜文件 {p1.name} 在：{p1.is_file()}")
+
+        # ── ㊒ 第二次：命中 + **结构逐字相同** ────────────────────────────
+        k2, r2 = SN.with_snapshot(Kernel, plug, lambda: build(init), init, "keyset",
+                                  None, extra, root=tmp)
+        ok("★ [树快照] ㊒ 第二次 ⇒ **命中**，且结构（含账本条数）逐字相同",
+           r2["结果"] == "命中" and sig(k1) == sig(k2),
+           f"{r2['结果']}｜方向 {len(k2.all_directions())}｜账本 {len(k2.ledger)}｜"
+           f"签名相同 {sig(k1) == sig(k2)}")
+
+        # ── ㊓ 材料改**一个键** ⇒ 必须重建，且树来自新材料 ────────────────
+        tampered = {iid: (dict(it) | {"keys": it["keys"] | {"临时多出来的键"}}
+                           if iid == sorted(init)[0] else it)
+                    for iid, it in init.items()}
+        k3, r3 = SN.with_snapshot(Kernel, plug, lambda: build(tampered), tampered,
+                                  "keyset", None, extra, root=tmp)
+        ok("★ [树快照] ㊓ 改一个键 ⇒ **重建**（不是「差不多就复用」）",
+           r3["结果"] == "重建" and "指纹不符" in r3["原因"]
+           and sig(k3) != sig(k1),
+           f"{r3['结果']}｜{r3['原因']}｜结构确实变了 {sig(k3) != sig(k1)}")
+
+        # ── ㊔ 参数变（holdout）⇒ 必须重建 ──────────────────────────────
+        k4, r4 = SN.with_snapshot(Kernel, plug, lambda: build(init), init, "keyset",
+                                  None, {"holdout": 24, "predicates": False}, root=tmp)
+        ok("★ [树快照] ㊔ `holdout` 12 → 24 ⇒ **重建**",
+           r4["结果"] == "重建" and "指纹不符" in r4["原因"],
+           f"{r4['结果']}｜{r4['原因']}")
+
+        # ── ㊕ 快照坏了（截断）⇒ 重建，**不许崩** ────────────────────────
+        broken = tmp / "broken.tree.json"
+        broken.write_text(p1.read_text(encoding="utf-8")[:200], encoding="utf-8")
+        kb, rb = SN.restore(Kernel, plug, init, broken,
+                            SN.fingerprint(init, None, {"方向函数": "keyset", **extra}))
+        ok("★ [树快照] ㊕ 快照被截断 ⇒ 重建，**不崩**",
+           kb is None and rb["结果"] == "重建" and rb["原因"],
+           f"{rb['结果']}｜{rb['原因']}")
+
+        # ── ㊖ 版本不符 ⇒ 重建 ───────────────────────────────────────────
+        oldver = tmp / "oldver.tree.json"
+        doc = json.loads(p1.read_text(encoding="utf-8"))
+        doc["版本"] = SNAPSHOT_VERSION_UNKNOWN
+        oldver.write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
+        kv, rv = SN.restore(Kernel, plug, init, oldver,
+                            SN.fingerprint(init, None, {"方向函数": "keyset", **extra}))
+        ok("★ [树快照] ㊖ 版本不符 ⇒ 重建（老版本不猜兼容）",
+           kv is None and rv["结果"] == "重建" and "版本不符" in rv["原因"],
+           f"{rv['结果']}｜{rv['原因']}")
+
+        # ── ㊗ 恢复出来的树**照样能维护**，与从零建的逐字相同 ─────────────
+        def churn(k, new_ids, kill):
+            for iid in sorted(new_ids):
+                k.insert(iid, base[iid])      # 新项不在 `items` 里 ⇒ 必须手递手带上
+            for iid in kill:
+                k.remove(iid)
+            return k
+
+        kill = sorted(init)[-3:]
+        fresh = churn(build(init), hold, kill)
+        restored = churn(k2, hold, kill)
+        ok("★ [树快照] ㊗ 命中后照样能维护（插 12 + 删 3），终态与从零建**逐字相同**",
+           sig(fresh) == sig(restored) and fresh.stats() == restored.stats(),
+           f"签名相同 {sig(fresh) == sig(restored)}｜"
+           f"stats 相同 {fresh.stats() == restored.stats()}｜"
+           f"方向 {len(restored.all_directions())}")
+
+        # ── 读数：命中/新建的耗时（**不进退出码** —— 小语料上噪声压倒信号） ──
+        print(f"    · 快照耗时读数：新建 {r1.get('建树秒')}s｜"
+              f"命中（不计）｜写盘 {r1.get('写盘秒')}s；"
+              f"真正的收益要在 §13.16 那三档规模上才看得出来")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+
 def test_approved_loop() -> None:
     """★ 反思层闭环：`directions.json` 的 `已批准` **真的被用上**（2026-10-19）。
 
@@ -7818,6 +7970,7 @@ def main() -> int:
                test_approved_loop,
                test_contradiction_requests,
                test_contra_merged,
+               test_tree_snapshot,
                test_leaf_cap_requests,
                test_candidate_dimensions,
                test_loader_sharded,

@@ -68,7 +68,7 @@ INTENTS = {
 
 def _assemble(name: str, nodes, edges, holdout: int, remove: int = 0,
               locked: bool = False, predicates: bool = False,
-              reuse: bool = True):
+              reuse: bool = True, use_snapshot: bool = False):
     """造 `(内核, 查询集, 待插入的新项, 待删除的项 id, 覆盖 oracle)`。
 
     `holdout` 项**不放进 `build()` 的全集** —— 它们是流程 B 的「新项」。
@@ -79,6 +79,11 @@ def _assemble(name: str, nodes, edges, holdout: int, remove: int = 0,
 
     `locked=True` ⇒ 内核换成 `core/locking.py` 的 **`LockedKernel`**（并发壳）。
     ★ 它**不进构建缓存** —— 见下面那一段的理由。
+
+    `use_snapshot=True` ⇒ 走 `core/snapshot`：先试**恢复已建好的树**，恢复不了才建、
+    建完落盘（2026-10-19）。**默认关** —— 开了只改「耗时」这条读数，不改结构。
+    ⚠️ 指纹对不上 ⇒ **重建 + 如实报**，绝不静默复用（那是它要防的假绿）。
+    ⚠️ 它省的是**下一次**的整棵树；与进程内 signature 记忆化（死路表 §3）不是同一件事。
     """
     ids = sorted(nodes)
     hold = set(ids[-holdout:]) if holdout > 0 else set()
@@ -101,7 +106,12 @@ def _assemble(name: str, nodes, edges, holdout: int, remove: int = 0,
     #      `CL3`（`only="d"`）**必须红**，理由正是「A 没先跑 ⇒ 没有带权记录」——
     #      共享会让这条护栏**静默变绿**。判据见 `_fixtures.reusable_build` 那段与
     #      `run_tests.test_reusable_build`。
-    def _build() -> tuple:
+    def _plugin() -> tuple:
+        """插件 + 根 payload。**拆出来**是为了让快照路径也能拿到插件：
+
+        快照要用 `plugin.encode/decode` 存/还原 payload（§I5），
+        而插件只在 `_build` 里造 ⇒ 拆成一个函数，两边同源。
+        """
         if name == "keyset":
             plug = KeysetPlugin()
             root = plug.merge([])
@@ -123,35 +133,66 @@ def _assemble(name: str, nodes, edges, holdout: int, remove: int = 0,
         else:                                       # name == "sequence"
             plug = SequencePlugin(sequences(nodes, edges))
             root = frozenset({()})                  # 外生：空前缀覆盖一切
+        return plug, root
+
+    def _build() -> tuple:
+        plug, root = _plugin()
         kernel = (LockedKernel if locked else Kernel)(plug, init_items)
         kernel.build(root)
         for iid in sorted(init_items):              # 批建：把初始项纳入结构
             kernel.insert(iid)
         return kernel, plug
 
-    # ★ **锁壳不进构建缓存**（2026-10-15）：`reusable_build` 每次给一份
-    #   `copy.deepcopy`，而 `LockedKernel` 持有 `threading.Lock` / `RLock`
-    #   ⇒ **深拷贝会抛** `TypeError: cannot pickle '_thread.lock' object`。
-    #   ⇒ 这条路径**直接建**。代价可控：它是**可选入口**（默认路径不锁），
-    #      而且在随仓库那份 36 项语料上重建很便宜。
-    #   ⚠️ 这**不是**「缓存坏了」—— 是 `LockedKernel` **不可深拷贝**这条性质。
-    #      它是一条**组合性边界**，写在 `docs/并发接口设计.md` §4。
-    if locked or not reuse:
-        # `locked`：`LockedKernel` 不可深拷贝（见上）。
-        # `not reuse`：**免掉 `reusable_build` 的 `deepcopy`**（2026-10-18）。
-        #   实测 3000 节点上 `deepcopy` 占 cProfile 的 **13%**（23.9 万次递归调用）。
-        #   ⚠️ 只给**探针/一次性调用**用：生产路径必须留深拷贝 ——
-        #      共享同一对象会让 `CL3`（`only="d"`，必须红）**静默变绿**（见上面那段）。
-        kernel, _plug = _build()
-    else:
+    def _build_once() -> tuple:
+        # ★ **锁壳不进构建缓存**（2026-10-15）：`reusable_build` 每次给一份
+        #   `copy.deepcopy`，而 `LockedKernel` 持有 `threading.Lock` / `RLock`
+        #   ⇒ **深拷贝会抛** `TypeError: cannot pickle '_thread.lock' object`。
+        #   ⇒ 这条路径**直接建**。代价可控：它是**可选入口**（默认路径不锁），
+        #      而且在随仓库那份 36 项语料上重建很便宜。
+        #   ⚠️ 这**不是**「缓存坏了」—— 是 `LockedKernel` **不可深拷贝**这条性质。
+        #      它是一条**组合性边界**，写在 `docs/并发接口设计.md` §4。
+        if locked or not reuse:
+            # `locked`：`LockedKernel` 不可深拷贝（见上）。
+            # `not reuse`：**免掉 `reusable_build` 的 `deepcopy`**（2026-10-18）。
+            #   实测 3000 节点上 `deepcopy` 占 cProfile 的 **13%**（23.9 万次递归调用）。
+            #   ⚠️ 只给**探针/一次性调用**用：生产路径必须留深拷贝 ——
+            #      共享同一对象会让 `CL3`（`only="d"`，必须红）**静默变绿**（见上面那段）。
+            return _build()
         # ⚠️ **`predicates` 必须进 tag** —— 否则「开谓词」与「不开」两种装配
         #    会撞同一份缓存（`reusable_build` 的 docstring 明说：tag 必须把
         #    「哪份装配」说全，否则两种装配会撞）。
-        kernel, _plug = reusable_build(("assemble", name, holdout, predicates),
-                                       nodes, edges, _build)
+        return reusable_build(("assemble", name, holdout, predicates),
+                              nodes, edges, _build)
+
+    # ★ **跨进程快照**（2026-10-19，`--snapshot` 才开）
+    #
+    #   为什么：每次调用全量重造，而建树是**超线性**的 ——
+    #     7115 项 6.7 s / 30k 216.6 s / 100k 3239.2 s（每项 0.94 → 7.22 → 32.39 ms）。
+    #     进程内的 `reusable_build` 只活在内存里，**重启即归零**。
+    #
+    #   ⚠️ **默认关**：开了会改变「耗时」这条读数（虽然不影响结构/护栏结论）。
+    #   ⚠️ 指纹对不上 ⇒ **重建 + 如实报**，绝不静默复用。
+    #   ⚠️ 与死路表 §3 那条（进程内 signature 记忆化是**算法的一部分**）不是一回事：
+    #      那个省「同一次建造里的重复计算」，这个省「下一次的整棵树」。
+    snap_rep: dict = {}
+    if use_snapshot:
+        from .core import snapshot as _snap
+        plug, _root_pl = _plugin()
+        kernel, snap_rep = _snap.with_snapshot(
+            (LockedKernel if locked else Kernel), plug, lambda: _build()[0],
+            init_items, name, edges,
+            {"holdout": holdout, "predicates": predicates})
+    else:
+        kernel, _plug = _build_once()
 
     new = [(i, all_items[i]) for i in sorted(hold)]
     removable = sorted(init_items)[-remove:] if remove > 0 else []
+    if snap_rep:
+        # 快照读数：命中 / 新建 / 重建（重建必带原因）。**不许静默。**
+        _why = snap_rep.get("原因", "")
+        _t = (f"｜建树 {snap_rep['建树秒']}s" if snap_rep.get("建树秒") is not None else "")
+        print(f"  [树快照] {snap_rep.get('结果', '?')}{_t}"
+              + (f"（{_why}）" if _why else ""))
     return kernel, queries, new, removable, coverage_of(name, nodes, edges)
 
 
@@ -159,7 +200,8 @@ def run_one(name: str, holdout: int, only: str | None,
             remove: int = 0, loaded=None, locked: bool = False,
             predicates: bool = False, reflect: bool = False,
             indexed: bool = False, apply_approved: bool = False,
-            write_requests: bool = False) -> tuple[bool, str]:
+            write_requests: bool = False,
+            use_snapshot: bool = False) -> tuple[bool, str]:
     """跑一个方向。返回 `(护栏是否全过, 追踪文本)`。
 
     `loaded` 为 `None` 时自己 `load()`（**生产路径**：`python -m ldv.cli`）。
@@ -205,7 +247,8 @@ def run_one(name: str, holdout: int, only: str | None,
                                              edges=edges, preds=_preds)
 
     kernel, queries, new, removable, cover = _assemble(
-        name, nodes, edges, holdout, remove, locked=locked, predicates=predicates)
+        name, nodes, edges, holdout, remove, locked=locked, predicates=predicates,
+        use_snapshot=use_snapshot)
     st0 = kernel.stats()
     head = (f"═══ 方向 {name} ═══\n"
             f"  初始：{st0['方向']} 个方向（§K2 判空 {st0['§K2 判空']}），"
@@ -352,6 +395,9 @@ def main(argv: list[str]) -> int:
     do_apply_approved = "--apply-approved" in args
     # ★ 请求落盘（2026-10-19）：`--reflect --write-requests` 才写 `directions.json`。
     do_write_requests = "--write-requests" in args
+    # ★ **方向树落盘**（2026-10-19，`--snapshot` 才开）：下次调用恢复已建好的树。
+    #   默认关 —— 开了只改「耗时」这条读数，不改结构/护栏；指纹不符一律重建。
+    use_snapshot = "--snapshot" in args
     # ★ **可选入口：并发壳**（2026-10-15，`docs/并发接口设计.md` §7 阶段 1）。
     #   默认**不锁** —— 接线本身不产生收益（当前没有并发调用方），
     #   而默认路径每一步都要付一次加解锁。⇒ 做成**显式**入口，
@@ -380,7 +426,8 @@ def main(argv: list[str]) -> int:
           + ("｜**推导谓词**（`--predicates`）" if predicates else "")
           + ("｜**反思层**（`--reflect`，只调顺序）" if reflect else "")
           + ("｜**语料索引**（`--index`，跨进程）" if indexed else "")
-          + ("｜**应用已批准维度**（`--apply-approved`）" if do_apply_approved else ""))
+          + ("｜**应用已批准维度**（`--apply-approved`）" if do_apply_approved else "")
+          + ("｜**方向树落盘**（`--snapshot`）" if use_snapshot else ""))
     print()
 
     all_ok = True
@@ -388,7 +435,8 @@ def main(argv: list[str]) -> int:
         ok, text = run_one(name, holdout, only, remove, locked=locked,
                            predicates=predicates, reflect=reflect, indexed=indexed,
                            apply_approved=do_apply_approved,
-                           write_requests=do_write_requests)
+                           write_requests=do_write_requests,
+                           use_snapshot=use_snapshot)
         all_ok &= ok
         print(text)
         print()
