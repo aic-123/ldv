@@ -114,6 +114,25 @@ def _cone_invariant_bad(kernel) -> list[tuple[str, list[str], list[str]]]:
 
 
 # ═══ 三态 ════════════════════════════════════════════════════════════════════
+def _ext_corpus(name: str):
+    """外部语料的 `_data/` 根目录 —— 外部语料**不在仓库里**（`.gitignore` 的 `_data/*`）。
+
+    ⇒ CI 与新 clone 上**必然缺**。缺了**记一条跳过并返回 `None`**，不抛 ——
+      否则「没有这份语料」会表现成「单元测试崩了」，而那是两件事
+      （这正是 2026-10-18 起 CI 四个矩阵全红的原因）。
+
+    ⚠️ **跳过 ≠ 通过**：这条会出现在 PASS 列表里，写明「跳过：外部语料不进仓库」。
+       本机（有 `_data/`）上这几个判据照常跑。
+    ⚠️ 返回的是 **`_data/` 根**（不是 `nodes/`）—— 与原代码里的 `data` 同义，
+       各函数自己拼 `<name>/nodes`，这里不改它们。
+    """
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[2] / "_data"
+    if not (root / name / "nodes").is_dir():
+        PASS.append(f"外部语料 {name}（**跳过**：`_data/{name}/nodes` 不在 —— "
+                    f"外部语料不进仓库，见 .gitignore）")
+        return None
+    return root
 
 def test_tri() -> None:
     raises("Tri 不是 bool：bool(未展开) 必须抛错", lambda: bool(Tri.UNEXPANDED))
@@ -4803,6 +4822,12 @@ def test_combination() -> None:
     from ldv.corpus import predicates as PR
     from ldv.corpus.loader import load_edges, load_nodes
 
+    if _ext_corpus("pypi-deps") is None:
+        return
+    if _ext_corpus("pypi-deps") is None:
+        return
+    if _ext_corpus("pypi-deps") is None:
+        return
     data = Path(__file__).resolve().parents[2] / "_data"
     nodes = load_nodes(data / "pypi-deps" / "nodes")
     edges, _d = load_edges(nodes)
@@ -4891,6 +4916,12 @@ def test_buffer() -> None:
     from ldv.corpus.loader import load_nodes
     from ldv.tools import staging as ST
 
+    if _ext_corpus("pypi-deps") is None:
+        return
+    if _ext_corpus("pypi-deps") is None:
+        return
+    if _ext_corpus("pypi-deps") is None:
+        return
     data = Path(__file__).resolve().parents[2] / "_data"
 
     # ── 谓词三段 ────────────────────────────────────────────────────
@@ -4965,6 +4996,12 @@ def test_memory_index() -> None:
     from ldv.corpus.index import load_nodes_indexed
     from ldv.corpus.loader import load_nodes
 
+    if _ext_corpus("pypi-deps") is None:
+        return
+    if _ext_corpus("pypi-deps") is None:
+        return
+    if _ext_corpus("pypi-deps") is None:
+        return
     data = Path(__file__).resolve().parents[2] / "_data"
     src = data / "pypi-deps" / "nodes"
     tmp = Path(tempfile.mkdtemp(prefix="ldv-idx-rt-"))
@@ -5030,6 +5067,12 @@ def test_predicates() -> None:
     from ldv.corpus import predicates as PR
     from ldv.corpus.loader import load_edges, load_nodes
 
+    if _ext_corpus("pypi-deps") is None:
+        return
+    if _ext_corpus("pypi-deps") is None:
+        return
+    if _ext_corpus("pypi-deps") is None:
+        return
     data = Path(__file__).resolve().parents[2] / "_data"
 
     def _derive(name: str):
@@ -5120,6 +5163,18 @@ def test_service_shell() -> None:
     TENANTS = ("pypi-deps", "arxiv-taxonomy", "gh-langs", "crossref-journals")
     INCOMPLETE = "cora-labeled"            # 缺 view_spec.json ⇒ 应 404
     DATA = Path(__file__).resolve().parents[2] / "_data"
+
+    # ★ **前置守卫**（2026-10-19）：`TENANTS` 四个全在 `_data/`，而外部语料
+    #   **不进仓库**（`.gitignore` 的 `_data/*`）⇒ CI / 新 clone 上一个都没有。
+    #   不守的话，⑧a 一设 `LDV_CORPUS=tenant` 就 `find_corpus()` 崩 ——
+    #   「没有这份语料」被表现成「单元测试崩了」，那是两件事。
+    #   ⚠️ 需要 **≥2** 个（⑭⑮ 要用 `TENANTS[0]` / `TENANTS[1]`）。
+    avail = tuple(t for t in TENANTS if (DATA / t / "nodes").is_dir())
+    if len(avail) < 2:
+        PASS.append(f"服务壳（**跳过**：`_data/` 下只有 {len(avail)} 个完整租户，"
+                    f"需要 ≥2 —— 外部语料不进仓库，见 .gitignore）")
+        return
+    TENANTS = avail
 
     srv = ThreadingHTTPServer(("127.0.0.1", 0), serve.Handler)   # ephemeral 端口
     port = srv.server_address[1]
@@ -7364,11 +7419,39 @@ def main() -> int:
                test_multilevel, test_retriever, test_cli_paths,
                test_never_judged, test_b17_cyclic_corpus,
                test_skip_evidence_table):
-        fn()
+        # ★ **兜底：外部语料不在 ⇒ 跳过该函数，不崩**（2026-10-19 修 CI）
+        #
+        #   外部语料在 `_data/` 下，而 `.gitignore` 规定 `_data/*` **不进仓库**
+        #   ⇒ CI 与新 clone 上一个都没有。不兜的话，「没有这份语料」表现成
+        #   「单元测试崩了」（四个矩阵全红，2026-10-17 起）。
+        #
+        #   ⚠️ **只吞「找不到语料」这一类**：`CorpusError` 还有别的成因
+        #      （目录结构坏了、id 重复），那些必须照抛 —— 否则真错会被读成跳过。
+        #   ⚠️ **跳过 ≠ 通过**：记进 PASS 并写明函数名与语料名。
+        #   ⚠️ 该函数**可能已部分执行**（前面的 `ok()` 已记）⇒ 消息里说明这一点。
+        try:
+            fn()
+        except CorpusError as exc:
+            if "找不到语料" not in str(exc):
+                raise
+            PASS.append(f"{fn.__name__}（**跳过**：外部语料不在 —— "
+                        f"{str(exc).split('找不到语料')[0].strip()[:40]}…"
+                        f"；⚠️ 该函数可能已部分执行）")
     total = len(PASS) + len(FAIL)
     for f in FAIL:
         print(f"  [红] {f}")
-    print(f"共 {total} 条：过 {len(PASS)}，红 {len(FAIL)}")
+    # ★ **跳过必须被看见**（2026-10-19）：原来只打印 FAIL，跳过只进了计数
+    #   ⇒ 「跳过了什么」在输出里看不见 —— 那正好是「跳过 ≠ 通过」要防的形状。
+    #   CI 上没有 `_data/`，跳过的条目会不少，必须印出来。
+    # ⚠️ 只认「（**跳过**」这个**格式**，不认「跳过」二字 —— 很多判据的**名字**里
+    #   就有「跳过」（如「报「跳过」而不是「过」」），按字面筛会误报 40+ 条。
+    skipped = [p for p in PASS if "（**跳过**" in p]
+    if skipped:
+        print(f"  [跳过] {len(skipped)} 条：")
+        for s in skipped:
+            print(f"    · {s}")
+    print(f"共 {total} 条：过 {len(PASS)}，红 {len(FAIL)}"
+          + (f"，其中跳过 {len(skipped)}" if skipped else ""))
     return 1 if FAIL else 0
 
 
