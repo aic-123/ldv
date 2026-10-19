@@ -67,8 +67,12 @@ jobs:
       - name: 每条检查都必须能红（基线绿 + 注入红，成对验）
         run: python -m ldv.tests.test_injections
 
+      # ★ 走 ci_run_tests.py：把每条 `[红]` 转成 **check-run annotation**
+      #   （`::error::`）—— job 日志下载要 token，而 annotations 公开可读。
+      #   2026-10-19：修「外部语料不在仓库」那一轮，Windows 绿、Ubuntu 红，
+      #   但拿不到失败内容 ⇒ 只能猜平台差异。这一步就是为了不再猜。
       - name: 单元测试
-        run: python -m ldv.tests.run_tests
+        run: python ldv/tools/ci_run_tests.py
 
       # ⚠️ 这一条**故意不是**「跑一下看它崩不崩」。
       #
