@@ -3720,6 +3720,25 @@ def test_persist_atomic() -> None:
        + ("—— **读到的不是完整份**" if bad else "")
        + ("—— **读得太少，这条判据空转**" if n_read < 20 else ""))
 
+    # ── ⑤⑥ **只在 Windows 上判**（2026-10-19 修 CI）────────────────────────
+    #
+    #    ⚠️ **这是 Windows 特有的现象，POSIX 上根本不存在**：
+    #       Windows 的共享模型按**句柄**算 ⇒ 读者持着句柄时 `os.replace` 被拒
+    #       （`ERROR_ACCESS_DENIED`），所以要重试。
+    #       POSIX 的 `rename(2)` 是**原子**的，读者持的是**旧 inode** ⇒
+    #       不冲突、不重试、不抛。
+    #
+    #    ⇒ 这两条判据在 Linux / macOS 上**必然红**（实测 CI：ubuntu 两个矩阵
+    #      ⑤「尝试 1 次」⑥「没抛」）。那不是实现坏了，是**平台性质不同**。
+    #    ⇒ 非 Windows 上**跳过并点名**（跳过 ≠ 通过）。
+    import sys as _sys
+    # ⚠️ **不 return**：⑤⑥ 之后还有 ③（读者 `read()` 一次都不许抛），
+    #    提前退出会把它一起跳过 —— 那是「跳过变成静默省略」。
+    _is_win = _sys.platform == "win32"
+    if not _is_win:
+        PASS.append("★★ [阶段2] ⑤⑥ 持句柄挡住 os.replace（**跳过**：POSIX 的 rename "
+                    "是原子的、读者持旧 inode ⇒ 这个现象不存在；这两条只对 Windows 有意义）")
+
     # ── ⑤ 写者重试**接上了**（**确定性**）─────────────────────────────────────
     #    ⚠️ 同进程持一个读句柄就**必然**挡住 `os.replace`（Windows 的共享模型是
     #       **按句柄**算的，不是按进程）⇒ 另起一个线程在 50 ms 后释放 ⇒
@@ -3737,8 +3756,12 @@ def test_persist_atomic() -> None:
         c5d = f"尝试 **{n_try}** 次｜{time.time() - t0:.3f}s｜落盘内容 {'对' if c5 else '**错**'}"
     except Exception as e:                                   # noqa: BLE001
         c5, c5d = False, f"**抛了** {type(e).__name__} —— 句柄 50 ms 后已释放，不该抛"
-    ok("★★ [阶段2] ⑤ 持句柄 50 ms 后释放 ⇒ `commit` **重试后成功**（确定性）",
-       c5, c5d)
+    if _is_win:
+        ok("★★ [阶段2] ⑤ 持句柄 50 ms 后释放 ⇒ `commit` **重试后成功**（确定性）",
+           c5, c5d)
+    else:
+        PASS.append("★★ [阶段2] ⑤ 持句柄 50 ms 后释放 ⇒ 重试后成功（**跳过**：POSIX 的 "
+                    f"rename 原子、读者持旧 inode ⇒ 无此现象；实测 {c5d}）")
 
     # ── ⑥ 重试**有界**：一直持句柄 ⇒ 如实抛，且**不许无限等**（**确定性**）─────
     hold2 = open(target, "rb")
@@ -3755,8 +3778,12 @@ def test_persist_atomic() -> None:
         c6, c6d = False, f"抛的是 {type(e).__name__}（该抛 `PermissionError`）"
     finally:
         hold2.close()
-    ok("★★ [阶段2] ⑥ 一直持句柄 ⇒ 如实抛 `PermissionError`，且**耗时 ≤ 1 s**（有界）",
-       c6, c6d)
+    if _is_win:
+        ok("★★ [阶段2] ⑥ 一直持句柄 ⇒ 如实抛 `PermissionError`，且**耗时 ≤ 1 s**（有界）",
+           c6, c6d)
+    else:
+        PASS.append("★★ [阶段2] ⑥ 一直持句柄 ⇒ 如实抛（**跳过**：POSIX 的 rename 原子 ⇒ "
+                    f"句柄挡不住替换；实测 {c6d}）")
 
     # ── ③ 读者侧：写者循环替换、读者循环读 —— 读者**不许**抛 ────────────────
     #    ⚠️ 成色同 ②：靠**窗口够大**才必现（**不是**确定性判据）。
