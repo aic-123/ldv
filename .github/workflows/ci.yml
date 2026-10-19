@@ -71,6 +71,24 @@ jobs:
       #   （`::error::`）—— job 日志下载要 token，而 annotations 公开可读。
       #   2026-10-19：修「外部语料不在仓库」那一轮，Windows 绿、Ubuntu 红，
       #   但拿不到失败内容 ⇒ 只能猜平台差异。这一步就是为了不再猜。
+      #
+      # ⚠️ **本地绿 ≠ CI 绿** —— 这是本仓库最容易重犯的一条（2026-10-17 起红了 7 天）：
+      #
+      #   `.gitignore` 规定 `_data/*`（外部语料）**不进仓库**，而多个判据直接读
+      #   `_data/pypi-deps` / `_data/snap-hepth` / `TENANTS` ⇒
+      #       **本地**（`_data/` 在盘上）  全绿
+      #       **CI**（新 clone，`_data/` 空）`CorpusError` ⇒ 单元测试崩
+      #   ⇒ 判据只要碰 `_data/`，就必须**在缺语料时点名跳过**（`_ext_corpus()` 守卫），
+      #     不能让它崩 —— 「没有这份语料」与「单元测试坏了」是两件事。
+      #
+      #   ⇒ **改判据后必须跑两条腿**：
+      #       ① 本地（有 `_data/`）—— 那几个判据要**真的跑**
+      #       ② 干净 clone（`git clone` 到临时目录、删掉 `_data/`）—— 要全绿 + 跳过被点名
+      #     只跑 ① 等于没测 CI。
+      #
+      # ⚠️ 另一条同型：**平台差异**（2026-10-19）。`os.replace` 被读者句柄挡住是
+      #   **Windows 特有**（共享模型按句柄算），POSIX 的 `rename(2)` 原子、读者持旧 inode
+      #   ⇒ 那条判据在 Linux 上**必然红**。判据要按 `sys.platform` 分流，不是让它红。
       - name: 单元测试
         run: python ldv/tools/ci_run_tests.py
 

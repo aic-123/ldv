@@ -158,7 +158,8 @@ def _assemble(name: str, nodes, edges, holdout: int, remove: int = 0,
 def run_one(name: str, holdout: int, only: str | None,
             remove: int = 0, loaded=None, locked: bool = False,
             predicates: bool = False, reflect: bool = False,
-            indexed: bool = False) -> tuple[bool, str]:
+            indexed: bool = False, apply_approved: bool = False
+            ) -> tuple[bool, str]:
     """跑一个方向。返回 `(护栏是否全过, 追踪文本)`。
 
     `loaded` 为 `None` 时自己 `load()`（**生产路径**：`python -m ldv.cli`）。
@@ -174,7 +175,20 @@ def run_one(name: str, holdout: int, only: str | None,
         loaded = load(predicates=predicates, indexed=indexed)
     if loaded is None:
         return False, "⚠ 找不到语料 —— 四条流程都跑不起来（这不是通过）"
-    nodes, edges, _ = loaded
+    nodes, edges, corpus_dir = loaded
+
+    # ★ **闭环：把 `directions.json` 的 `已批准` 维度真的用上**（2026-10-19）
+    #
+    #   在它之前，`已批准` 只用来**防重复请求**（`already_handled`）——
+    #   人批了，系统不会真去做 ⇒ 「报告 → 人拍板」是**开环**。
+    #
+    #   ⚠️ **默认关**（`--apply-approved` 才开）：键集变大 ⇒ 方向数变多
+    #      ⇒ 会**静默改变所有既有读数**。默认关 = 既有基线一个字不动。
+    #   ⚠️ 红线不变：只执行**人写进 `已批准`** 的，系统不自己加维度。
+    ledger_ap: dict = {}
+    if apply_approved:
+        from ldv.core import request as RQ
+        nodes, ledger_ap = RQ.apply_approved(nodes, corpus_dir)
 
     kernel, queries, new, removable, cover = _assemble(
         name, nodes, edges, holdout, remove, locked=locked, predicates=predicates)
@@ -277,6 +291,9 @@ def main(argv: list[str]) -> int:
     remove = 0
     if "--remove" in args:
         remove = int(args[args.index("--remove") + 1])
+    # ★ 闭环开关（2026-10-19）：把 `directions.json` 的 `已批准` 维度真的用上。
+    #   默认**关** —— 开了会改变键集 ⇒ 改变方向数 ⇒ 改变全部读数。
+    do_apply_approved = "--apply-approved" in args
     # ★ **可选入口：并发壳**（2026-10-15，`docs/并发接口设计.md` §7 阶段 1）。
     #   默认**不锁** —— 接线本身不产生收益（当前没有并发调用方），
     #   而默认路径每一步都要付一次加解锁。⇒ 做成**显式**入口，
@@ -304,13 +321,15 @@ def main(argv: list[str]) -> int:
           + ("｜**并发壳**（`--locked`）" if locked else "")
           + ("｜**推导谓词**（`--predicates`）" if predicates else "")
           + ("｜**反思层**（`--reflect`，只调顺序）" if reflect else "")
-          + ("｜**语料索引**（`--index`，跨进程）" if indexed else ""))
+          + ("｜**语料索引**（`--index`，跨进程）" if indexed else "")
+          + ("｜**应用已批准维度**（`--apply-approved`）" if do_apply_approved else ""))
     print()
 
     all_ok = True
     for name in targets:
         ok, text = run_one(name, holdout, only, remove, locked=locked,
-                           predicates=predicates, reflect=reflect, indexed=indexed)
+                           predicates=predicates, reflect=reflect, indexed=indexed,
+                           apply_approved=do_apply_approved)
         all_ok &= ok
         print(text)
         print()

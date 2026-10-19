@@ -4561,6 +4561,92 @@ def test_loader_sharded() -> None:
            raised, "抛了 CorpusError" if raised else "静默返回空 ⇒ 假绿")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_approved_loop() -> None:
+    """★ 反思层闭环：`directions.json` 的 `已批准` **真的被用上**（2026-10-19）。
+
+    ⚠️ 在这之前 `已批准` **只用来防重复请求**（`already_handled`）——
+       人批了，系统不会真去做 ⇒「报告 → 人拍板」是**开环**。
+       判据 ㊜ 是这件事的硬读数：批准一个真字段 ⇒ **方向数必须变多**。
+    """
+    import json
+    import shutil
+    import tempfile
+    from pathlib import Path
+
+    from ldv.core import request as RQ
+    from ldv.core.kernel import Kernel
+    from ldv.checks._fixtures import load as _load
+    from ldv.plugins.keyset import KeysetPlugin
+
+    loaded = _load()
+    assert loaded is not None
+    nodes, _edges, _d = loaded
+
+    def _n_dirs(ns):
+        items = {i: n.as_item() for i, n in ns.items()}
+        k = Kernel(KeysetPlugin(), items)
+        k.build(k.plugin.merge([]))
+        k.bulk_insert(sorted(items))
+        return len(k.all_directions())
+
+    base_dirs = _n_dirs(nodes)
+    base_keys = {i: n.keys for i, n in nodes.items()}
+
+    tmp = Path(tempfile.mkdtemp(prefix="ldv-approved-"))
+    try:
+        # ── ㊚ 对照：**没有** `directions.json` ⇒ 一个字不动 ────────────────
+        same, led0 = RQ.apply_approved(nodes, tmp)
+        ok("★ [闭环] ㊚ 没批准 ⇒ 一个字不动（键集与方向数都不变）",
+           led0["已批准条目"] == 0 and same == nodes and _n_dirs(same) == base_dirs,
+           f"条目 {led0['已批准条目']}｜方向 {_n_dirs(same)}（基线 {base_dirs}）")
+
+        # ── ㊘ 批准一个**材料里真有**的字段（`scope`，不在 ENUM_FIELDS 里）──────
+        (tmp / "directions.json").write_text(json.dumps(
+            {"已批准": [{"信号": "B19", "维度": "scope", "取值": None}]},
+            ensure_ascii=False), encoding="utf-8")
+        new, led = RQ.apply_approved(nodes, tmp)
+        got_keys = all(any(k.startswith("scope=") for k in new[i].keys) for i in new)
+        ok("★ [闭环] ㊘ 批准存在的字段 ⇒ 真的进键集（`维度=值`）",
+           bool(led["生效"]) and led["生效"][0]["维度"] == "scope" and got_keys
+           and led["生效项数"] == len(new),
+           f"生效 {led['生效']}｜生效项 {led['生效项数']}/{len(new)}")
+
+        # ── ㊘b **入参不被改**（纯函数）─────────────────────────────────────
+        untouched = all(nodes[i].keys == base_keys[i] for i in nodes)
+        ok("★ [闭环] ㊘b 纯函数：原 nodes 的键集**一个都没变**", untouched,
+           "入参未被改" if untouched else "**入参被改了** —— 会影响别的调用方")
+
+        # ── ㊜ **方向数真的变多**（键集变大 ⇒ 树多一层）──────────────────────
+        new_dirs = _n_dirs(new)
+        ok("★ [闭环] ㊜ 方向数真的变多 —— 这是「闭环有没有用」的硬读数",
+           new_dirs > base_dirs, f"批准前 {base_dirs} → 批准后 {new_dirs}")
+
+        # ── ㊙ 批准一个**材料里没有**的字段 ⇒ 记「未生效」，不假装成功 ────────
+        (tmp / "directions.json").write_text(json.dumps(
+            {"已批准": [{"信号": "B19", "维度": "no_such_field_xyz"}]},
+            ensure_ascii=False), encoding="utf-8")
+        _n2, led2 = RQ.apply_approved(nodes, tmp)
+        ok("★ [闭环] ㊙ 批准不存在的字段 ⇒ 记「未生效」（不假装成功）",
+           len(led2["未生效"]) == 1 and not led2["生效"] and led2["生效项数"] == 0,
+           f"未生效 {led2['未生效']}")
+
+        # ── ㊛ `取值` 过滤：只给等于该值的项加键 ────────────────────────────
+        #    取一个真值（第一个节点的 type），只批准「type == 那个值」
+        some_type = str(nodes[sorted(nodes)[0]].fields.get("type"))
+        (tmp / "directions.json").write_text(json.dumps(
+            {"已批准": [{"信号": "B19", "维度": "type", "取值": some_type}]},
+            ensure_ascii=False), encoding="utf-8")
+        new3, led3 = RQ.apply_approved(nodes, tmp)
+        hit = [i for i in new3 if f"type={some_type}" in new3[i].keys]
+        # `type` 本来就在 ENUM_FIELDS 里 ⇒ 键本来就有；这里判的是**账本**只算那些项
+        ok("★ [闭环] ㊛ `取值` 过滤生效：只给等于该值的项算数",
+           bool(led3["生效"]) and led3["生效"][0]["项数"] == len(hit) > 0
+           and led3["生效项数"] == len(hit),
+           f"取值 {some_type!r} ⇒ {led3['生效项数']} 项（实测命中 {len(hit)}）")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 def test_direction_request() -> None:
     """★ 方向请求六条判据（`ldv/core/request.py`，2026-10-17）。
 
@@ -7440,6 +7526,7 @@ def main() -> int:
                test_capacity,
                test_impact,
                test_direction_request,
+               test_approved_loop,
                test_loader_sharded,
                test_query_hit_items, test_spec_paths, test_maintain,
                test_view_oracles, test_influence_channels, test_views,

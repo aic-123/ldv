@@ -154,6 +154,123 @@ def write_requests(corpus_dir: Path, req: dict[str, Any],
     return path
 
 
+# ── ★ 闭环：把「已批准」的维度**真的用上**（2026-10-19）───────────────────
+#
+# 为什么需要这一段：在它之前，`directions.json` 的 `已批准` **只被用来防重复请求**
+# （`already_handled`）—— 人批了，系统**不会真去做**。于是「报告 → 人拍板」是开环：
+# 下一趟还是同一批项分不开，人以为自己批准过就好了，实际什么都没变。
+#
+# ⚠️ **红线不变**：系统**不自己**加维度、不猜、不提优先级。
+#    这里只执行**人已经写进 `已批准`** 的那一条 —— 人在环里，系统照办。
+#
+# ⚠️ **默认不生效**：由调用方显式开启（`cli --apply-approved`）。
+#    否则「批准一个字段」会**静默改变所有既有读数**（键集变大 ⇒ 方向数变多）。
+
+def approved_dimensions(corpus_dir: Path) -> list[dict[str, Any]]:
+    """读 `已批准` 段里**声明了新维度**的那些条目。
+
+    条目格式（人写）：
+
+        {"信号": "B19：…", "维度": "scope", "取值": null, "涉及的项": [...]}
+
+    - `维度` 是 front matter 的**字段名**（`source.kind` 这种点路径也认）
+    - `取值` 可选：`null` = 整个字段当维度；给了值 = 只把「等于这个值」的项标出来
+    - 没写 `维度` 的条目**不算**（可能只是「同意这个诊断」，没指定用什么维度）
+    """
+    path = Path(corpus_dir) / "directions.json"
+    if not path.is_file():
+        return []
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    out: list[dict[str, Any]] = []
+    for row in doc.get("已批准", []) or []:
+        if not isinstance(row, dict):
+            continue
+        dim = str(row.get("维度") or "").strip()
+        if not dim:
+            continue
+        want = row.get("取值")
+        out.append({"维度": dim,
+                    "取值": None if want in (None, "") else str(want),
+                    "信号": str(row.get("信号") or "")})
+    return out
+
+
+def _field_of(fields: dict[str, Any], name: str) -> Any:
+    """按点路径取值（`source.kind`）。取不到 ⇒ `None`。"""
+    cur: Any = fields
+    for part in name.split("."):
+        if not isinstance(cur, dict) or part not in cur:
+            return None
+        cur = cur[part]
+    return cur
+
+
+def apply_approved(nodes: dict[str, Any], corpus_dir: Path
+                   ) -> tuple[dict[str, Any], dict[str, Any]]:
+    """把 `已批准` 的维度**注入成键**（`维度=值`），返回 `(新 nodes, 账本)`。
+
+    **纯函数**：不改入参，返回新的 `Node` 对象。
+
+    账本三段，都**如实报**：
+
+        生效     维度 / 取值 / 项数      —— 材料里真有这个字段
+        未生效   维度 / 原因            —— **批准了但材料里没有**（不假装成功）
+        生效项数 有多少项被加上了新键
+
+    ⚠️ 「未生效」不是错误 —— 它可能是：批准的是**还没摄入**的字段（得先补材料），
+       或者人写错了字段名。两种情况都要人看见，所以**必须报**，不能静默。
+    """
+    from dataclasses import replace
+
+    dims = approved_dimensions(corpus_dir)
+    ledger: dict[str, Any] = {"生效": [], "未生效": [], "生效项数": 0, "已批准条目": len(dims)}
+    if not dims:
+        return nodes, ledger
+
+    # ① 先判「材料里到底有没有」—— 这一趟只看，不改
+    for d in dims:
+        hit = 0
+        for n in nodes.values():
+            v = _field_of(n.fields, d["维度"])
+            if v is None or v == "":
+                continue
+            if d["取值"] is not None and str(v) != d["取值"]:
+                continue
+            hit += 1
+        if hit == 0:
+            ledger["未生效"].append({
+                "维度": d["维度"], "取值": d["取值"],
+                "原因": ("材料里没有这个字段（或没有取该值的项）"
+                         "—— 批准了但**没生效**，不假装成功"),
+            })
+        else:
+            ledger["生效"].append({"维度": d["维度"], "取值": d["取值"], "项数": hit})
+
+    if not ledger["生效"]:
+        return nodes, ledger
+
+    # ② 真的加键（`维度=值`，与 `keys_of` 的枚举字段同一种形状）
+    new: dict[str, Any] = {}
+    for nid, n in nodes.items():
+        extra: set[str] = set()
+        for d in ledger["生效"]:
+            v = _field_of(n.fields, d["维度"])
+            if v is None or v == "":
+                continue
+            if d["取值"] is not None and str(v) != d["取值"]:
+                continue
+            extra.add(f"{d['维度']}={v}")
+        if extra:
+            new[nid] = replace(n, keys=n.keys | frozenset(extra))
+            ledger["生效项数"] += 1
+        else:
+            new[nid] = n
+    return new, ledger
+
+
 def already_handled(corpus_dir: Path, items: Sequence[str]) -> bool:
     """这批项是不是**已经被处置过**（批准或拒绝过）—— 用来防重复请求。"""
     path = Path(corpus_dir) / "directions.json"
