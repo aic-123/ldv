@@ -4746,6 +4746,71 @@ def test_contradiction_requests() -> None:
        and "新谓词" in hit[0]["请求"],
        f"矛盾 {len(RF.contradictions(k1)['矛盾'])} 条 ⇒ 请求 {len(r1['请求'])} 条"
        f"｜首条 {hit[0]['信号'] if hit else '（无）'} @ {hit[0]['方向'] if hit else '-'}")
+
+
+def test_contra_merged() -> None:
+    """★ 两类矛盾并进同一份清单（2026-10-19）。
+
+    `contradictions()` 原本只查三类**结构不变量** —— 反向对照
+    （`outputs/_probe_contra_reverse.py`）证明它们**能红**，但正确内核
+    **永远不会红**（`_children` 由子方向声明的 parent 反推、`union ⊆ parent`
+    由 payload 收窄保证）⇒ 9 份语料上恒为 0。而「矛盾 0」读起来像「没问题」。
+
+    真正对应「加新谓词 / 请求新方向」的是**叶切不开** ⇒ 归进同一份清单，
+    但**分组报数**，别让两类混成一个数。
+    """
+    from ldv.core import reflect as RF
+    from ldv.core import request as RQ
+    from ldv.core.kernel import Kernel
+    from ldv.checks._fixtures import load as _load
+    from ldv.plugins.keyset import KeysetPlugin
+
+    loaded = _load()
+    assert loaded is not None
+    nodes, _e, _d = loaded
+    items = {i: n.as_item() for i, n in nodes.items()}
+    k = Kernel(KeysetPlugin(), items)
+    k.build(k.plugin.merge([]))
+    k.bulk_insert(sorted(items))
+
+    c_none = RF.contradictions(k)                 # 不给 cap ⇒ 只查结构三类
+    c_cap = RF.contradictions(k, cap=3)           # 给 cap=3 ⇒ 追加「切不开」
+    lr3 = RQ.leaf_cap_requests(k, cap=3)
+    g = c_cap["分组"]
+
+    # ── ㊦ 总数 = 结构 + 切不开；结构那三类一条不多不少 ──────────────────
+    ok("★ [矛盾并入] ㊦ 总数 = 结构 + 切不开，且结构三类与不给 cap 时一致",
+       c_cap["矛盾数"] == g["结构矛盾"] + g["切不开"]
+       and g["结构矛盾"] == c_none["矛盾数"] == 0
+       and g["切不开"] == len(lr3["请求"]) > 0,
+       f"结构 {g['结构矛盾']}｜切不开 {g['切不开']}｜总数 {c_cap['矛盾数']}"
+       f"（cap=None 时 {c_none['矛盾数']}）")
+
+    # ── ㊧ 没给 cap ⇒ `未查` 点名「切不开」（没查 ≠ 查了没发现） ─────────
+    ok("★ [矛盾并入] ㊧ 没给 cap ⇒ `未查` 点名「切不开」",
+       any("切不开" in x for x in c_none["未查"])
+       and "切不开" not in c_none["检查项"]
+       and "切不开" in c_cap["检查项"] and c_cap["未查"] == [],
+       f"cap=None 未查 {c_none['未查']}｜检查项 {c_none['检查项']}")
+
+    # ── ㊨ 阈值只有一处实现：并入的条数/方向 == leaf_cap_requests ────────
+    ok("★ [矛盾并入] ㊨ 切不开的条数与方向 == `leaf_cap_requests`（同一处阈值）",
+       [r["方向"] for r in c_cap["矛盾"] if r["类型"] == "切不开"]
+       == [r["方向"] for r in lr3["请求"]],
+       f"并入 {[r['方向'] for r in c_cap['矛盾'] if r['类型'] == '切不开'][:4]}…"
+       f"｜独立 {[r['方向'] for r in lr3['请求']][:4]}…")
+
+    # ── ㊩ 「切不开」也产请求，且措辞是「切开」不是「归位」 ──────────────
+    rq = RF.contradiction_requests(k, c_cap)
+    capreq = [x for x in rq["请求"] if x["信号"] == "矛盾：切不开"]
+    ok("★ [矛盾并入] ㊩ 「切不开」也产请求，措辞是「切开这批项」",
+       len(capreq) == g["切不开"] and bool(capreq)
+       and all("切开" in x["请求"] for x in capreq)
+       and all(x["涉及的项数"] > 3 for x in capreq),
+       f"请求 {len(capreq)} 条｜首条 {capreq[0]['涉及的项数'] if capreq else 0} 项"
+       f"｜{capreq[0]['请求'][:26] if capreq else '-'}…")
+
+
 def test_approved_loop() -> None:
     """★ 反思层闭环：`directions.json` 的 `已批准` **真的被用上**（2026-10-19）。
 
@@ -7752,6 +7817,7 @@ def main() -> int:
                test_direction_request,
                test_approved_loop,
                test_contradiction_requests,
+               test_contra_merged,
                test_leaf_cap_requests,
                test_candidate_dimensions,
                test_loader_sharded,

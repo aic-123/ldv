@@ -232,28 +232,29 @@ def run_one(name: str, holdout: int, only: str | None,
         #   ⚠️ 只在 `--write-requests` 时写：它会**改语料目录**（副作用），
         #      默认不写，免得跑一次测试就往语料里丢文件。
         if write_requests and corpus_dir is not None:
-            from .core.reflect import contradiction_requests
-            from .core.request import (candidate_dimensions, direction_requests,
-                                       leaf_cap_requests, write_requests as _wr)
-            # ★ **三类信号**并成一个请求清单（都写进 `directions.json` 的 `请求` 段）：
-            #   ① B19（连续 N 次展开没变细）② 矛盾（结构打架）
-            #   ③ **叶容量超阈值**（2026-10-19 加：每次展开都分开、但分完叶还是巨大）
+            from .core.reflect import contradiction_requests, contradictions
+            from .core.request import (LEAF_CAP, candidate_dimensions,
+                                       direction_requests, write_requests as _wr)
+            # ★ **两路信号**并成一个请求清单（都写进 `directions.json` 的 `请求` 段）：
+            #   ① B19（连续 N 次展开没变细）
+            #   ② 矛盾 —— **两类**：结构矛盾（边打架 / 子覆盖越出父 / 孤立方向）
+            #      + **切不开**（叶容量超阈值，2026-10-19 并入：它才是「加新谓词」
+            #      对应的那种矛盾；结构那三类是内核不变量，恒 0 是正常的）
             req = direction_requests(kernel, cover)
-            creq = contradiction_requests(kernel)
-            lreq = leaf_cap_requests(kernel)
+            contra = contradictions(kernel, cap=LEAF_CAP)
+            creq = contradiction_requests(kernel, contra)
             merged = dict(req)
             merged["请求"] = (list(req.get("请求", []))
-                              + list(creq.get("请求", []))
-                              + list(lreq.get("请求", [])))
+                              + list(creq.get("请求", [])))
+            grp = contra.get("分组", {})
             merged["说明"] = (
                 f"B19 {len(req.get('请求', []))} 条 + "
-                f"矛盾 {len(creq.get('请求', []))} 条 + "
-                f"叶容量超阈值 {len(lreq.get('请求', []))} 条 —— "
+                f"矛盾 {len(creq.get('请求', []))} 条"
+                f"（结构 {grp.get('结构矛盾', 0)} / 切不开 {grp.get('切不开', 0)}）—— "
                 + str(req.get("说明", "")))
             merged["本趟查了"] = {
                 "B19": req.get("本趟查了", {}),
                 "矛盾": creq.get("本趟查了", {}),
-                "叶容量": lreq.get("本趟查了", {}),
             }
             # ★ **候选维度清单**（2026-10-19）：把「材料里有什么可批」摆在请求旁边 ——
             #   否则人看到「要一个新维度」只能自己猜（实测 enron/coauth/brightkite
@@ -264,8 +265,8 @@ def run_one(name: str, holdout: int, only: str | None,
             merged["说明"] += f"｜候选维度：{cand.get('说明', '')}"
             path_w = _wr(corpus_dir, merged)
             print(f"  请求已写：{path_w}（{len(merged['请求'])} 条："
-                  f"B19 {len(req.get('请求', []))} / 矛盾 {len(creq.get('请求', []))} / "
-                  f"叶容量 {len(lreq.get('请求', []))}）")
+                  f"B19 {len(req.get('请求', []))} / 矛盾 {len(creq.get('请求', []))}"
+                  f"（结构 {grp.get('结构矛盾', 0)} / 切不开 {grp.get('切不开', 0)}））")
     if only in (None, "a"):
         # 跑三条查询 —— 记录累积下来给流程 D 用
         for q in queries[:3]:

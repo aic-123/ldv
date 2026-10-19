@@ -36,7 +36,7 @@ from typing import Any
 SORT_KEY = "成员数降序·did 升序"
 
 
-def contradictions(kernel: Any) -> dict[str, Any]:
+def contradictions(kernel: Any, cap: int | None = None) -> dict[str, Any]:
     """**结构层**的矛盾清单（2026-10-17，用户拍板「就在结构层」）。
 
     只聚合**结构上能直接验**的三类，**不碰语义**（语义矛盾要理解内容 ⇒ 撞红线）：
@@ -67,6 +67,22 @@ def contradictions(kernel: Any) -> dict[str, Any]:
       人拍板 ⇒ 写 `已批准` ⇒ `request.apply_approved` 真的用上（闭环）。
 
     ⚠️ 仍然**不自动改结构**：加谓词/加方向是**人的决定**，系统只产证据 + 执行决定。
+
+    ## ★ 第四类：**切不开**（2026-10-19，`cap` 给了才查）
+
+    前三类是**结构不变量** —— 反向对照（`outputs/_probe_contra_reverse.py`）证明
+    它们**能红**，但**正确内核永远不会红**：`_children` 由子方向自己声明的 parent
+    反推、`union ⊆ parent` 由 payload 收窄保证。⇒ 9 份语料上恒为 0。
+
+    而「矛盾 ⇒ 加新谓词 / 请求新方向」真正对应的现象是**叶切不开**：
+
+        叶容量 > cap   ⇒ 这些项**材料里有差异，但当前谓词与方向切不开它们**
+
+    ⇒ 它是**表达力矛盾**，与前三类（**结构矛盾**）性质不同，但**修订动作相同**
+      （加新维度 / 新谓词）⇒ 归进同一份清单、同一个请求通道。
+
+    ⚠️ 阈值逻辑**只有一处实现**（`request.leaf_cap_requests`），这里只是换了个包装，
+       不另造一套「什么叫叶」。
     """
     rows: list[dict[str, Any]] = []
     dirs = kernel.all_directions()
@@ -102,11 +118,33 @@ def contradictions(kernel: Any) -> dict[str, Any]:
             rows.append({"类型": "孤立方向", "方向": d.did,
                          "说明": "没有父，也不是根 D0"})
 
+    n_struct = len(rows)
+
+    # ④ **切不开**（表达力矛盾）—— 只在调用方给了 `cap` 时查
+    cap_rows: list[dict[str, Any]] = []
+    if cap is not None:
+        from .request import leaf_cap_requests       # 局部导入：避免 core 内部循环
+        lr = leaf_cap_requests(kernel, cap)
+        for r in lr.get("请求", []):
+            cap_rows.append({
+                "类型": "切不开",
+                "方向": r["方向"],
+                "项数": r["涉及的项数"],
+                "阈值": int(cap),
+                "说明": (f"这个叶有 {r['涉及的项数']} 个项 > 阈值 {cap} —— "
+                         f"每次展开都分开了，但分完还是这么大"),
+            })
+        checked["切不开"] = lr["本趟查了"].get("查过的叶", 0)
+
     return {
-        "矛盾数": len(rows),
-        "矛盾": rows,
+        "矛盾数": n_struct + len(cap_rows),
+        "矛盾": rows + cap_rows,
+        # ★ 两类分开数：**结构矛盾恒 0 是正常的**，别让「矛盾 0」读成「没问题」
+        "分组": {"结构矛盾": n_struct, "切不开": len(cap_rows)},
         # ★ 查了什么（「没查」与「查了没发现」必须分得开）
-        "检查项": ["边打架", "子覆盖越出父", "孤立方向"],
+        "检查项": (["边打架", "子覆盖越出父", "孤立方向"]
+                   + (["切不开"] if cap is not None else [])),
+        "未查": ([] if cap is not None else ["切不开（调用方没给 cap）"]),
         "覆盖读数": {"方向数": len(dirs), **checked},
     }
 
@@ -150,6 +188,15 @@ def contradiction_requests(kernel: Any, contra: dict[str, Any] | None = None
                 involved = sorted(union - set(kernel.members_of(p)))
             except Exception:
                 pass
+        # 两类矛盾的**证据不同**，请求措辞也必须不同（否则读的人分不清该改什么）：
+        #   结构矛盾  项被送到了错的位置 ⇒ 要「归到正确位置」
+        #   切不开    项挤在一个叶里、切不动 ⇒ 要「切开这批项」
+        if kind == "切不开":
+            want = ("需要一个能**切开这批项**的新维度（一个 front matter 字段，"
+                    "或一个新谓词）—— 每次展开都分开了，但分完还是挤在一起")
+        else:
+            want = ("需要一个能把这批项**归到正确位置**的新谓词（或一个新方向）"
+                    "—— 当前谓词与方向切不开它们")
         reqs.append({
             "信号": f"矛盾：{kind}",
             "方向": did,
@@ -157,16 +204,18 @@ def contradiction_requests(kernel: Any, contra: dict[str, Any] | None = None
             "涉及的项": involved,
             "涉及的项数": len(involved),
             "当前状态": str(r.get("说明", "")),
-            "请求": ("需要一个能把这批项**归到正确位置**的新谓词（或一个新方向）"
-                     "—— 当前谓词与方向切不开它们"),
+            "请求": want,
             "判据编号": "矛盾",
         })
     return {
         "请求": reqs,
         "本趟查了": c.get("覆盖读数", {}),
-        "说明": (f"矛盾 {len(reqs)} 条 ⇒ {len(reqs)} 条请求 —— "
+        "说明": (f"矛盾 {len(reqs)} 条 ⇒ {len(reqs)} 条请求"
+                 f"（结构 {c.get('分组', {}).get('结构矛盾', 0)} / "
+                 f"切不开 {c.get('分组', {}).get('切不开', 0)}）—— "
                  if reqs else
-                 f"矛盾 0 条（查了 {c.get('检查项')}）—— ")
+                 f"矛盾 0 条（查了 {c.get('检查项')}；"
+                 f"未查 {c.get('未查') or '无'}）—— ")
                 + "人拍板后写进 `directions.json` 的 `已批准` / `已拒绝`",
     }
 
