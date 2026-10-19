@@ -233,8 +233,8 @@ def run_one(name: str, holdout: int, only: str | None,
         #      默认不写，免得跑一次测试就往语料里丢文件。
         if write_requests and corpus_dir is not None:
             from .core.reflect import contradiction_requests
-            from .core.request import (direction_requests, leaf_cap_requests,
-                                       write_requests as _wr)
+            from .core.request import (candidate_dimensions, direction_requests,
+                                       leaf_cap_requests, write_requests as _wr)
             # ★ **三类信号**并成一个请求清单（都写进 `directions.json` 的 `请求` 段）：
             #   ① B19（连续 N 次展开没变细）② 矛盾（结构打架）
             #   ③ **叶容量超阈值**（2026-10-19 加：每次展开都分开、但分完叶还是巨大）
@@ -255,6 +255,13 @@ def run_one(name: str, holdout: int, only: str | None,
                 "矛盾": creq.get("本趟查了", {}),
                 "叶容量": lreq.get("本趟查了", {}),
             }
+            # ★ **候选维度清单**（2026-10-19）：把「材料里有什么可批」摆在请求旁边 ——
+            #   否则人看到「要一个新维度」只能自己猜（实测 enron/coauth/brightkite
+            #   都是「批了也白批」，因为可用字段早就用完了）。
+            cand = candidate_dimensions(nodes)
+            merged["候选维度"] = cand.get("候选维度", [])
+            merged["候选维度说明"] = cand.get("说明", "")
+            merged["说明"] += f"｜候选维度：{cand.get('说明', '')}"
             path_w = _wr(corpus_dir, merged)
             print(f"  请求已写：{path_w}（{len(merged['请求'])} 条："
                   f"B19 {len(req.get('请求', []))} / 矛盾 {len(creq.get('请求', []))} / "

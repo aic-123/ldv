@@ -144,6 +144,9 @@ def write_requests(corpus_dir: Path, req: dict[str, Any],
             "⚠️ 本文件由 `ldv/core/request.py` 生成；人写的两段会被原样保留。",
         ],
         "请求": req.get("请求", []),
+        # ★ **候选维度清单**（2026-10-19）：把「材料里有什么可批」直接摆出来 ——
+        #   否则人看到「要一个新维度」只能自己猜。
+        "候选维度": req.get("候选维度", []),
         "本趟查了": req.get("本趟查了", {}),
         "说明": req.get("说明", ""),
     }
@@ -408,6 +411,74 @@ def leaf_cap_requests(kernel: Any, cap: int = LEAF_CAP) -> dict[str, Any]:
                  f"叶容量 0 处超阈值（最大 {checked['最大叶容量']}，阈值 {cap}，"
                  f"查了 {checked['查过的叶']} 个叶）—— ")
                 + "人拍板后写进 `directions.json` 的 `已批准` / `已拒绝`",
+    }
+
+
+# ── ★ 候选维度清单（2026-10-19）────────────────────────────────────────────
+#
+# 为什么需要：请求说「要一个新维度」，人打开 `directions.json` 只能**自己猜**
+# 材料里到底有没有得批 —— 实测（enron / coauth / brightkite）都是「批了也白批」，
+# 因为可用字段早就用完了（`type` 3 档 × `evidence_status` 3 档 = 9 个方向封顶）。
+# ⇒ 把「材料里有什么」直接摆在请求旁边。
+
+#: 判定用的**离散规则**（不是打分、不是优先级）
+def candidate_dimensions(nodes: dict[str, Any], top: int = 12) -> dict[str, Any]:
+    """列出**候选维度**：每个 front matter 字段的取值数 / 覆盖率 / 是否已用。
+
+    只报**读数**，**不打分、不算优先级**（`docs/评估标准.md` 的「不作分」红线）。
+    按取值数从大到小只是**展示顺序** —— 与 `reflect.report` 的 `展开序` 同性质
+    （外生排序规则，可审计）。
+
+    判定是**离散的四类**，不是分数：
+
+        已用作键      在 `ENUM_FIELDS` 里，或 `source.kind`
+        **恒定**      只有 1 种取值 ⇒ 分不开
+        **几乎唯一**  取值数 ≥ 项数的 90% ⇒ 分出来等于没分（每项一个方向）
+        可以当维度    其余
+    """
+    from collections import Counter
+
+    from ..corpus.loader import ENUM_FIELDS
+
+    # ⚠️ **不叫 **： 的  把这类名字当「全局标量分」，
+    #    源码扫描会报红（2026-10-19 踩到）。这里只是**节点数**，不是评分。
+    n_nodes = len(nodes)
+    if not n_nodes:
+        return {"候选维度": [], "本趟查了": {"字段数": 0}, "说明": "空语料"}
+    per_field: dict[str, list[str]] = {}
+    for n in nodes.values():
+        for f, v in n.fields.items():
+            if v is None or v == "":
+                continue
+            per_field.setdefault(f, []).append(str(v))
+
+    USED = set(ENUM_FIELDS) | {"source.kind"}
+    rows: list[dict[str, Any]] = []
+    for f, vals in per_field.items():
+        uniq = len(Counter(vals))
+        cover = len(vals) / n_nodes
+        if f in USED:
+            verdict = "已用作键"
+        elif uniq <= 1:
+            verdict = "**恒定 ⇒ 分不开**"
+        elif uniq >= n_nodes * 0.9:
+            verdict = "**几乎每项唯一 ⇒ 分出来等于没分**"
+        else:
+            verdict = "可以当维度"
+        rows.append({"字段": f, "取值数": uniq, "覆盖率": round(cover, 3),
+                     "已用": f in USED, "读数": verdict})
+    rows.sort(key=lambda r: (-r["取值数"], r["字段"]))     # 展示顺序（外生）
+
+    usable = [r for r in rows if r["读数"] == "可以当维度"]
+    return {
+        "候选维度": rows[:top],
+        "本趟查了": {"字段数": len(rows), "可以当维度": len(usable),
+                     "已用": sum(1 for r in rows if r["已用"]),
+                     "恒定": sum(1 for r in rows if "恒定" in r["读数"]),
+                     "几乎唯一": sum(1 for r in rows if "几乎每项唯一" in r["读数"])},
+        "说明": (f"共 {len(rows)} 个字段；可以当维度的 {len(usable)} 个"
+                 + ("（" + "、".join(r["字段"] for r in usable[:4]) + "）" if usable
+                    else " —— **没有可用的新维度**（这正是「批了也白批」的原因）")),
     }
 
 

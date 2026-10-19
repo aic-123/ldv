@@ -4567,6 +4567,57 @@ def test_loader_sharded() -> None:
 
 
 
+
+
+def test_candidate_dimensions() -> None:
+    """★ 候选维度清单（`request.candidate_dimensions`，2026-10-19）。
+
+    ⚠️ 只报**读数**（取值数 / 覆盖率）与**离散判定**，不打分、不排序成「优先级」。
+    """
+    from ldv.core import request as RQ
+    from ldv.checks._fixtures import load as _load
+
+    loaded = _load()
+    assert loaded is not None
+    nodes, _e, _d = loaded
+    r = RQ.candidate_dimensions(nodes)
+    rows = {x["字段"]: x for x in r["候选维度"]}
+
+    # ㊡ 恒定字段（默认语料里 `type` 不是恒定；用一个**造出来的**恒定字段测）
+    from dataclasses import replace as _replace
+    fake = {k: _replace(n, fields={**n.fields, "恒定测试": "同一个值"})
+            for k, n in nodes.items()}
+    rf = RQ.candidate_dimensions(fake)
+    row_c = {x["字段"]: x for x in rf["候选维度"]}.get("恒定测试")
+    ok("★ [候选维度] ㊡ 恒定字段（只有 1 种取值）⇒ 标「分不开」",
+       row_c is not None and "恒定" in row_c["读数"] and row_c["取值数"] == 1,
+       f"{row_c['读数'] if row_c else '（没列出来）'}｜取值数 {row_c['取值数'] if row_c else '-'}")
+
+    # ㊢ 已用字段
+    ok("★ [候选维度] ㊢ 已用作键的字段标「已用作键」",
+       rows.get("type", {}).get("读数") == "已用作键"
+       and rows.get("evidence_status", {}).get("读数") == "已用作键",
+       f"type={rows.get('type', {}).get('读数')}｜"
+       f"evidence_status={rows.get('evidence_status', {}).get('读数')}")
+
+    # ㊣ 几乎唯一（id 每项唯一）
+    rid = rows.get("id")
+    ok("★ [候选维度] ㊣ 几乎每项唯一的字段标「分出来等于没分」",
+       rid is not None and "几乎每项唯一" in rid["读数"],
+       f"id：{rid['取值数'] if rid else '-'} 种取值 / {len(nodes)} 项 ⇒ "
+       f"{rid['读数'] if rid else '-'}")
+
+    # ㊤ 不作分（红线）
+    import json as _json
+    blob = _json.dumps(r, ensure_ascii=False)
+    bad = [w for w in ("评分", "打分", "优先级", "score", "rank", "权重") if w in blob]
+    ok("★ [候选维度] ㊤ **不作分**：清单里没有「评分/优先级/score/rank/权重」",
+       not bad, f"命中 {bad}" if bad else "干净")
+
+    # ㊥ 说明里必须能看出「有没有可批的」
+    ok("★ [候选维度] ㊥ 说明里明说「可以当维度的 N 个」或「没有可用的新维度」",
+       ("可以当维度的" in r["说明"]) or ("没有可用的新维度" in r["说明"]),
+       r["说明"][:60])
 def test_leaf_cap_requests() -> None:
     """★ 叶容量 ⇒ 请求（`request.leaf_cap_requests`，2026-10-19）。
 
@@ -7702,6 +7753,7 @@ def main() -> int:
                test_approved_loop,
                test_contradiction_requests,
                test_leaf_cap_requests,
+               test_candidate_dimensions,
                test_loader_sharded,
                test_query_hit_items, test_spec_paths, test_maintain,
                test_view_oracles, test_influence_channels, test_views,
