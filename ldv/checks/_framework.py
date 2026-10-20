@@ -107,13 +107,6 @@ class Report:
         return "\n".join(lines)
 
 
-def tri_from(ok: bool | None, *, skipped_reason: str = "") -> tuple[Tri, str]:
-    """把三态判据收成一个入口 —— `None` 就是「未展开」，**不是** False。"""
-    if ok is None:
-        return Tri.UNEXPANDED, skipped_reason
-    return (Tri.YES if ok else Tri.NO), ""
-
-
 def result_of(rep: Report, code: str) -> Tri:
     """`rep` 里编号为 `code` 的那条断言的三态。**没有那条 ⇒ `UNEXPANDED`。**
 

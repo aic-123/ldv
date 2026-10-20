@@ -227,6 +227,3 @@ def render_divergence(prof: dict[str, Any], label: str = "") -> str:
             f"｜{marks}｜{tail}{warn}{scope}{stay}"
             f"（度量，不进退出码）")
 
-
-def selfcheck_ok(prof: dict[str, Any]) -> bool:
-    return all(prof["比较器自检"].values())

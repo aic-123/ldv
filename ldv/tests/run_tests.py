@@ -5426,6 +5426,61 @@ def test_dimension_values() -> None:
 
 
 
+def test_version_spots() -> None:
+    """★ 版本落点**彼此一致**（`tools/version_spots.py`，2026-10-20）。
+
+    审计发现的漂移：近几版只改了两处（README 首行 + 谓词推导与反思层），
+    另外 3 处停在 v0.1.26/27 ⇒ 同一份仓库里同时存在三种版本说法。
+
+    ⇒ 把「哪几处算落点」写成**数据**（`SPOTS`），并让这条判据守着。
+    ⚠️ 判的是「**彼此一致**」，不是「等于某个写死的数」——
+       写死数字就得每版改判据，那只是把漂移换个地方放。
+    """
+    import re
+    import shutil
+    import tempfile
+    from pathlib import Path as _P
+
+    from ldv.tools import version_spots as VS
+
+    # ── 56 真实仓库：5 处落点彼此一致 ────────────────────────────────────
+    good, rows = VS.check()
+    vers = sorted({str(r["版本"]) for r in rows})
+    ok("★ [版本落点] 56 真实仓库的落点**彼此一致**（版本 + 日期）",
+       good and len(vers) == 1 and None not in [r["版本"] for r in rows],
+       f"{len(rows)} 处｜版本 {vers}｜日期 "
+       f"{sorted({str(r['日期']) for r in rows if r['日期']})}")
+
+    # ── 57 每条正则**恰好命中 1 次**（否则 `bump` 会 assert 失败） ────────
+    bad = []
+    for rel, pat, label in VS.SPOTS:
+        n = len(re.findall(pat + VS.DATE + "?", VS._read(rel)))
+        if n != 1:
+            bad.append((label, n))
+    ok("★ [版本落点] 57 每个落点的正则**恰好命中 1 次**（`bump` 的前提）",
+       not bad, f"命中异常 {bad}" if bad else f"{len(VS.SPOTS)} 个落点各命中 1 次")
+
+    # ── 58 **反向对照**：伪造一处不一致 ⇒ `check` 必须报不一致 ───────────
+    #    ⚠️ 不碰真实文档：把 `SPOTS` 与 `REPO` 一起指到临时目录。
+    tmp = _P(tempfile.mkdtemp())
+    old_spots, old_repo = VS.SPOTS, VS.REPO
+    try:
+        (tmp / "a.md").write_text("**当前版本 v0.1.30**", encoding="utf-8")
+        (tmp / "b.md").write_text("**当前版本 v0.1.99**", encoding="utf-8")
+        VS.REPO = tmp
+        VS.SPOTS = (("a.md", rf"\*\*当前版本 {VS.VER}\*\*", "A"),
+                    ("b.md", rf"\*\*当前版本 {VS.VER}\*\*", "B"))
+        fake_ok, fake_rows = VS.check()
+        ok("★ [版本落点] 58 **反向对照**：伪造一处不一致 ⇒ `check` 必须报红",
+           fake_ok is False
+           and sorted({str(r["版本"]) for r in fake_rows}) == ["v0.1.30", "v0.1.99"],
+           f"check 返回 {fake_ok}｜读到 {[r['版本'] for r in fake_rows]}")
+    finally:
+        VS.SPOTS, VS.REPO = old_spots, old_repo
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+
 def test_approved_loop() -> None:
     """★ 反思层闭环：`directions.json` 的 `已批准` **真的被用上**（2026-10-19）。
 
@@ -8438,6 +8493,7 @@ def main() -> int:
                test_combine_budget,
                test_predicate_naming,
                test_dimension_values,
+               test_version_spots,
                test_leaf_cap_requests,
                test_candidate_dimensions,
                test_loader_sharded,

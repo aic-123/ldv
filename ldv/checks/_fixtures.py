@@ -228,11 +228,6 @@ def build_reach(nodes: dict[str, Node], edges: dict[str, frozenset[str]],
     return k, plug
 
 
-def probe_queries(nodes: dict[str, Node], edges: dict[str, frozenset[str]]) -> list[Query]:
-    """各插件共用的**探针查询集** —— 用于行为式覆盖判定（§I2 / §I5）。"""
-    return keyset_queries(nodes) + reach_queries(nodes, edges)
-
-
 # --- 只建根的内核（B8 用） ---------------------------------------------------
 
 def make_keyset_root(nodes: dict[str, Node]) -> Any:
@@ -424,11 +419,6 @@ def reusable_build(tag: tuple, nodes: Any, edges: Any,
     res = produce()
     _BUILD_CACHE[tag] = (nodes, edges, copy.deepcopy(res))
     return res
-
-
-def build_cache_stats() -> dict:
-    """读数：缓存里有几个键（`run_tests` 用它钉住「确实命中过」）。"""
-    return {"键数": len(_BUILD_CACHE), "键": sorted(map(str, _BUILD_CACHE))}
 
 
 def clear_build_cache() -> None:
