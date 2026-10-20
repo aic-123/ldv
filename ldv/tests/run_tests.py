@@ -5023,6 +5023,151 @@ def test_tree_snapshot() -> None:
 
 
 
+def test_session() -> None:
+    """★ 热启动会话：快照 + 追加日志（`core/session.py`，2026-10-20）。
+
+    为什么：`--snapshot` 的粒度是**整棵树 + 全局指纹** ⇒ 加一个节点就全量重建。
+    实测（30k）：每节点 ≈ 0.3 s（重写 2.56 MB + 重算指纹），且随 n 线性涨。
+    本模块把「每节点」压成**常数**：insert 之后只 append 一行。
+
+    ⚠️ 它给的是一棵**增量树** —— 与「全量重造」**不是同一棵**（增量 ≠ 全量，已实测）。
+       所以判据比的是「增量 vs 增量」，**不比**「增量 vs 全量」。
+
+    判据覆盖的正是最危险的几种形状：
+      ㊲ 关掉再开 ⇒ 命中 + 回放，树逐字相同
+      ㊳ **日志写一半**（ops 数不符）⇒ 丢日志、回落到快照，**不崩**
+      ㊴ 材料改了（指纹变）⇒ 状态作废、重建
+      ㊵ `commit()` ⇒ 快照换成新指纹、日志清空
+    """
+    import json
+    import shutil
+    import tempfile
+    from pathlib import Path as _P
+
+    from ldv.core import session as SS
+    from ldv.core import snapshot as SN
+    from ldv.core.kernel import Kernel
+    from ldv.checks._fixtures import load as _load
+    from ldv.plugins.keyset import KeysetPlugin
+
+    loaded = _load()
+    assert loaded is not None
+    nodes, _e, _d = loaded
+    all_items = {i: n.as_item() for i, n in nodes.items()}
+    ids = sorted(all_items)
+    base_n = len(ids) - 6
+    base_ids = ids[:base_n]
+    new_ids = ids[base_n:]
+    base = {i: all_items[i] for i in base_ids}
+
+    def build(items):
+        k = Kernel(KeysetPlugin(), items)
+        k.build(k.plugin.merge([]))
+        for iid in sorted(items):
+            k.insert(iid)
+        return k
+
+    def sig(k):
+        return (
+            sorted(d.did for d in k.all_directions()),
+            [(d.did, d.parent, d.rank) for d in k.all_directions()],
+            {d.did: len(k.members_of(d)) for d in k.all_directions()},
+            {iid: tuple(v) for iid, v in sorted(k._path.items())},
+            len(k.ledger),
+        )
+
+    tmp = _P(tempfile.mkdtemp())
+    try:
+        plug = KeysetPlugin()
+        kw = dict(name="keyset", plugin=plug, scope="t", base_dir=tmp,
+                  KernelCls=Kernel, edges=None, extra={})
+
+        # ── ㊱ 首次：没有状态 ⇒ 建 + 落盘 + 空日志 ────────────────────────
+        s1 = SS.TreeSession.open(items=base, build=lambda: build(base), **kw)
+        ok("★ [会话] ㊱ 首次打开 ⇒ **新建**并落盘，日志 0 条",
+           s1.report["结果"] == "新建"
+           and SS.state_path("keyset", tmp, "t").is_file()
+           and SS.log_path("keyset", tmp, "t").is_file()
+           and s1.log.ops == 0,
+           f"{s1.report['结果']}｜快照 {SS.state_path('keyset', tmp, 't').name}｜"
+           f"日志 {s1.log.ops} 条")
+        k1 = s1.kernel
+        before = sig(k1)
+
+        # ── ㊲ 填 3 个节点 + 删 1 个 ⇒ 关掉再开 ⇒ 回放，树逐字相同 ────────
+        for iid in new_ids[:3]:
+            s1.insert(iid, all_items[iid])
+        victim = sorted(base_ids)[-1]
+        s1.remove(victim)
+        s1.close()
+        ops_written = s1.log.ops
+        after_close = sig(s1.kernel)
+
+        # ⚠️ **当前项集** = base + 已插入的 − 已删除的
+        #    （`kernel.remove` 会把项从 `items` 里摘掉 ⇒ 会话的项集跟着变）
+        cur = dict(base)
+        for iid in new_ids[:3]:
+            cur[iid] = all_items[iid]
+        cur.pop(victim, None)
+        s2 = SS.TreeSession.open(items=cur, build=lambda: build(cur), **kw)
+        ok("★ [会话] ㊲ 关掉再开 ⇒ **命中 + 回放 4 条**，树与关掉前逐字相同",
+           s2.report["结果"] == "命中" and s2.log.ops == ops_written == 4
+           and sig(s2.kernel) == after_close,
+           f"{s2.report['结果']}｜日志「{s2.report['日志']}」｜"
+           f"签名相同 {sig(s2.kernel) == after_close}")
+
+        # ── ㊳ 日志写一半（头说 N 条，实际少一条）⇒ 丢日志、回落快照 ──────
+        lp = SS.log_path("keyset", tmp, "t")
+        lines = lp.read_text(encoding="utf-8").splitlines()
+        lp.write_text("\n".join(lines[:-1]) + "\n", encoding="utf-8")
+        s3 = SS.TreeSession.open(items=cur, build=lambda: build(cur), **kw)
+        # ⚠️ 日志一丢，base 快照就**对不上当前项集**了（当前集 = base + 3 − 1）
+        #    ⇒ 正确行为是**重建**，不是「回落到快照」。判据要按这个写。
+        ok("★ [会话] ㊳ 日志被截断 ⇒ **丢弃日志 + 重建**（base 已对不上当前项集），不崩",
+           s3.report["结果"] == "新建"
+           and "丢弃" in s3.report["日志"] and "不完整" in s3.report["日志"]
+           and sig(s3.kernel) != after_close,
+           f"{s3.report['结果']}｜{s3.report['日志']}｜确实重建 {sig(s3.kernel) != after_close}")
+
+        # ── ㊴ 材料改了（多一个键）⇒ 状态作废、重建 ──────────────────────
+        tampered = dict(cur)
+        one = sorted(tampered)[0]
+        tampered[one] = dict(tampered[one])
+        tampered[one]["keys"] = tampered[one]["keys"] | {"临时键"}
+        s4 = SS.TreeSession.open(items=tampered, build=lambda: build(tampered), **kw)
+        ok("★ [会话] ㊴ 材料变了 ⇒ **状态作废、重建**（不用旧树算新材料）",
+           s4.report["结果"] == "新建"
+           and sig(s4.kernel) != after_close,
+           f"{s4.report['结果']}｜结构变了 {sig(s4.kernel) != after_close}")
+
+        # ── ㊵ `commit()` ⇒ 快照换新指纹、日志清空 ────────────────────────
+        s4.insert(new_ids[3], all_items[new_ids[3]])
+        s4.close()
+        p = s4.commit()
+        doc = json.loads(p.read_text(encoding="utf-8"))
+        ok("★ [会话] ㊵ `commit()` ⇒ 快照换成**当前**项集指纹，日志清空",
+           doc.get("指纹") == SN.fingerprint(s4.kernel.items, None,
+                                             {"方向函数": "keyset"})
+           and s4.log.ops == 0,
+           f"快照指纹 {str(doc.get('指纹'))[:12]}…｜日志 {s4.log.ops} 条")
+
+        # ── ㊵′ commit 之后重开 ⇒ 命中且 0 条回放（压过了） ────────────────
+        s5 = SS.TreeSession.open(items=s4.kernel.items, build=lambda: build(s4.kernel.items),
+                                 **kw)
+        ok("★ [会话] ㊵′ `commit()` 之后重开 ⇒ **命中 + 0 条回放**",
+           s5.report["结果"] == "命中" and s5.log.ops == 0
+           and sig(s5.kernel) == sig(s4.kernel),
+           f"{s5.report['结果']}｜日志 {s5.log.ops} 条｜签名相同 {sig(s5.kernel) == sig(s4.kernel)}")
+
+        # ── 读数：每节点成本（**不进退出码** —— 小语料上噪声压倒信号） ────
+        print(f"    · 会话读数：建 {s1.report.get('秒')}s｜"
+              f"命中 {s2.report.get('秒')}s（含指纹）｜"
+              f"回放 {ops_written} 条｜真正的收益要在 §13.19 那三档规模上才看得出来")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+
 def test_approved_loop() -> None:
     """★ 反思层闭环：`directions.json` 的 `已批准` **真的被用上**（2026-10-19）。
 
@@ -8031,6 +8176,7 @@ def main() -> int:
                test_contradiction_requests,
                test_contra_merged,
                test_tree_snapshot,
+               test_session,
                test_leaf_cap_requests,
                test_candidate_dimensions,
                test_loader_sharded,
