@@ -294,6 +294,30 @@ def apply_approved(nodes: dict[str, Any], corpus_dir: Path,
             })
         else:
             ledger["生效"].append({"维度": d["维度"], "取值": d["取值"], "项数": hit})
+            # ★ **取值写法校验**（2026-10-20 实测逼出来）
+            #
+            #   实测：同一个学段写成「小学」与「小学阶段」⇒ 键是 `period=小学` 与
+            #   `period=小学阶段` ⇒ 同一批人被切成**两个方向**，而**没有任何报错**。
+            #   结构上看起来正常（方向数还多了），语义上已经错了。
+            #
+            #   ⇒ 这里只报「一个取值是另一个的**前缀**」这种最典型的形状。
+            #     取值太多（>200）就不查（wiki 的 scope 有 1434 个，O(n²) 不划算，
+            #     而且那种字段本来就不是"少数几个学段"）。
+            _vals = sorted({str(_field_of(n.fields, d["维度"]))
+                            for n in nodes.values()
+                            if _field_of(n.fields, d["维度"]) not in (None, "")})
+            if 2 <= len(_vals) <= 200:
+                _seen: set[tuple[str, str]] = set()
+                for a in _vals:
+                    for b in _vals:
+                        if a != b and b.startswith(a):
+                            _seen.add((a, b))
+                for a, b in sorted(_seen):
+                    ledger.setdefault("疑似重复取值", []).append({
+                        "维度": d["维度"], "取值": [a, b],
+                        "原因": ("一个取值是另一个的**前缀** ⇒ 疑似同一个概念的两种写法；"
+                                 "它们会被切成**两个不同方向**（结构看不出错，语义已经错）"),
+                    })
 
     # ⚠️ **只在「既没有生效的维度、也没有批准的谓词」时才提前返回** ——
     #    第一版在这把谓词路径一起挡掉了（维度没生效就 return ⇒

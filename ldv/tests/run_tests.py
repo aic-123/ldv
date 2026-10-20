@@ -5361,6 +5361,71 @@ def test_predicate_naming() -> None:
 
 
 
+def test_dimension_values() -> None:
+    """★ 维度**取值**的写法校验（`request.apply_approved`，2026-10-20）。
+
+    实测逼出来的：同一个学段写成「小学」与「小学阶段」⇒ 键是 `period=小学` 与
+    `period=小学阶段` ⇒ **同一批人被切成两个方向**，而**没有任何报错**。
+    结构上看起来正常（方向数还多了），语义上已经错了。
+
+    ⇒ 只报最典型的一种形状：**一个取值是另一个的前缀**。
+      取值 >200 的不查（`scope` 那种 1434 个取值的字段本来就不是"少数几个学段"，
+      而且 O(n²) 不划算）。
+    """
+    import json
+    import shutil
+    import tempfile
+    from dataclasses import replace
+    from pathlib import Path as _P
+
+    from ldv.checks._fixtures import find_corpus
+    from ldv.core import request as RQ
+    from ldv.corpus.loader import load_nodes
+
+    root = find_corpus()
+    assert root is not None
+    base = load_nodes(root)
+
+    tmp = _P(tempfile.mkdtemp())
+    try:
+        def run(values) -> dict:
+            """给每个节点打 `period` 字段（按 `values` 轮转），批准该维度。"""
+            nodes = {}
+            for i, (nid, n) in enumerate(sorted(base.items())):
+                nodes[nid] = replace(n, fields={**n.fields,
+                                                "period": values[i % len(values)]})
+            (tmp / "directions.json").write_text(json.dumps(
+                {"已批准": [{"维度": "period", "取值": None}]}, ensure_ascii=False),
+                encoding="utf-8")
+            _new, led = RQ.apply_approved(nodes, tmp)
+            return led
+
+        # ── 53 前缀重复 ⇒ **报出来**（结构看不出错，语义已错） ────────────
+        led1 = run(["小学", "小学阶段", "中学"])
+        dup = led1.get("疑似重复取值", [])
+        ok("★ [维度取值] 53 「小学」与「小学阶段」⇒ 报**疑似重复取值**",
+           bool(dup) and dup[0]["取值"] == ["小学", "小学阶段"]
+           and "前缀" in dup[0]["原因"],
+           f"报出 {len(dup)} 条｜{dup[0]['取值'] if dup else '（空）'}")
+
+        # ── 54 干净取值 ⇒ **不报**（不许误报） ─────────────────────────────
+        led2 = run(["小学", "中学", "大学"])
+        ok("★ [维度取值] 54 干净取值（小学/中学/大学）⇒ **不报**",
+           not led2.get("疑似重复取值"),
+           f"疑似 {len(led2.get('疑似重复取值', []))} 条｜生效 "
+           f"{len(led2.get('生效', []))} 条")
+
+        # ── 55 取值太多（>200）⇒ **不查**（不误报、不卡） ──────────────────
+        many = [f"p{i:03d}" for i in range(260)]
+        led3 = run(many)
+        ok("★ [维度取值] 55 取值 >200 ⇒ **不查**（不误报、不卡）",
+           not led3.get("疑似重复取值"),
+           f"取值 {len(many)} 个｜疑似 {len(led3.get('疑似重复取值', []))} 条")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+
 def test_approved_loop() -> None:
     """★ 反思层闭环：`directions.json` 的 `已批准` **真的被用上**（2026-10-19）。
 
@@ -8372,6 +8437,7 @@ def main() -> int:
                test_session,
                test_combine_budget,
                test_predicate_naming,
+               test_dimension_values,
                test_leaf_cap_requests,
                test_candidate_dimensions,
                test_loader_sharded,
