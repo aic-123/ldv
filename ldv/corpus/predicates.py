@@ -255,6 +255,40 @@ class Combination:
                 "满足数": self.满足数, "区分度": round(self.区分度, 6)}
 
 
+#: **组合谓词的独立性阈值**（外生，2026-10-20）——
+#: `|A∩B| / min(|A|,|B|) ≥ 0.9` ⇒ 两项**近似蕴含** ⇒ 组合与单项几乎同一个切分。
+#: ⚠️ 这是**取舍**不是定理：0.9 这个数人给的，与 `LEAF_CAP` / `DEFAULT_N` 同性质。
+#: 精确蕴含（交集 == 最小项）不靠它 —— 那条是**定理**，与阈值无关。
+INDEPENDENCE_RATIO = 0.9
+
+
+def combination_verdict(inter: int, base: int,
+                        ratio_threshold: float = INDEPENDENCE_RATIO) -> str | None:
+    """判断一个组合是否**该拒收**（冗余）。返回理由字符串，或 `None`（可留）。
+
+    ## 两档，性质不同
+
+        ① **精确蕴含**：`交集 == 最小项` ⇒ 一项 ⊆ 其余项 ⇒ `A∧B ≡ A`（**定理**）
+        ② **近似蕴含**：`交集/最小项 ≥ 阈值` ⇒ 几乎同一个切分（**外生取舍**）
+
+    ⚠️ 为什么必须挡：组合占的是**同一份预算**（共用 N）。一个与单项等价的组合
+       赢了预算 ⇒ **顶掉一个真的能切开的单谓词**，而结构一点没变
+       （实测 bitcoin：`入度档>1 ∧ 出度档>1` 0.948，赢了预算，方向数/叶容量都没动）。
+
+    ⚠️ 阈值**只用于拒收，不用于打分**（`docs/评估标准.md` 的「不作分」）：
+       输出只有「拒收 + 理由」与「留」两种，没有分数。
+    """
+    if base <= 0:
+        return None
+    if inter >= base:
+        return "**精确蕴含**（交集 == 最小项）⇒ 组合与单项等价，切分完全相同"
+    ratio = inter / base
+    if ratio >= ratio_threshold:
+        return (f"**跨量强相关**（交集/最小项 = {ratio:.3f} ≥ 阈值 {ratio_threshold}）"
+                f"—— 一项几乎蕴含另一项，切分与单项几乎相同")
+    return None
+
+
 def combine(nodes: dict[str, Any], edges: dict[str, frozenset[str]],
             used: Sequence[Predicate],
             k: int = COMPLEXITY_K) -> tuple[list[Combination], list[Combination],
@@ -295,6 +329,12 @@ def combine(nodes: dict[str, Any], edges: dict[str, frozenset[str]],
                 continue
             hit = set.intersection(*[sat[t] for t in terms])
             n = len(hit)
+            # ★ **独立性检查**（2026-10-20）：与单项等价的组合会白占预算。
+            _verdict = combination_verdict(n, min(len(sat[t]) for t in terms))
+            if _verdict:
+                rejected.append({"谓词": " ∧ ".join(terms), "满足数": n,
+                                 "总数": total, "理由": _verdict})
+                continue
             c = Combination(项=tuple(terms), 满足数=n,
                             区分度=(min(n, total - n) / total) if total else 0.0)
             if total == 0 or n == 0 or n == total:

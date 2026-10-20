@@ -5239,6 +5239,33 @@ def test_combine_budget() -> None:
        (not names) or (names & keys) == set(),
        f"待命名 {len(names)} 个｜与键集相交 {len(names & keys)} 个")
 
+    # ── ㊻ 独立性：**精确蕴含** ⇒ 拒收（这是**定理**，不靠阈值） ──────────
+    ok("★ [组合预算] ㊻ 精确蕴含（交集 == 最小项）⇒ **拒收**，理由是定理",
+       "精确蕴含" in (PR.combination_verdict(10, 10) or "")
+       and PR.combination_verdict(9, 10, ratio_threshold=0.95) is None,
+       f"(10,10) → {str(PR.combination_verdict(10, 10))[:20]}…｜"
+       f"(9,10)@0.95 → {PR.combination_verdict(9, 10, 0.95)}")
+
+    # ── ㊼ **近似蕴含** ⇒ 拒收，且阈值是**外生参数**（改它结论就变） ──────
+    v_default = PR.combination_verdict(19, 20)
+    v_strict = PR.combination_verdict(19, 20, ratio_threshold=0.99)
+    ok("★ [组合预算] ㊼ 近似蕴含（0.95 ≥ 0.9）⇒ 拒收；**阈值是外生参数**",
+       "强相关" in (v_default or "") and v_strict is None,
+       f"阈值 {PR.INDEPENDENCE_RATIO} → 拒收｜阈值 0.99 → {v_strict or '留'}")
+
+    # ── ㊽ 真独立的组合**不许**被误杀：留下的候选，逐个重算都必须「留」 ──
+    #    ⚠️ 不写 `or True` 那种恒真断言 —— 那等于没判（本仓库的老毛病之一）。
+    vals = {w: PR.measure(nodes, edges, w) for w in {p.量 for p in used}}
+    sat = {p.谓词: {nid for nid in nodes if vals[p.量][nid] > p.阈值} for p in used}
+    wrong = [c for c in cands
+             if PR.combination_verdict(
+                 len(set.intersection(*[sat[x] for x in c.项])),
+                 min(len(sat[x]) for x in c.项)) is not None]
+    ok("★ [组合预算] ㊽ 真独立的组合**不被误杀**（留下的候选逐个重算都必须「留」）",
+       not wrong and len(cands) > 0,
+       f"候选 {len(cands)} 个｜误杀 {len(wrong)} 个｜"
+       f"最高区分度 {round(max((c.区分度 for c in cands), default=0.0), 3)}")
+
     # ── 读数：组合进划分后结构**未必变**（强相关 ⇒ 退化成单项） ─────────
     print(f"    · 组合读数：候选 {len(cands)} 个｜进预算 {len(c3)} 个｜"
           f"待命名(K={PR.COMPLEXITY_K}) {len(to_name)} 个；"
