@@ -120,7 +120,7 @@ cli all           A+B+D 三个方向：护栏全过，退出码 0（`--remove 12
                               ⚠️ 出路 (1) / (4) 修的是**健全性**，不是这一条 ——
                                  实测 (4) 落地前后漏项数**都是 16，一个数没动**。
                               ★ 而这 16 个漏项**就是**那 16 个滞留项（双向差 0，
-                                 `outputs/_probe_leak_vs_stay.py`）⇒ 它与「`滞留 == 0`」
+                                 `evidence/_probe_leak_vs_stay.py`）⇒ 它与「`滞留 == 0`」
                                  是**同一个条件**，**不是**「与健全性并列的另一条机制」。
                                  正因如此，第四行 2026-10-07 **降级**（见 §10.2 B 末）。
 ```
@@ -193,7 +193,7 @@ B 花 71 个方向换到「每项一个方向」。同一套 §K2，形状越自
 ⇒ **后半句被证伪**：引用图不是 DAG（论文互引），281 项切片里有 6 个 ≥2 的强连通分量，
    而 `B17` 报的「被拆开的等价类」**正好 6 个**。
 
-根因（实测，`outputs/_probe_b17.py`）：oracle 是**对的** ——
+根因（实测，`evidence/_probe_b17.py`）：oracle 是**对的** ——
 281 个 SCC 里 272 个的**正向闭包完全一致**，所以那些项**真的**不可分；
 分开它们的是 `reach.split`：它按 `(汇点签名, 到汇点的距离, id)` 排序后**取中点切**，
 并列的项会被中点切开。`keyset` / `sequence` 的 `split` 按**区分键**切，
@@ -286,7 +286,7 @@ B 花 71 个方向换到「每项一个方向」。同一套 §K2，形状越自
 
 ⚠️ **后续（同一天）**：`b3` 的墙**已经拆了** —— 插件改成按 `payload` 缓存之后，
 `b3` 全量从 **6577.6 s → 38.85 s**（**169×**，见 **结果八 ⑦**）。
-整趟 `--no-probes` 随即**第一次跑完**：**48 分 10 秒**（`outputs/_rc_full_after_cache.txt`）。
+整趟 `--no-probes` 随即**第一次跑完**：**48 分 10 秒**（`evidence/_rc_full_after_cache.txt`）。
 所以本节下面那些「假设 1 / 假设 2」是**当时的诊断过程**，读数留在原处不动
 （它们记录的是「怎么找到这堵墙」，不是「墙还在」）。
 
@@ -301,7 +301,7 @@ B 花 71 个方向换到「每项一个方向」。同一套 §K2，形状越自
                —— 翻的是「它会变贵」，**不是**「它贵成当时那个读数」
                （那个读数**含内核重建**，见 **结果七**）
 
-**全量 reach 逐块实测**（`outputs/_measure_fullscale_blocks.py`）：
+**全量 reach 逐块实测**（`evidence/_measure_fullscale_blocks.py`）：
 
     coverage_of(reach) 建闭包        0.80 s
     equiv_classes(reach) [SCC]       1.04 s
@@ -349,7 +349,7 @@ B 花 71 个方向换到「每项一个方向」。同一套 §K2，形状越自
 ⚠️ 顺带量出一个数：`sequence` 维护路径的覆盖不漏 **16 漏 → 183 漏**。
    缺口还是那个缺口（§10 已知），但真实语料上的规模**大一个数量级**。
 
-### 结果四′：「基线**不见了**」也曾长得像另外两件事（`outputs/_measure_b18_missing_baseline.py`）
+### 结果四′：「基线**不见了**」也曾长得像另外两件事（`evidence/_measure_b18_missing_baseline.py`）
 
 修结果四的时候顺手把「`语料` 为空」也归到「判不了」。**没有量过旧行为** ——
 量了之后结论和推理**不一样**。同一份 obs、同一份「基线文件不存在」的输入，
@@ -387,7 +387,7 @@ B 花 71 个方向换到「每项一个方向」。同一套 §K2，形状越自
 
 #### ① 先把账拆对 —— 「一块 cover 度量 115.8 s」里 **96% 不是它**
 
-`outputs/_measure_soundness_split.py`：同一进程、同一语料、**只有计时范围在变**。
+`evidence/_measure_soundness_split.py`：同一进程、同一语料、**只有计时范围在变**。
 
     臂 A  `mk(ids)[0]` 建造（7813 个方向）            75.32 s
     臂 B  `soundness_profile(预建内核, cover)`         0.45 s
@@ -402,7 +402,7 @@ B 花 71 个方向换到「每项一个方向」。同一套 §K2，形状越自
 ⚠️ **含建造的读数不能按块相乘。** 计时块的边界写错，账就记到别的模块头上，
    而且**看不出来** —— 数字是个正常的大数。
 
-#### ② 拆对之后，覆盖族真正的代价（`outputs/_measure_cover_blocks.py`，**只有 `cover` 在变**）
+#### ② 拆对之后，覆盖族真正的代价（`evidence/_measure_cover_blocks.py`，**只有 `cover` 在变**）
 
     块（两条路径各一遍）      旧        新
     健全性                  10.05     0.51
@@ -474,7 +474,7 @@ B 花 71 个方向换到「每项一个方向」。同一套 §K2，形状越自
 `b3_penalty_comparable` 原来是三层循环：层内两两配对、每对**逐项**比 ⇒ `O(L²n)`。
 而 `B3` 是**判据**（`B1–B20`）⇒ `--no-probes` **关不掉它**。
 
-**规模曲线**（`outputs/_measure_b3.py`，同一份内核、只有 `b3` 的实现在变）：
+**规模曲线**（`evidence/_measure_b3.py`，同一份内核、只有 `b3` 的实现在变）：
 
     规模    ΣC(L,2)      三重循环迭代        新        旧       倍数
     ────────────────────────────────────────────────────────────────
@@ -489,7 +489,7 @@ B 花 71 个方向换到「每项一个方向」。同一套 §K2，形状越自
     ⚠️ `1600` 那一行是**删掉三重循环 + 把排序提出循环**之后的数（45.43 s）。
        删循环前的同规模读数是 **55.31 s** ⇒ 提排序省 **18%**。
 
-    ✅ **`3907` 那一格已补**（`2026-10-07`，`outputs/_measure_b3_progress.py`）：
+    ✅ **`3907` 那一格已补**（`2026-10-07`，`evidence/_measure_b3_progress.py`）：
        包装计时 **6590.29 s**，调用 **30,521,484 / 30,521,484**（12 层有 ≥2 个方向）。
        包装给每次调用多一个 Python 帧 ⇒ 用 `1600` 项对照组反推裸跑值：
 
@@ -503,7 +503,7 @@ B 花 71 个方向换到「每项一个方向」。同一套 §K2，形状越自
 
 #### `3907` 那一格：**抽样估计**（不是读数）
 
-`outputs/_probe_b3_layers.py` —— 逐层抽样量「单次 `penalty` 的平均耗时」，再乘回调用数。
+`evidence/_probe_b3_layers.py` —— 逐层抽样量「单次 `penalty` 的平均耗时」，再乘回调用数。
 层大小是**推导**的（二叉树逐层节点数，合计必须是 `2n−1`），并与实测日志那一行对账。
 
     层内方向数   单次 µs   估计该层    占比
@@ -603,7 +603,7 @@ B 花 71 个方向换到「每项一个方向」。同一套 §K2，形状越自
 却还占着全量 244 MB。这类残留**不报错、不变红、也不会明显变慢**，只是白占，
 而且下一轮读代码的人会以为「留着一定有用」。
 
-⇒ 用一个**能报清单**的扫描代替「靠读代码发现」：`outputs/_scan_dead_stores.py`。
+⇒ 用一个**能报清单**的扫描代替「靠读代码发现」：`evidence/_scan_dead_stores.py`。
 
     生产层（`ldv/checks` `ldv/core` `ldv/plugins` `ldv/flow.py` `ldv/run_checks.py`）
         23 个文件 · **0 处**
@@ -643,7 +643,7 @@ B 花 71 个方向换到「每项一个方向」。同一套 §K2，形状越自
 ⇒ **键与值的粒度必须一起换**：键 `payload` 时，值若是标量会被同一 payload 的
 后一项覆盖 ⇒ 值取**整条 BFS 输出**（一遍**多源反向** BFS 给出所有项的距离）。
 
-**实测（`outputs/_measure_b3_progress.py`，全量 3907 项）**：
+**实测（`evidence/_measure_b3_progress.py`，全量 3907 项）**：
 
     规模     b3 裸跑（改造前）   b3 裸跑（改造后）   倍数
     ─────────────────────────────────────────────────
@@ -659,7 +659,7 @@ B 花 71 个方向换到「每项一个方向」。同一套 §K2，形状越自
 **建内核的 A/B** —— ⚠️ 原先这里写的是「建内核**不变**：103.49 s（**缓存不参与建造**）」。
 **那句话是读代码得出的，而它是错的**：`signature` 在建造路径上被调 **46,695** 次
 （`split` 每项一次），`_sinks` 也从「每次重算」提到了 `__init__` ⇒ 缓存**是**参与的。
-量出来是这样（`outputs/_measure_kernel_build.py` + `outputs/_kernel_build_ab.sh`；
+量出来是这样（`evidence/_measure_kernel_build.py` + `evidence/_kernel_build_ab.sh`；
 每臂 **2 个独立进程**、每进程 1 轮 —— 同进程连跑会有「一轮比一轮慢」的伪影，800 项上量到过
 `2.01 / 2.78 / 3.17` 的爬升）：
 
@@ -705,7 +705,7 @@ B 花 71 个方向换到「每项一个方向」。同一套 §K2，形状越自
 **要答的问题**（`§10.2 D` 的前置）：方向节点的入度是不是常数？
 它决定持久化走哪条路 —— 常数 ⇒ node-copying（**O(1) 访问**），无界 ⇒ fat node（**O(log m)**）。
 
-**读数**（`outputs/_probe_degree.py`，36 项语料 / 三个方向 / 两条路径）：
+**读数**（`evidence/_probe_degree.py`，36 项语料 / 三个方向 / 两条路径）：
 
     插件·路径              方向   语义入度 max   扇出 max   非根≠1   转置不符   探针泄漏
     keyset · 一次建完        25         1           2         0        0         0
@@ -730,7 +730,7 @@ Driscoll 的 `p` 是**指针前驱**，而 node-copying 要「在**所有前驱*
 `§K5` 的原文是 `rank = 1 + max(rank(父))` —— 那个 `max` 是**为 DAG 写的**；
 `B13` 原来只查「无环 / 无自环 / 见证更粗」⇒ **对 DAG 照样放行**。
 
-`outputs/_probe_b13_gap.py`（把一个子方向再挂到**第二个父**下面）：
+`evidence/_probe_b13_gap.py`（把一个子方向再挂到**第二个父**下面）：
 
     基线（树）    语义入度 max 1  多父 0 个  ⇒  B13 = 是
     注入后（DAG） 语义入度 max 2  多父 1 个  ⇒  B13 = 是     ← 前提破了，判据还是绿的
@@ -954,7 +954,7 @@ sequence    0 / 122        **0 / 86**  ★ 出路 (4) 修好       **是**（57 
 ### 第 8 个度量 + `B18`：覆盖不漏 —— **baseline 守卫**（`checks/coverage.py`）
 
 `覆盖(父) ⊆ ∪覆盖(子)` 是 §1 表的**第四行**（⬜ 2026-10-07 已降级）。
-⚠️ 它**不是**「与健全性并列的另一条独立机制」—— 实测（`outputs/_probe_leak_vs_stay.py`）
+⚠️ 它**不是**「与健全性并列的另一条独立机制」—— 实测（`evidence/_probe_leak_vs_stay.py`）
 `sequence` 的 16 个漏项与 16 个滞留项**是同一批**（双向差 0）⇒ 它与「`滞留 == 0`」
 是**同一个条件**。两个轴要分清：
 
@@ -1161,7 +1161,7 @@ sequence，先建 2 维护 34
 |---|---|
 | 缓存**开** vs **关**（同算法）建内核，比方向指纹（`did/rank/payload/witness/parent`） | **逐项相同** |
 | **HEAD 版**（改动前）vs 新版建内核，比指纹 | **sha256 逐字相同**（7813 方向） |
-| 281 项上的既有记录（`outputs/_rc_small_noprobe.txt`） | `[红] B17`（6 个类）**当时就红着** |
+| 281 项上的既有记录（`evidence/_rc_small_noprobe.txt`） | `[红] B17`（6 个类）**当时就红着** |
 
 ⇒ 两条都是**既有行为**，只是**以前看不见**（套件跑不完）。**「新看见」不等于「新出现」。**
 
@@ -1196,7 +1196,7 @@ sequence，先建 2 维护 34
          `max` 那条留作度量。见 §7.7
 
 ⇒ 上面那张「尺度趋势」表的 `无进步次数` / `最长连续段` 两列**都是旧谓词的读数**。
-用新谓词重测同一批语料（`outputs/_probe_b19_depth.py`，逐字输出在 `outputs/_b19_depth_fullscale.txt`）：
+用新谓词重测同一批语料（`evidence/_probe_b19_depth.py`，逐字输出在 `evidence/_b19_depth_fullscale.txt`）：
 
     语料      项数    已展开   旧谓词≤0   其中真「没变细」   最长没变细段   最长切得不匀段   B19(新)
     ─────────────────────────────────────────────────────────────────────────────────────────────
@@ -1228,7 +1228,7 @@ CT4 的对应），理由是：
 （R-tree `AT3` / GiST `PR2` 逐字：`E.p is the **Union** of all entries on N`）。
 本设计的 `payload` 由**插件声明**、`Direction` **不可变**（`§K4`）⇒ 前提**不成立**。
 
-**不许靠读代码断言。** 实测（`outputs/_probe_deletion.py`，随仓库 36 项，删最后 1/3）：
+**不许靠读代码断言。** 实测（`evidence/_probe_deletion.py`，随仓库 36 项，删最后 1/3）：
 
     方向        B16 越界成员数   B18 漏项数     结构
     ─────────────────────────────────────────────────────────────────────
@@ -1449,7 +1449,7 @@ certifying algorithms 要求 checker **比被检查的东西简单**。
 第四行原来只是表里的一行**声称**，没有任何可红的东西。
 它现在做成 **baseline 守卫**（ESLint `--prune-suppressions` 纪律）：
 新增的漏会红，**账上已冻结的漏不再发生**也会红。
-⚠️ 它**不是**与第三行并列的「两条独立机制」—— 实测（`outputs/_probe_leak_vs_stay.py`）
+⚠️ 它**不是**与第三行并列的「两条独立机制」—— 实测（`evidence/_probe_leak_vs_stay.py`）
 `sequence` 的 16 个漏项与 16 个滞留项**是同一批**（双向差 0）⇒ 第四行与「`滞留 == 0`」
 是**同一个条件**，而后者已被出路 (4) 用「代价在划分」换掉 ⇒ 第四行降级。
 `reach` 那半之所以看起来像「另一条机制」，只因它的病在**范围**轴上
@@ -1622,7 +1622,7 @@ C 会随初始批大小变（**21 → 16**）—— `§I4` 允许插件定扇出
 判据「往返逐字相同」看着就够了 —— 但**它单独不够**，实测：
 
     取一份**带派生边**的存档（`_to_dict_storing_derived`，即「各存一份」的落盘格式），
-    两个 loader 各读一遍（`outputs/_probe_persist.py` ④，三个方向都量了）：
+    两个 loader 各读一遍（`evidence/_probe_persist.py` ④，三个方向都量了）：
 
         漂移量      权威 loader（只认 `_children`）   双份 loader（信任存档里的派生边）
         ────────────────────────────────────────────────────────────────────────────
@@ -1691,7 +1691,7 @@ C 会随初始批大小变（**21 → 16**）—— `§I4` 允许插件定扇出
 且第三条有**对照**：把锁管理器换成「锁 `d` 时连带锁它所有的子」
 （= `§10.2 D` 说的「按子 → 父那条边加锁」的形状）⇒ 锁集合**随扇出变**。
 
-**★ 但压力测试下「空锁与真锁长得一模一样」。** 实测（`outputs/_probe_locks.py` ⑤）：
+**★ 但压力测试下「空锁与真锁长得一模一样」。** 实测（`evidence/_probe_locks.py` ⑤）：
 
     8 线程 × 120 项插入，同一份语料、同一个内核，只换锁管理器：
 
@@ -1755,7 +1755,7 @@ C 会随初始批大小变（**21 → 16**）—— `§I4` 允许插件定扇出
 ⚠️ ★ **2026-10-11 更正**：这里原来接着写「这不是随手写的顺序，它**决定了分裂语义**」
 + 「两者**不是**同一个算法（随行写会让「先建 6 维护 30」的结构与批建**不同**，
 而 `test_emergence` ③ 钉住的正是「尺度与分辨率**不随建法变化**」）」。
-**这条归因没测出来。** 量法 `outputs/_probe_inline_write.py`：
+**这条归因没测出来。** 量法 `evidence/_probe_inline_write.py`：
 一个**只覆写 `expand`** 的 `_InlineWrite(Kernel)`（**不抄** `insert`），
 在 `super().expand(d)` **之前**写 `members(d) += x` ⇒ 这才是「随行写」；
 `shape(k)` 只比**结构**（方向 / `_children` / 成员集）。
@@ -1822,7 +1822,7 @@ arXiv:2008.07146）的 **`random` 策略把位次随机分配** ⇒ 位次效应
 
 **取法与丢弃**：流式读 zip 里的 `{policy}/{segment}/{segment}.csv`，
 只取 `position` / `click` 两列（412,931,917 字节的包，**不落盘解包**）。
-脚本 `outputs/_measure_exposure.py`（临时脚本，不进仓库）。
+脚本 `evidence/_measure_exposure.py`（临时脚本，不进仓库）。
 
 **实测（逐字）**：
 
@@ -2050,7 +2050,7 @@ arXiv:2008.07146）的 **`random` 策略把位次随机分配** ⇒ 位次效应
 
 ⚠️ 而**恒等式按构造成立，正说明它不能当判据用**：恒真的东西不提供信息。
 `§A4` 判的是**声称的那个 `G` / `S` / `H` 对不对**。实测（36 项语料，7 块有下层；
-逐条量法与候选声明见 `outputs/_probe_a4_decl.py`）：
+逐条量法与候选声明见 `evidence/_probe_a4_decl.py`）：
 
     `最大` 配 `G=取最大`   ⇒ 7/7 块过        ← 声称对了
     `最大` 配 `G=取和`     ⇒ 7/7 块红        ← 声称错了（实测 36.0 ≠ 声称 119.0）
@@ -2142,7 +2142,7 @@ arXiv:2008.07146）的 **`random` 策略把位次随机分配** ⇒ 位次效应
 
 #### ★ 四种「旧结构」选法 —— 判据不依赖选哪个
 
-    outputs/_probe_a7b.py
+    evidence/_probe_a7b.py
 
     丢掉的方向                      旧Q   传播   重算   传播稳定   传播⊑重算   重算⊑Q_ext
     D24（universe 最后一个）           8    11     8     True      True      False
@@ -2239,7 +2239,7 @@ arXiv:2008.07146）的 **`random` 策略把位次随机分配** ⇒ 位次效应
 `frozenset(ids)`（**全语料**）。但 `holdout` 那 12 项**压根没进树**（它们是流程 B 的「新项」）
 ⇒ 根声明了它引用不到的锚点 ⇒ 覆盖的项集比树里的多 ⇒ `D2 覆盖漏` 必红。
 
-单变量对照（`outputs/_probe_root_ab.py`，逐语料重跑）：
+单变量对照（`evidence/_probe_root_ab.py`，逐语料重跑）：
 
     语料            根 = frozenset(全部 id)   根 = frozenset(已知子集)
     openalex-small           8 漏                    0 漏
@@ -2255,7 +2255,7 @@ arXiv:2008.07146）的 **`random` 策略把位次随机分配** ⇒ 位次效应
 
 `B4`（劈开成划分）在**删除路径**上红：`子方向多出父没有的项`，**36 行里 5 行**。
 
-定位（`outputs/_probe_extra_defect.py`）：`W2156098321` 是 `D20` 的成员，
+定位（`evidence/_probe_extra_defect.py`）：`W2156098321` 是 `D20` 的成员，
 而它自己的锥 `Cone(x)` = `['D0','D1','D18']` —— **`D20` 不在锥上**。
 
 机制：`_path[x]` 原来只在 `insert` 结尾写一次（= 当时的下降路径）。
@@ -2263,7 +2263,7 @@ arXiv:2008.07146）的 **`random` 策略把位次随机分配** ⇒ 位次效应
 一个**新的**子方向 —— 那一笔**没有记到 `_path[x]` 上**。
 ⇒ `x` 是子方向的成员、却不在自己的锥上 ⇒ `remove(x)` 只从锥上摘 ⇒ 子方向留下幽灵成员。
 
-规模（`outputs/_probe_cone_defect.py`，4 份语料 × 3 个方向 = 12 行）：
+规模（`evidence/_probe_cone_defect.py`，4 份语料 × 3 个方向 = 12 行）：
 
     段            (a) 持有集 ≠ 锥    (b) 滞留项落在子成员里
     批建后                0 项              0 个方向
@@ -2279,12 +2279,12 @@ arXiv:2008.07146）的 **`random` 策略把位次随机分配** ⇒ 位次效应
    那说明它正在被插入的路上，由 `insert` 负责）；
 ③ `insert` **先记路径、再重试**，结尾把重试追加的那些**并进去**（不是覆盖）。
 
-验收 —— 单变量对照（`outputs/_probe_ghost_before_after.py`）：
+验收 —— 单变量对照（`evidence/_probe_ghost_before_after.py`）：
 
     修复后（现行）      批建后    0 项 ｜ 维护 12 项后    0 项
     修复前（重建）      批建后    0 项 ｜ 维护 12 项后   49 项
 
-同一次对照下的 `B4`（`outputs/_probe_d2_four.py`）：
+同一次对照下的 `B4`（`evidence/_probe_d2_four.py`）：
 
     修复前  B4 红/跳的行：5 / 36
     修复后  B4 红/跳的行：0 / 36
@@ -2300,7 +2300,7 @@ arXiv:2008.07146）的 **`random` 策略把位次随机分配** ⇒ 位次效应
 
     两条：`test_kernel`（批建路径）+ `test_flows`（维护路径，**重试之后**）
 
-注入验证（`outputs/_probe_k3_invariant_injection.py`，同一个单变量）：
+注入验证（`evidence/_probe_k3_invariant_injection.py`，同一个单变量）：
 
     修复后（现行）        红  0 条，其中锥不变量 0 条
     修复前（重建）        红  1 条，其中锥不变量 1 条
@@ -2312,8 +2312,8 @@ arXiv:2008.07146）的 **`random` 策略把位次随机分配** ⇒ 位次效应
 #### 缺陷 3 · `D2` 判据量的是**语义 payload**，而账记的是**归属分配** ⇒ 假红
 
 `D2 覆盖漏` 原来直接读 `cover_leak_profile`（裸漏：覆盖 oracle 说「该有」而结构没给）。
-实测四种口径（`outputs/_probe_d2_four.py`，4 份语料 × 3 个方向 × 3 个段 = 36 行，
-存档 `outputs/_d2_four_measured.txt`）：
+实测四种口径（`evidence/_probe_d2_four.py`，4 份语料 × 3 个方向 × 3 个段 = 36 行，
+存档 `evidence/_d2_four_measured.txt`）：
 
     口径                     总漏项数
     裸漏                        3
@@ -2461,7 +2461,7 @@ cli all --remove 12   openalex-n50 / n100 / n150 / b280 / small：护栏全过�
 而 `test_multilevel` ④ 段**同时**断言 `§M4 = NO` **且** `coarser_stable_exists(...)[0] is None`
 —— 只看布尔值时这两条长得一模一样，**必须同时观察**才证明它们分得开。
 
-#### 真实读数（`outputs/_probe_multilevel.py`，cwd = `repo/`）
+#### 真实读数（`evidence/_probe_multilevel.py`，cwd = `repo/`）
 
     36 项语料 keyset:  L0 |U|=25 |Q|= 8 收缩比 0.320 n_cand   4140 答得出  36 丢 0 账 0
                        L1 |U|= 8 |Q|= 8 收缩比 1.000 n_cand   4140 答得出  36 丢 0 账 0  停因 M1 收缩比
@@ -2546,7 +2546,7 @@ cli all --remove 12   openalex-n50 / n100 / n150 / b280 / small：护栏全过�
 
 #### ② 膨胀已经被第 0 层收住 —— 这才是「折不动」的真正解释
 
-`outputs/_probe_view_growth.py`，五份语料 × 三个方向：
+`evidence/_probe_view_growth.py`，五份语料 × 三个方向：
 
     语料          项   keyset 方向→视图   reach 方向→视图    sequence 方向→视图
     openalex-n50   50     23 →  9 (0.391)    99 → 10 (0.101)    14 → 4 (0.286)
@@ -2569,7 +2569,7 @@ cli all --remove 12   openalex-n50 / n100 / n150 / b280 / small：护栏全过�
 **不是。规模是伴随现象，不是原因。** 上面那句「没东西可压」容易被读成
 「因为 `|U₁|` 只有 8~16，所以没得折」—— 那个读法**是错的**，会把人引向
 「等数据大了就能多层」。分开两个假设的那个实验在
-`outputs/_probe_fold_why.py`：
+`evidence/_probe_fold_why.py`：
 
     H1「东西太少」  |U₁| 小 ⇒ 没得折
     H2「关系形状」  `csr` 从 {U} 出发切的是**出邻签名** ⇒ 与 |U₁| 无关
@@ -2625,11 +2625,11 @@ cli all --remove 12   openalex-n50 / n100 / n150 / b280 / small：护栏全过�
 
 ⇒ **`P = {U}` 已经是最优声明** —— 声明得再粗，`csr` 也会拆回 `Q₀`。
 
-**实测（`outputs/_probe_p_declaration_floor.py`）**：
+**实测（`evidence/_probe_p_declaration_floor.py`）**：
 
 ```bash
-PYTHONIOENCODING=utf-8 PYTHONUTF8=1 "$V" ../outputs/_probe_p_declaration_floor.py
-# 落盘：../outputs/_probe_p_declaration_floor.out.txt
+PYTHONIOENCODING=utf-8 PYTHONUTF8=1 "$V" ../evidence/_probe_p_declaration_floor.py
+# 落盘：../evidence/_probe_p_declaration_floor.out.txt
 ```
 
     L0（25 方向，Bell(25) 天文数字 ⇒ 抽样）：随机 3000 个 `P`
@@ -2668,12 +2668,12 @@ PYTHONIOENCODING=utf-8 PYTHONUTF8=1 "$V" ../outputs/_probe_p_declaration_floor.p
 `§A3` 的 docstring 已经点名两种会红的形状 —— 「`Q` 不是 `P` 的细化」与
 「`Q` 自己不稳定 ⇒ 也红」。下面就是量这两条。
 
-**穷举（`outputs/_probe_region_fold.py`）**：把 `U₁` 的**全部**划分按
+**穷举（`evidence/_probe_region_fold.py`）**：把 `U₁` 的**全部**划分按
 「稳定 / 不稳」分成两组：
 
 ```bash
-PYTHONIOENCODING=utf-8 PYTHONUTF8=1 "$V" ../outputs/_probe_region_fold.py
-# 落盘：../outputs/_probe_region_fold.out.txt
+PYTHONIOENCODING=utf-8 PYTHONUTF8=1 "$V" ../evidence/_probe_region_fold.py
+# 落盘：../evidence/_probe_region_fold.out.txt
 ```
 
     方向        |U₁|   划分总数   稳定个数   稳定组 |Q|   不稳组 |Q|
@@ -2701,7 +2701,7 @@ PYTHONIOENCODING=utf-8 PYTHONUTF8=1 "$V" ../outputs/_probe_region_fold.py
 **「对其做解释」这件事，设计里不靠多折一层** —— 靠每层的账（`§A5` / `§M4`）：
 
 ```bash
-PYTHONIOENCODING=utf-8 PYTHONUTF8=1 "$V" ../outputs/_probe_level_ledger.py
+PYTHONIOENCODING=utf-8 PYTHONUTF8=1 "$V" ../evidence/_probe_level_ledger.py
 # ⚠️ 只在**外生声明那一份语料**上跑得动：`view_spec.json` 是为 36 项语料写的，
 #    换语料会报「外生声明是在另一份语料上写的 ⇒ 判不了」（这正是 §K9 该有的样子）
 ```
@@ -2720,11 +2720,11 @@ PYTHONIOENCODING=utf-8 PYTHONUTF8=1 "$V" ../outputs/_probe_level_ledger.py
     读法甲：**块内成员太多** —— 一张视图里塞了几百个方向，那它就不算摘要了
     读法乙：**视图张数太多** —— 张数随底层一起涨，压缩没起作用
 
-**读法甲：会，而且是线性的、比例恒定的。**（`outputs/_probe_view_size.py`）
+**读法甲：会，而且是线性的、比例恒定的。**（`evidence/_probe_view_size.py`）
 
 ```bash
-PYTHONIOENCODING=utf-8 PYTHONUTF8=1 "$V" ../outputs/_probe_view_size.py
-# 落盘：../outputs/_probe_view_size.out.txt
+PYTHONIOENCODING=utf-8 PYTHONUTF8=1 "$V" ../evidence/_probe_view_size.py
+# 落盘：../evidence/_probe_view_size.out.txt
 ```
 
     `reach`（唯一会真膨胀的方向）：
@@ -2774,12 +2774,12 @@ PYTHONIOENCODING=utf-8 PYTHONUTF8=1 "$V" ../outputs/_probe_view_size.py
 
 #### ③ 杠杆表：五条路，每条都过不了硬边界
 
-`outputs/_probe_fold_levers.py`（36 项语料，`keyset`，`|U₁| = 8`，阈值 0.5 ⇒ 要折下去得 `|Q| ≤ 4`）：
+`evidence/_probe_fold_levers.py`（36 项语料，`keyset`，`|U₁| = 8`，阈值 0.5 ⇒ 要折下去得 `|Q| ≤ 4`）：
 
 ```bash
 # 调用式（**cwd = repo**；工作区根有一份 2026-10-05 的陈旧 ldv/ 副本）
-PYTHONIOENCODING=utf-8 PYTHONUTF8=1 "$V" ../outputs/_probe_fold_levers.py
-# 落盘：../outputs/_probe_fold_levers.out.txt（32 行，逐字）
+PYTHONIOENCODING=utf-8 PYTHONUTF8=1 "$V" ../evidence/_probe_fold_levers.py
+# 落盘：../evidence/_probe_fold_levers.out.txt（32 行，逐字）
 ```
 
     杠杆                               |E₁|  |Q₁|  收缩比  判定        硬边界
@@ -2875,7 +2875,7 @@ cli all --remove 12   五份语料：护栏全过，退出码 0
       ★★ **2026-10-11 复裁：裁定「不加」—— 而且不是「先按现状」，是「加不了」**：
          压低最大块只能靠**切块** ⇒ `Q ≠ csr(spec)` ⇒ `§A3`（「`Q` 就是那个唯一解」）
          **必红**（四份语料实测：`§A3` 四例一致红、`§A2` 两红两绿）
-         ⇒ 见 `outputs/_probe_member_bound.py` 与抽象层 §10 条款 6
+         ⇒ 见 `evidence/_probe_member_bound.py` 与抽象层 §10 条款 6
     `§M1` / `§M5` 反向判据的**重复**只记录、未合并（理由见上）
     `run_checks` 绿仍**不**覆盖 `--cap` 下的 `cli` 行为差异（`--cap` 现在会作用到
       `(cli)` 那一组，但「缩了之后的结论」不在判据里）
@@ -2911,12 +2911,12 @@ cli all --remove 12   五份语料：护栏全过，退出码 0
 
 #### ① 方向树 vs ② 视图层：**模糊 → 精确**的两级
 
-`outputs/_probe_retrieval_selectivity.py`（36 项语料，`keyset`，25 方向）：
+`evidence/_probe_retrieval_selectivity.py`（36 项语料，`keyset`，25 方向）：
 
 ```bash
 # 调用式（**cwd = repo**；工作区根有一份 2026-10-05 的陈旧 ldv/ 副本）
-PYTHONIOENCODING=utf-8 PYTHONUTF8=1 "$V" ../outputs/_probe_retrieval_selectivity.py
-# 落盘：../outputs/_probe_retrieval_selectivity.out.txt（逐字）
+PYTHONIOENCODING=utf-8 PYTHONUTF8=1 "$V" ../evidence/_probe_retrieval_selectivity.py
+# 落盘：../evidence/_probe_retrieval_selectivity.out.txt（逐字）
 ```
 
     ① 方向树（25 个方向，1 个根，根覆盖 = 36）
@@ -3081,7 +3081,7 @@ verify_quotes     引文 252 条｜全覆盖 252｜有缺口 0
         它**不要求**块在某一层的前沿上完整出现 ⇒ **不受这条限制**（`§13.0.1`）。
     ★ **收益量级（2026-10-16 实测，13 份语料 = 内置 + 12 份跨领域）**：
       说否块均大小 **1.00–3.00**、`saved` **0.00%–6.06%**
-      （`outputs/_probe_prune_scale.out.txt`）⇒ **非零，但很小**。
+      （`evidence/_probe_prune_scale.out.txt`）⇒ **非零，但很小**。
       ⇒ ⚠️ **4/12 份 `saved = 0`** ⇒ 「少扫」**不是必然**，取决于块的合并 `forb`
         是否含查询要求键；**规模也不决定收益**（12 份跑完更硬：`ext-enron` 36692 节点
         6.06%，而**最大的** `ext-slashdot` 82168 节点只有 1.03%、`ext-astroph` 18771 是 0.00%）。
@@ -3266,14 +3266,14 @@ verify_quotes     引文 252 条｜全覆盖 252｜有缺口 0
        `refinement_profile(kernel, labs)` 对**三个插件组无条件**计算读数
        （`judged=False` 只影响**判词**，不影响**计算**）。
        `--no-probes` 只关了两条探针（`增量≡全量` / `规范重建`），**没关它**。
-    ⇒ **要指认必须先逐块计时**（`outputs/_profile_runone_prod.py` 口径，一趟约同等时间）。
+    ⇒ **要指认必须先逐块计时**（`evidence/_profile_runone_prod.py` 口径，一趟约同等时间）。
       README 自己写着「别把整趟归给某一条」——**所以不猜**。
 
 #### ⑦ 留档
 
-    outputs/_intake_full_v0.1.15.txt            改声明**前**：96 条 · 红 0 · 跳 26 · 退出码 1
-    outputs/_probe_full_views.txt              三组在全量上的逐条实测（本条的 ④⑤ 就取自它）
-    outputs/_intake_full_after_specfix.txt      改**后**的端到端（同一趟闸门）
+    evidence/_intake_full_v0.1.15.txt            改声明**前**：96 条 · 红 0 · 跳 26 · 退出码 1
+    evidence/_probe_full_views.txt              三组在全量上的逐条实测（本条的 ④⑤ 就取自它）
+    evidence/_intake_full_after_specfix.txt      改**后**的端到端（同一趟闸门）
     _data/openalex-citations/view_spec.json     全量的外生声明（**语料旁**，不进版本库）
     _data/openalex-citations/expected_reds.json 全量红基线（**含 `A4`/`M4` 两条已知红**）
 
@@ -3361,7 +3361,7 @@ verify_quotes     引文 252 条｜全覆盖 252｜有缺口 0
 #### ⑦ 留档
 
     `ldv/recognize.py` · `ldv/checks/views.json`（仓内默认语料的认识，**进版本库**）
-    `outputs/_probe_recognition_drift.py`（退化曲线的探针）
+    `evidence/_probe_recognition_drift.py`（退化曲线的探针）
     ⚠️ `views.json` 若**陈旧**，`T2` 会**红** —— 那是它**该**红（修法一条命令）
 
 ---
@@ -3397,7 +3397,7 @@ verify_quotes     引文 252 条｜全覆盖 252｜有缺口 0
 
 #### ② `§A4`：见证从**写死一对方向**改成**构造法**（声称没改，因为它是对的）
 
-**实测先证明声称是对的**（探针 `outputs/_probe_a4_witness_search.py`，两份语料都搜到）：
+**实测先证明声称是对的**（探针 `evidence/_probe_a4_witness_search.py`，两份语料都搜到）：
 
     36 项  中位数 k=3: A=['D0','D3','D6'] B=['D0','D1','D10']   ← 与旧声明**逐字相同**
     全量   中位数 k=3: A=['D0','D10','D53'] B=['D0','D11','D12']（摘要都 (3, 3975.0)，读数 62 vs 58）
@@ -3448,7 +3448,7 @@ verify_quotes     引文 252 条｜全覆盖 252｜有缺口 0
 
 判据绿 ≠ 功能在。这一条先把**产物**逐项印出来，再回答「抽象层持续影响检索层」到底走到哪一步。
 
-#### ① 功能验收（脚本 `outputs/_verify_retriever_features.py`，两份语料都跑）
+#### ① 功能验收（脚本 `evidence/_verify_retriever_features.py`，两份语料都跑）
 
     36 项（25 方向 ⇒ 8 块）                全量（79 方向 ⇒ 19 块）
     ✅ T0 分派                              ✅ T0 分派
@@ -3470,7 +3470,7 @@ verify_quotes     引文 252 条｜全覆盖 252｜有缺口 0
 
 ⚠️ **本节原来写的「差异恒为 0」是错的** —— 它把三件不同的事混成了一句。
 用户一句「**T2 层不是做了模糊掌握吗，让它作为一种持续交给检索层的影响不行吗**」
-把它点出来，随后实测（`outputs/_probe_influence_channels.py`）确认：**行，而且已经在做。**
+把它点出来，随后实测（`evidence/_probe_influence_channels.py`）确认：**行，而且已经在做。**
 
     口径 ①：**模糊掌握（认识 `Q`）→ 检索层的判断**
         同一个结构、同一个需求，只换 `q`（`csr` 8 块 vs 离散 25 块）：
@@ -3557,10 +3557,10 @@ verify_quotes     引文 252 条｜全覆盖 252｜有缺口 0
 
 #### ③ 端到端脚本与留档
 
-    outputs/_system_e2e_36.txt          36 项：四段逐字输出
-    outputs/_system_e2e_full.txt        全量：同上
-    outputs/_verify_retriever_36.txt    检索层功能验收（十项）
-    outputs/_verify_retriever_full.txt  同上（全量 79 个方向 ⇒ 19 块）
+    evidence/_system_e2e_36.txt          36 项：四段逐字输出
+    evidence/_system_e2e_full.txt        全量：同上
+    evidence/_verify_retriever_36.txt    检索层功能验收（十项）
+    evidence/_verify_retriever_full.txt  同上（全量 79 个方向 ⇒ 19 块）
 
 ⚠️ **执行纪律（今天踩了两次）**：端到端/闸门脚本**只在代码冻结后启动** ——
    今天 `H0UCeN` 与 `fKOtNT` 两趟都因为在运行期间改了代码（或写了 `_data/`）而**作废**。
@@ -3574,7 +3574,7 @@ verify_quotes     引文 252 条｜全覆盖 252｜有缺口 0
 从没在 `LDV_INTAKE_CHECKS=1` 下跑完过 —— README 自己写着一句
 「**没人跑的守卫与没有守卫等价**」。这一条把那一趟补上。
 
-#### ① 读数（留档 `outputs/_intake_full_final.txt`）
+#### ① 读数（留档 `evidence/_intake_full_final.txt`）
 
     HEAD `bc1ccf9`｜工作区改动 **0** 处（代码冻结）｜基线 `reds = 空` ⇒ **任何红即失败**
     开始 2026-10-10 18:05:49 ｜ 结束 19:28:10 ｜ **82 分 21 秒** ｜ `RC=0`
@@ -3642,7 +3642,7 @@ verify_quotes     引文 252 条｜全覆盖 252｜有缺口 0
     `write_baseline()`  **合并**进本语料那一区 —— 别的语料**不动**
     `b18_cover_leak_baseline()`  第 0 条从「顶层指纹 == 现在」改成「**本语料那一区在不在**」
 
-#### ③ 实测（`outputs/_freeze_b18_full.txt`，10 分 38 秒，`RC=0`）
+#### ③ 实测（`evidence/_freeze_b18_full.txt`，10 分 38 秒，`RC=0`）
 
     命令  LDV_CORPUS=…/openalex-citations python -m ldv.run_checks --write-cover-leak-baseline
     输出  语料指纹 {'项数': 3907, '边数': 24156} ⇒ 分区 '3907 项 / 24156 边'
@@ -3693,7 +3693,7 @@ verify_quotes     引文 252 条｜全覆盖 252｜有缺口 0
 
 #### ⑧ 全量闸门复核（`LDV_INTAKE_CHECKS=1`）—— 跳过 **6 → 3**
 
-留档 `outputs/_intake_full_b18fix.txt`｜`HEAD 1c0dfa4`｜工作区改动 **0** 处｜
+留档 `evidence/_intake_full_b18fix.txt`｜`HEAD 1c0dfa4`｜工作区改动 **0** 处｜
 开始 19:48:27 → 结束 21:49:32 = **121 分 5 秒**｜`RC=0`
 
     外部语料验收：过 13 · 红 0 · 跳过 0
@@ -3814,7 +3814,7 @@ verify_quotes     引文 252 条｜全覆盖 252｜有缺口 0
     ⇒ 三份语料**同一个模式**：**判定结果**只有 `M1` 一条变，`M5` 只动了标题的字。
       跳过的**每一条**都指得到判据上，**没有一条**被这次改动掩盖。
 
-留档：`outputs/_m1fix_snap-{hepth-dag,hepth,email-eu}_checks.txt`（均 `RC=0`）。
+留档：`evidence/_m1fix_snap-{hepth-dag,hepth,email-eu}_checks.txt`（均 `RC=0`）。
 
 #### ⑤ 同一趟修的两个**真缺陷**
 
@@ -3966,11 +3966,11 @@ ZOZO 官方 `data.html` 逐字：
 ### 结果三十三：**内核建造占整趟墙钟 93.8%**，其中**重复的那部分已去掉** —— 同进程 A/B **−29.7%**（2026-10-11）
 
 **症状**：README 一直记着「全量**还剩的大头是内核的重复建造**（189.2 + 139.0 s）——
-这一项**没动**」。那个数出自 `outputs/_profile_runone_prod.py`，而它**只包 `run_one`**。
+这一项**没动**」。那个数出自 `evidence/_profile_runone_prod.py`，而它**只包 `run_one`**。
 
 #### ① 先量全：整趟 `main()` 上，建造到底占多少
 
-`outputs/_measure_build_duplication.py` —— 只把 `ldv.core.kernel.Kernel` 的
+`evidence/_measure_build_duplication.py` —— 只把 `ldv.core.kernel.Kernel` 的
 `build` / `insert` **包一层计数与计时**（不抄序列：抄会漂，见 `_profile_runone_prod.py`
 的教训），然后调**真的** `main()`。一次「全量建」= 1 次 `build` + n 次 `insert`。
 
@@ -4026,7 +4026,7 @@ ZOZO 官方 `data.html` 逐字：
 
 #### ④ 拷贝贵不贵
 
-`outputs/_probe_deepcopy_cost.py`（`snap-email-eu` / reach）：
+`evidence/_probe_deepcopy_cost.py`（`snap-email-eu` / reach）：
 
     建造            45.452 s   （2009 个方向）
     deepcopy #1      0.211 s
@@ -4051,7 +4051,7 @@ ZOZO 官方 `data.html` 逐字：
     snap-email-eu-mini（120 项）  **逐字相同**（97 条断言）
     snap-email-eu（1005 项）      **逐字相同**（299 行报告正文，97 条断言）
 
-**(b) 同进程背靠背 A/B**（`outputs/_ab_reusable_build.py`，`snap-email-eu-mid` 300 项）
+**(b) 同进程背靠背 A/B**（`evidence/_ab_reusable_build.py`，`snap-email-eu-mid` 300 项）
 —— 跨两趟比墙钟不可靠（±40%），所以**两条臂放进同一个进程**、交替跑，且
 **只有 `reusable_build` 这一个函数在变**：
 
@@ -4079,7 +4079,7 @@ ZOZO 官方 `data.html` 逐字：
 
 `run_tests`：**571 条 / 过 571 / 红 0**（564 → +7）。
 
-**(d) 注入对照**（`outputs/_inject_reusable_build.py` —— 证明那几条**能红**）：
+**(d) 注入对照**（`evidence/_inject_reusable_build.py` —— 证明那几条**能红**）：
 
     基线   过 7｜红 0
     共享   过 5｜红 2    ← `RB2` + `RB4` 开火
@@ -4106,7 +4106,7 @@ ZOZO 官方 `data.html` 逐字：
 
 #### ① 量法
 
-`outputs/_probe_member_bound.py`：
+`evidence/_probe_member_bound.py`：
 
     基线      `Q = csr(spec)`（真实现）
     加上界    把**每个**超过 `bound` 的块按**字典序**切成 ≤ bound 的小块
@@ -4184,8 +4184,8 @@ ZOZO 官方 `data.html` 逐字：
 同时结果三十四那一节的实测把选项收窄了 —— `keyset` 的账在维护路径上也是 **0 / 0**
 （`滞留 0` / `根覆盖之外 0`）⇒ 换**路径**不够，**方向也得换**。
 
-② `outputs/_probe_maintenance_tree.out.txt` 把三条方向 × 两条路径的树量了出来
-   （id 数另见 `outputs/_probe_maint_dirs.txt`）：
+② `evidence/_probe_maintenance_tree.out.txt` 把三条方向 × 两条路径的树量了出来
+   （id 数另见 `evidence/_probe_maint_dirs.txt`）：
 
     方向        路径       |U|   成员并集   没进任何方向   账    滞留   根覆盖外
     keyset    batch      25       36           0         0     0       0
@@ -4198,7 +4198,7 @@ ZOZO 官方 `data.html` 逐字：
     ⚠️ `reach` 维护路径的账与 `sequence` **不同类**：`reach` 那 28 条**全是「根覆盖之外」**
     （根 payload = 当时已知的 6 个锚点 ⇒ 后来 28 项被根答「否」、记 `out_of_scope`、不进结构）
     —— 这是「**根是外生声明**」的必然形态（§10.2 出路 (1) 根记账），**不是插入缺陷**：
-    `outputs/_probe_reach_root_payload.out.txt` 单变量对照（只换根 payload，其余逐字相同）
+    `evidence/_probe_reach_root_payload.out.txt` 单变量对照（只换根 payload，其余逐字相同）
     纳入 **8/36 → 36/36**、两臂**越界-内部都是 0**；逐项问根得「否」28 / 「是」8 /
     「未展开」**0** ⇒ 是**证明**，不是「不知道被当成不在」。⇒ 第 ⑫ 条**已改定性**（见下）。
     ⚠️ `keyset` 的账**恒空是精确切分的性质**（不是缺陷）：成员算得出来 ⇒ 没有滞留、
@@ -4268,12 +4268,12 @@ ZOZO 官方 `data.html` 逐字：
 
 ⑪ `T7` 在新配置上的读数：`run_checks` 的 `(检索)` 组 **8 条 / 红 0 / 跳过 0**，
    其中 `T7` 报「展开 1 个方向 ⇒ 候选 3 → 3（只增不减）；再深化一次不新增（幂等）」。
-   `outputs/_probe_deepen_seq.out.txt` 把代表查询 `随机 12 项 #1` 那一版量出来了：
+   `evidence/_probe_deepen_seq.out.txt` 把代表查询 `随机 12 项 #1` 那一版量出来了：
    展开 **5** 个（就是那一整块）⇒ 方向数 8 → 8、候选 8 → 8、画像读法**一个都没变**
    ⇒ 那 5 个是**试过也分不开**（`stats()['§K2 判空'] == 5`），不是「长出了子」。
 
 ⑫ ★ 2026-10-13 晚 **改定性**（原记「新待办：`reach` 维护路径的**增量插入缺陷**——真缺陷」）
-   —— 单变量对照证明**不是插入缺陷**（`outputs/_probe_reach_root_payload.out.txt`）：
+   —— 单变量对照证明**不是插入缺陷**（`evidence/_probe_reach_root_payload.out.txt`）：
    只换根 payload（初始 6 个锚点 → 全部 36 个），插入序列 / 插件 / 路径**逐字相同**，
    纳入 **8/36 → 36/36**，两条臂的**越界-内部都是 0** ⇒ 插入路径不丢项；逐项问
    `命中(根, {x})` 得「否」28 / 「是」8 / 「未展开」**0** ⇒ 那 28 项是**被根证明**
@@ -4326,13 +4326,13 @@ ZOZO 官方 `data.html` 逐字：
         ⇒ **搜不到什么都不证明**，输出如实写「语料级证据未取得」
 
    ⇒ openalex × `sequence`（`|U| = 9`）：`(计数, 和)` 对本论域全部 **512** 个子集
-   （含空集与 9 个单元素）**两两不同**（`outputs/_probe_witness_exhaustive.out.txt`）
+   （含空集与 9 个单元素）**两两不同**（`evidence/_probe_witness_exhaustive.out.txt`）
    ⇒ `k≥2` 的 **502** 个子集自然也两两不同 ⇒ 本轮穷举复跑：
    **subsets=502 / buckets=502 / found=False / suffices=True**
-   （`outputs/_probe_a4_scope_split.out.txt` P3）⇒ `§A4` **过**，输出并排印着
+   （`evidence/_probe_a4_scope_split.out.txt` P3）⇒ `§A4` **过**，输出并排印着
    「函数级有支撑」与「本论域穷举 502 个子集、0 对 —— 搜不到是**论域的性质**」。
 
-⑥ 三条实测把新行为钉住（`outputs/_probe_a4_scope_split.py`，RC=0）：
+⑥ 三条实测把新行为钉住（`evidence/_probe_a4_scope_split.py`，RC=0）：
 
     a **交叉验证**：本语料上 bounded 与 exhaustive **一致 `None`**；随机论域
       **400** 例里 bounded 搜到 **377** 例，且 **377/377** 首个见证与穷举

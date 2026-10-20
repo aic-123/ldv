@@ -1,0 +1,15 @@
+═══ 在全量语料上重冻 B18 基线（合并）═══
+开始 2026-10-10 19:36:17
+LDV_CORPUS=C:/Users/19253/WorkBuddy AI/2026-10-05-14-16-35/repo/_data/openalex-citations/nodes
+
+已冻结覆盖不漏基线（**合并**进本语料那一区，别的语料不动）：
+  语料指纹 {'项数': 3907, '边数': 24156} ⇒ 分区 '3907 项 / 24156 边'
+  keyset|batch             0 漏 / 0 对
+  keyset|maintenance       0 漏 / 0 对
+  reach|batch              0 漏 / 0 对
+  reach|maintenance        0 漏 / 0 对
+  sequence|batch           0 漏 / 0 对
+  sequence|maintenance     1771 漏 / 4 对
+  文件里现在有 2 个语料分区：['36 项 / 47 边', '3907 项 / 24156 边']
+RC=0
+结束 2026-10-10 19:46:55

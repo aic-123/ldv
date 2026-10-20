@@ -236,6 +236,28 @@ MEASUREMENTS.md   全部读数，以及每个读数为什么是这样
 
 ---
 
+## 证据在哪 —— **不是宣称，是实体**
+
+文档里每一处「实测 / 留档」的引用都指向 `evidence/` 下的文件：
+
+| 文件 | 是什么 |
+|---|---|
+| `evidence/INDEX.md` | **142 个证据文件**，每个都列出「被哪份文档引用」 |
+| `evidence/quotes-index.md` | **310 条引文** → 出自哪个源档 + 最低覆盖比（**不含版权正文**） |
+
+⚠️ `sources/` 里是 45 MB 版权论文，**不进仓库** —— 所以引文侧给的是
+**「哪一句从哪来 + 覆盖率」的核对记录**，而不是正文。要复核全文按源档名自取。
+
+两条判据守着，缺一条就红：
+
+    test_evidence         无悬空引用 / 无孤儿 / 文档里不出现工作区路径
+    test_quotes_evidence  引文索引与文档**逐条对齐**（文档改了不重生成就红）
+
+重生成：
+
+    python -m ldv.tools.evidence_index write   # evidence/INDEX.md
+    python -m ldv.tools.quote_index write      # evidence/quotes-index.md（需要工作区有 sources/）
+
 ## 已知的未做（不是漏了）
 
 **一行一条；每一条的裁定与依据（含实测数字）见

@@ -1,0 +1,13 @@
+═══ 全量 test_intake · 按语料声明之后（端到端）═══
+开始：2026-10-10 16:30:52
+HEAD：e5bf712
+改动：load_spec_file 按语料找 + 全量 spec 落盘 + parse_reds 扩编号 + 基线含 A4/M4
+
+═══ 外部语料验收：公开数据集切片 ═══
+  语料 C:\Users\19253\WorkBuddy AI\2026-10-05-14-16-35\repo\_data\openalex-citations\nodes
+  路 1（markdown 往返）：节点 3907 · 边 24156
+  路 2（原始 JSON）    ：节点 3907 · 边 24156   {'原始 JSON 文件数': 78, '丢弃外部引用': 196223}
+  MANIFEST：type 19 值 · source.kind 6 值 · evidence_status 3 值 · 丢弃外部引用 196223
+  键词表 37 · 等价类 40 · 最大等价类 **3291**（占语料 84.2%）
+     ⚠️ 这是**披露**：它说明这个键词表在这份语料上最多只能分到这一层。
+  跑 `run_checks --no-probes`（判据全跑，贵的探针不跑）…

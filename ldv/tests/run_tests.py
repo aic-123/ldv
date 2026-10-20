@@ -5481,6 +5481,108 @@ def test_version_spots() -> None:
 
 
 
+def test_evidence() -> None:
+    """★ 仓库里每一处「实测/留档」引用都**有实体**（`tools/evidence_index.py`，2026-10-20）。
+
+    用户 2026-10-20：「现在测试和引用之类的内容只有宣称而没有实体」。
+
+    实测：仓库文档引用了 **130+** 个 `outputs/...` 留档，而那些文件全在工作区根的
+    `outputs/` 下 —— **`outputs/` 不在仓库里** ⇒ 远端读者一个都看不到，
+    「实测见 `outputs/_probe_x.py`」在 GitHub 上是**悬空引用**。
+
+    ⇒ 搬进 `repo/evidence/`，文档路径一起改成 `evidence/...`，这条判据守三件事：
+       ① 每处 `evidence/X` 都能解析到**存在的文件**（含花括号/通配写法）
+       ② `evidence/` 里**没有孤儿**（每个文件至少被一处引用）
+       ③ 仓库文档里**不再出现 `outputs/`**（那是工作区路径，远端没有）
+    """
+    import shutil
+    import tempfile
+    from pathlib import Path as _P
+
+    from ldv.tools import evidence_index as EI
+
+    # ── 59 真实仓库：全部有实体 ──────────────────────────────────────────
+    good, r = EI.check()
+    ok("★ [证据] 59 全仓 `evidence/` 引用**都有实体**（无悬空 / 无孤儿 / 无工作区路径）",
+       good and not r["unresolved"] and not r["orphans"] and not r["ws_refs"],
+       f"文件 {len(r['files'])}｜被引用 {len(r['used'])}｜"
+       f"解析不了 {len(r['unresolved'])}｜孤儿 {len(r['orphans'])}｜"
+       f"残留 outputs/ {len(r['ws_refs'])}")
+
+    # ── 60 **反向对照**：伪造一个悬空引用 ⇒ check 必须报红 ────────────────
+    #    ⚠️ 不碰真实文档：把 `REPO`/`EV` 一起指到临时目录。
+    tmp = _P(tempfile.mkdtemp())
+    old_repo, old_ev = EI.REPO, EI.EV
+    try:
+        (tmp / "docs").mkdir()
+        (tmp / "evidence").mkdir()
+        (tmp / "evidence" / "real.txt").write_text("x", encoding="utf-8")
+        (tmp / "docs" / "a.md").write_text(
+            "见 `evidence/real.txt` 与 `evidence/根本没有这个文件.txt`。",
+            encoding="utf-8")
+        EI.REPO, EI.EV = tmp, tmp / "evidence"
+        bad_ok, bad_r = EI.check()
+        ok("★ [证据] 60 **反向对照**：伪造悬空引用 ⇒ check 必须报红",
+           bad_ok is False and len(bad_r["unresolved"]) == 1
+           and bad_r["unresolved"][0][1].startswith("根本没有"),
+           f"check 返回 {bad_ok}｜解析不了 {bad_r['unresolved']}")
+
+        # ── 61 反向对照之二：孤儿也要报（文件在，但没人引用） ─────────────
+        (tmp / "docs" / "a.md").write_text("见 `evidence/real.txt`。", encoding="utf-8")
+        (tmp / "evidence" / "orphan.txt").write_text("y", encoding="utf-8")
+        o_ok, o_r = EI.check()
+        ok("★ [证据] 61 **反向对照**：`evidence/` 里有孤儿 ⇒ 也必须报红",
+           o_ok is False and o_r["orphans"] == ["orphan.txt"],
+           f"check 返回 {o_ok}｜孤儿 {o_r['orphans']}")
+    finally:
+        EI.REPO, EI.EV = old_repo, old_ev
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+
+def test_quotes_evidence() -> None:
+    """★ 引文核对记录与文档**逐条对齐**（`tools/quote_index.py`，2026-10-20）。
+
+    用户 2026-10-20：「测试和引用之类的内容只有宣称而没有实体」。
+
+    `sources/` 是 45 MB **版权正文**，不能进仓库 ⇒ 「引文 310 条全覆盖」在 GitHub 上
+    只能**相信**、不能**核对**。⇒ 生成 `evidence/quotes-index.md`：
+    **每条引文 → 出自哪个源档 → 最低覆盖比**（不含正文，只含引文本身 + 源档名）。
+
+    这条判据守的是**同步**：文档里每加/删一条引文，索引必须跟着重生成
+    （`python -m ldv.tools.quote_index write`）。
+    """
+    import io as _io
+    import shutil
+    import tempfile
+    from pathlib import Path as _P
+
+    from ldv.tools import quote_index as QI
+
+    # ── 62 真实仓库：索引与文档逐条对齐 ──────────────────────────────────
+    good, r = QI.check()
+    ok("★ [引文证据] 62 `evidence/quotes-index.md` 与文档引文**逐条对齐**",
+       good and r["文档引文"] == r["索引记"] and r["文档引文"] > 0,
+       f"文档 {r['文档引文']} 条｜索引 {r['索引记']} 条｜缺 {len(r['缺'])}｜多 {len(r['多'])}")
+
+    # ── 63 **反向对照**：索引里少一条 ⇒ check 必须报红 ────────────────────
+    tmp = _P(tempfile.mkdtemp())
+    old_out = QI.OUT
+    try:
+        src = _io.open(old_out, encoding="utf-8").read().splitlines()
+        keep = [ln for ln in src if not ln.startswith("| `")]
+        rows = [ln for ln in src if ln.startswith("| `")]
+        (tmp / "idx.md").write_text("\n".join(keep + rows[1:]) + "\n", encoding="utf-8")
+        QI.OUT = tmp / "idx.md"
+        bad, br = QI.check()
+        ok("★ [引文证据] 63 **反向对照**：索引里少一条 ⇒ check 必须报红",
+           bad is False and len(br["缺"]) >= 1,
+           f"check 返回 {bad}｜缺 {len(br['缺'])}｜索引记 {br['索引记']}")
+    finally:
+        QI.OUT = old_out
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_approved_loop() -> None:
     """★ 反思层闭环：`directions.json` 的 `已批准` **真的被用上**（2026-10-19）。
 
@@ -8494,6 +8596,8 @@ def main() -> int:
                test_predicate_naming,
                test_dimension_values,
                test_version_spots,
+               test_evidence,
+               test_quotes_evidence,
                test_leaf_cap_requests,
                test_candidate_dimensions,
                test_loader_sharded,

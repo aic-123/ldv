@@ -1,0 +1,50 @@
+    · 覆盖 oracle 读数：keyset 调用 122 / 命中 73（不同 payload 49）；reach 调用 212 / 命中 137（不同 payload 75）；sequence 调用 54 / 命中 38（不同 payload 16）（**度量**，不进退出码）
+    · reach 缓存读数：{'distance 调用': 2556, 'distance 命中': 2485, 'reachable 调用': 142, 'reachable 命中': 71, 'signature 调用': 36, 'signature 命中': 0, '不同 payload（距离）': 8, '不同 payload（可达）': 8}（**度量**，不进退出码）
+    · reach 缓存读数：调用 2520 / 命中 2450（可达 142/71）（**度量**，不进退出码）
+    · keyset   D1 ← _NoLedger    基线 0 → 注入 31；只此一条红
+    · keyset   D2 ← _DropChild   基线 0 → 注入 9；只此一条红
+    · keyset   D3 ← _GhostMember 基线 0 → 注入 1；只此一条红
+    · keyset   D4 ← _OffPath     基线 0 → 注入 1；只此一条红
+    · keyset   D5 ← _Tamper      基线 0 → 注入 1；只此一条红
+    · keyset   D6 ← _DeleteDir   基线 0 → 注入 22；只此一条红
+    · keyset   D2 已知答案 ← _AccountedChild 判据 0（绿）、**裸漏 13**（非 0 ⇒ 两个数确实不同）
+    · reach    D1 ← _NoLedger    基线 0 → 注入 104；只此一条红
+    · reach    D2 ← _DropChild   基线 0 → 注入 2；只此一条红
+    · reach    D3 ← _GhostMember 基线 0 → 注入 1；只此一条红
+    · reach    D4 ← _OffPath     基线 0 → 注入 1；只此一条红
+    · reach    D5 ← _Tamper      基线 0 → 注入 1；只此一条红
+    · reach    D6 ← _DeleteDir   基线 0 → 注入 78；另带红 {'D2': 2}（D6 对照与 D2 耦合，见 docstring）
+    · reach    D2 已知答案 ← _AccountedChild 判据 0（绿）、**裸漏 9**（非 0 ⇒ 两个数确实不同）
+    · sequence D1 ← _NoLedger    基线 0 → 注入 1；只此一条红
+    · sequence D2 ← _DropChild   基线 0 → 注入 15；只此一条红
+    · sequence D3 ← _GhostMember 基线 0 → 注入 1；只此一条红
+    · sequence D4 ← _OffPath     基线 0 → 注入 1；只此一条红
+    · sequence D5 ← _Tamper      基线 0 → 注入 1；只此一条红
+    · sequence D6 ← _DeleteDir   基线 0 → 注入 1；只此一条红
+    · sequence D2 已知答案 ← _AccountedChild 判据 0（绿）、**裸漏 25**（非 0 ⇒ 两个数确实不同）
+    · keyset   往返 ✓｜存档  235830 字节｜派生边 0 行｜重算不符 0｜幂等 True
+    · reach    往返 ✓｜存档  248000 字节｜派生边 0 行｜重算不符 0｜幂等 True
+    · sequence 往返 ✓｜存档  229187 字节｜派生边 0 行｜重算不符 0｜幂等 True
+    · keyset   全量漂移：权威 loader == 原件｜双份 loader ≠ 原件  ← ★ 对照在这里分开了
+    · keyset   一处漂移：权威 loader == 原件｜双份 loader ≠ 原件  ← ★ 对照在这里分开了
+    · reach    全量漂移：权威 loader == 原件｜双份 loader ≠ 原件  ← ★ 对照在这里分开了
+    · reach    一处漂移：权威 loader == 原件｜双份 loader ≠ 原件  ← ★ 对照在这里分开了
+    · sequence 全量漂移：权威 loader == 原件｜双份 loader ≠ 原件  ← ★ 对照在这里分开了
+    · sequence 一处漂移：权威 loader == 原件｜双份 loader ≠ 原件  ← ★ 对照在这里分开了
+    · keyset   读回后 B13：只认权威边 是｜信任派生边 否（1 处违例：['D13.parent=D0，但它不在那个父的子列表里（两条边打架…）
+    · reach    读回后 B13：只认权威边 是｜信任派生边 否（1 处违例：['D36.parent=D0，但它不在那个父的子列表里（两条边打架…）
+    · sequence 读回后 B13：只认权威边 是｜信任派生边 否（1 处违例：['D8.parent=D0，但它不在那个父的子列表里（两条边打架）…）
+    · 版本 13 个｜快照点 (8,)｜最大重放 7 < every 8
+    · keyset   作用域 = 锥（insert 36/36、remove 8/8）｜公共交 ['D0']｜路径锁 max 7 vs 扇出锁 max 13
+    · reach    作用域 = 锥（insert 36/36、remove 8/8）｜公共交 ['D0']｜路径锁 max 7 vs 扇出锁 max 13
+    · sequence 作用域 = 锥（insert 36/36、remove 8/8）｜公共交 ['D0']｜路径锁 max 5 vs 扇出锁 max 14
+    · 短临界区链路：`_alloc` 进过 25 次｜`_lk` 进过 44 次（对照：`_new` 绕过 `_alloc` ⇒ 0｜账本不进临界区 ⇒ 0）
+    · 接线：`--locked` 拿过锁 252 次｜默认路径类型 Kernel（拿过 0 次）
+    · 全链路读数：4 个方向 ⇒ 3 张视图，最大一块 2｜具体化 72 vs 成员 72
+    · committed 声明读数：8 个方向 ⇒ 4 张视图，最大一块 5｜具体化 86 vs 成员 86｜读数声明 5 条，`§A5` 是
+    · 视图层与折叠读数：L0: |U|=8 |Q|=4 收缩比 0.500 n_cand 15 停因 -｜L1: |U|=4 |Q|=4 收缩比 1.000 n_cand 15 停因 M1 收缩比
+      视图层（L0）：|U| = 8 ⇒ |Q| = 4（收缩比 0.500）—— **这就是「模糊掌握」层**
+    · 检索器读数：认识 |Q| = 4 块 / 8 个方向；「先看」4 块（8 个方向）、「后看」0 块　★ **少扫**：「后看」的块**不跑** ⇒ 跑过 4/4 块（省 0 块）—— 由 `§I2` 的推论保证**不改结论**（判据 `T1` 守这一条）。　★★ **本层的收益 = 影响**（基线§14.6）：① **判断质量**（块画像 / 建议 / 读法 / 粒度）② **少扫**（这一行）—— 两者都不是「省时间」意义上的收益
+      `T3` 的解释共 8 条，例：D0 覆盖 arg-0001
+    · 生产配置上 49 个编号：判不了 []（其余都判过）
+共 601 条：过 601，红 0
