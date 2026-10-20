@@ -95,7 +95,16 @@ def bump(new: str, day: str | None = None) -> list[tuple[str, str]]:
     for rel, text in cache.items():
         raw = io.open(REPO / rel, "rb").read()
         nl = "\r\n" if b"\r\n" in raw else "\n"
-        io.open(REPO / rel, "w", encoding="utf-8", newline="").write(text.replace("\n", nl))
+        # ★★ **先归一化再套目标行尾**（2026-10-20 修）。
+        #
+        #   原来直接 `text.replace("\n", nl)`：`_read` 用 `newline=""` 读，
+        #   所以 CRLF 文件读回来**本身就带 `\r\n`** ⇒ 再 replace 一次就成
+        #   `\r\r\n`（**双转换**）。实测：`bump` 一趟把三份文档写成 1671 / 1112 / 334
+        #   行 `\r\r\n`，提交里出现 **3000 行行尾噪声**，而版本号只改了一个字符。
+        #   ⇒ 先把 `\r\n` 与孤立 `\r` 都归成 `\n`，再按文件自己的行尾展开。
+        norm = text.replace("\r\n", "\n").replace("\r", "\n")
+        io.open(REPO / rel, "w", encoding="utf-8", newline="").write(
+            norm.replace("\n", nl) if nl != "\n" else norm)
     return touched
 
 
