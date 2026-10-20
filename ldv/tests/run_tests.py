@@ -5540,6 +5540,73 @@ def test_evidence() -> None:
 
 
 
+def test_entry() -> None:
+    """★ 只读查询入口（`entry.py`）—— 切分语义 / 拒收 / 建议 / 示例（2026-10-20）。
+
+    用户 2026-10-20：「用户得到的就是根据需求匹配的对应粗细的节点即可」，
+    随后选 C：「先说横跨 N 支，再列 N 个」。
+
+    ⚠️ 判据**不碰 HTTP**：`App` 的逻辑与传输无关。起服务测端口会把判据变成
+       「端口没被占用」这类环境读数（`R2` 说的是系统不是环境）。
+    """
+    import entry as E
+
+    app = E.App(None)                     # 内置 36 项语料；不设环境变量
+    keys = [k for k in app.all_keys if "=" in k]
+    ok("★ [入口] 51 内置语料能建核，且键里带 `=`（可筛选）",
+       len(app.nodes) > 0 and len(keys) > 0,
+       f"{len(app.nodes)} 项｜{len(app.all_keys)} 键｜带 `=` 的 {len(keys)} 个")
+
+    # ── 52 切分不重不漏 ────────────────────────────────────────────────
+    import itertools
+    bad: list[str] = []
+    cases: list[dict] = [{"require": []}]
+    for k in keys:
+        cases.append({"require": [k]})
+    for a, b in itertools.combinations(keys, 2):
+        cases.append({"require": [a, b]})
+    for c in cases:
+        d = app.query(c)
+        if not d.get("ok"):
+            bad.append(f"{c} 被拒收：{d.get('error')}")
+            continue
+        s = sum(n["n_answer"] for n in d["nodes"])
+        if s != d["n_answer"]:
+            bad.append(f"{c} ⇒ 答案 {d['n_answer']}｜各支合计 {s}")
+    ok("★ [入口] 52 切分**不重不漏**（Σ各支含答案 == 答案总数）",
+       not bad,
+       f"{len(cases)} 条需求｜红 {len(bad)}" + (f"｜首个：{bad[0]}" if bad else ""))
+
+    # ── 53 单支给 node / 多支给 nodes ───────────────────────────────────
+    one = app.query({"require": [keys[0]]})
+    ok("★ [入口] 53 单支时 `node` 必须给（兼容旧调用方），多支时为 None",
+       (one["n_branches"] == 1 and one["node"] is not None)
+       or (one["n_branches"] > 1 and one["node"] is None
+           and len(one["nodes"]) == one["n_branches"]),
+       f"支 {one['n_branches']}｜node {'有' if one['node'] else 'None'}"
+       f"｜nodes {len(one['nodes'])}")
+
+    # ── 54 拼错的键拒收（不许静默 0 条） ───────────────────────────────
+    bad_q = app.query({"require": ["type=绝对不存在的取值"]})
+    ok("★ [入口] 54 拼错的键 ⇒ **拒收**并给建议（不许静默返回 0 条）",
+       bad_q.get("ok") is False and "不存在" in bad_q.get("error", "")
+       and bool(bad_q.get("unknown_keys")),
+       f"ok={bad_q.get('ok')}｜unknown={bad_q.get('unknown_keys')}")
+
+    # ── 55 建议是**子串**匹配（键以 `type=` 开头） ─────────────────────
+    probe = "概念"
+    sug = app.suggest(probe)["items"]
+    ok("★ [入口] 55 建议按**子串**匹配（打「概念」能匹配 `type=概念`）",
+       any(probe in x["key"] for x in sug) and all(probe in x["key"] for x in sug),
+       f"「{probe}」→ {[x['key'] for x in sug][:3]}")
+
+    # ── 56 示例的键必须真实存在 ────────────────────────────────────────
+    ex = app.examples()["items"]
+    fake = [k for x in ex for k in x["require"] if k not in app.all_keys]
+    ok("★ [入口] 56 示例里的键必须**真实存在**（不许给一个查不到的例子）",
+       len(ex) >= 2 and not fake,
+       f"{len(ex)} 条｜假键 {fake or '无'}")
+
 def test_quotes_evidence() -> None:
     """★ 引文核对记录与文档**逐条对齐**（`tools/quote_index.py`，2026-10-20）。
 
@@ -8598,6 +8665,7 @@ def main() -> int:
                test_version_spots,
                test_evidence,
                test_quotes_evidence,
+               test_entry,
                test_leaf_cap_requests,
                test_candidate_dimensions,
                test_loader_sharded,
