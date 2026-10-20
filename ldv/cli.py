@@ -243,8 +243,12 @@ def run_one(name: str, holdout: int, only: str | None,
             from .corpus import predicates as PR
             _rules, _budget = PR.load_rules(corpus_dir)
             _preds, _dropped, _params = PR.derive(nodes, edges, _rules, _budget)
+        # ⚠️ 传 **used + dropped**：预算管的是「自动选谁」，不是「人能声明什么」。
+        #    只传 `used` ⇒ 人引用预算外的谓词会被 `apply_basic` 判「缺项」**静默跳过**
+        #    （实测：加键 0 项、无提示）。
         nodes, ledger_ap = RQ.apply_approved(nodes, corpus_dir,
-                                             edges=edges, preds=_preds)
+                                             edges=edges,
+                                             preds=list(_preds) + list(_dropped))
 
     kernel, queries, new, removable, cover = _assemble(
         name, nodes, edges, holdout, remove, locked=locked, predicates=predicates,

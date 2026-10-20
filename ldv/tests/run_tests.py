@@ -5273,6 +5273,94 @@ def test_combine_budget() -> None:
 
 
 
+def test_predicate_naming() -> None:
+    """★ 人命名谓词：**预算外也能用**、**改名不是新增维度**、**跳过不静默**（2026-10-20）。
+
+    起因（用户 2026-10-20）：「这样不还是没办法使用上新谓词吗」。
+
+    实测到的真 bug：`apply_basic` 只用 `used`（预算内那 3 个）解析定义 ⇒
+    人想用一个**预算外**的谓词（推导出来了、只是没进 top-3）⇒ 查不到 ⇒
+    **静默跳过**（加键 0 项、无任何提示）。
+
+    ⇒ 三条口径：
+      ㊾ 解析范围 = **所有推导出来的**谓词（预算管「自动选谁」，不管「人能声明什么」）
+      ㊿ 同扩展的命名 = **改名**（键数不变、旧键消失）—— 实测改名后树形逐字相同
+      51 真的没有的项 ⇒ 记「未生效」+ 缺项，**不静默**
+    """
+    import copy
+
+    from ldv.checks._fixtures import find_corpus
+    from ldv.corpus import predicates as PR
+    from ldv.corpus.loader import load_edges, load_nodes
+
+    root = find_corpus()
+    assert root is not None
+    nodes = load_nodes(root)
+    edges, _d = load_edges(nodes)
+    rules, budget = PR.load_rules(root.parent)
+    used, dropped, _p = PR.derive(nodes, edges, rules, budget)
+    allp = list(used) + list(dropped)
+
+    # ── ㊾ **预算外**的谓词也能被命名使用 ────────────────────────────────
+    if dropped:
+        one = dropped[0]
+        n1 = copy.deepcopy(nodes)
+        led: dict = {}
+        t = PR.apply_basic(n1, edges, [{"名": "我要用", "定义": [one.谓词]}],
+                           allp, led)
+        ok("★ [命名] ㊾ **预算外**的谓词也能被命名使用（不再静默跳过）",
+           t == one.满足数 and t > 0
+           and not led.get("未生效"),
+           f"预算外「{one.谓词}」⇒ 加键 {t} 项（满足数 {one.满足数}）｜"
+           f"未生效 {len(led.get('未生效', []))}")
+    else:
+        PASS.append("★ [命名] ㊾ 预算外可用（**跳过**：本语料没有预算外的谓词）")
+
+    # ── ㊿ 同扩展的命名 = **改名**：键数不变、旧键消失、账本留痕 ──────────
+    if used:
+        n2 = copy.deepcopy(nodes)
+        PR.apply_to_nodes(n2, edges, used)
+        before = {k for nd in n2.values() for k in nd.keys}
+        old = used[0].谓词
+        led2: dict = {}
+        PR.apply_basic(n2, edges, [{"名": "改过的名字", "定义": [old]}], allp, led2)
+        after = {k for nd in n2.values() for k in nd.keys}
+        renamed = led2.get("改名", [])
+        ok("★ [命名] ㊿ 同扩展 ⇒ **改名**：键数不变、旧键消失、账本留痕",
+           len(after) == len(before)
+           and "改过的名字" in after and old not in after
+           and bool(renamed) and old in renamed[0]["替换"],
+           f"键数 {len(before)} → {len(after)}｜旧键消失 {old not in after}｜"
+           f"账本 {renamed}")
+
+        # ── 51 改名**只针对派生键**：字段键集合前后必须**逐字相同** ────────
+        FIELD = {"id", "title", "type", "scope", "relations", "notes",
+                 "source", "evidence_status", "aliases", "cues", "filled_by"}
+
+        def _fields(keys):
+            return {k for k in keys
+                    if k in FIELD or k.startswith(("type=", "evidence_status=",
+                                                   "source.kind="))}
+
+        ok("★ [命名] 51 改名**只针对派生键**：语料字段键集合前后**逐字相同**",
+           _fields(before) == _fields(after) and len(_fields(before)) > 0,
+           f"字段键 {len(_fields(before))} → {len(_fields(after))}｜"
+           f"被替换 {renamed[0]['替换'] if renamed else '—'}")
+    else:
+        PASS.append("★ [命名] ㊿/51 改名（**跳过**：本语料没有已采用的单谓词）")
+
+    # ── 52 真的没有的项 ⇒ 记「未生效」+ 缺项（**不静默**） ────────────────
+    n3 = copy.deepcopy(nodes)
+    led3: dict = {}
+    t3 = PR.apply_basic(n3, edges, [{"名": "瞎写", "定义": ["根本不存在的谓词"]}],
+                        allp, led3)
+    bad = led3.get("未生效", [])
+    ok("★ [命名] 52 引用**不存在的项** ⇒ 记「未生效」+ 缺项，**不静默**",
+       t3 == 0 and bool(bad) and bad[0]["缺项"] == ["根本不存在的谓词"],
+       f"加键 {t3} 项｜未生效 {bad[0] if bad else '（空）'}")
+
+
+
 def test_approved_loop() -> None:
     """★ 反思层闭环：`directions.json` 的 `已批准` **真的被用上**（2026-10-19）。
 
@@ -8283,6 +8371,7 @@ def main() -> int:
                test_tree_snapshot,
                test_session,
                test_combine_budget,
+               test_predicate_naming,
                test_leaf_cap_requests,
                test_candidate_dimensions,
                test_loader_sharded,

@@ -147,7 +147,10 @@ def load(predicates: bool = False, indexed: bool = False) -> tuple[dict[str, Nod
         #   与自动名**并存**（两个键都加上去，不是替换）。
         basic = load_basic(root.parent)
         if basic:
-            apply_basic(nodes, edges, basic, used)
+            # ⚠️ 传 **used + dropped**（预算内 + 预算外）—— 预算管的是「自动选谁」，
+            #    不是「人能声明什么」。只传 `used` 会让「引用预算外的谓词」**静默跳过**
+            #    （实测：加键 0 项、无任何提示）。
+            apply_basic(nodes, edges, basic, list(used) + list(_dropped))
     return nodes, edges, dangling
 
 

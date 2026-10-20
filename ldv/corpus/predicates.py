@@ -533,29 +533,59 @@ def load_basic(corpus_dir: Path) -> list[dict[str, Any]]:
 
 def apply_basic(nodes: dict[str, Any], edges: dict[str, frozenset[str]],
                 basic: Sequence[dict[str, Any]],
-                preds: Sequence[Predicate]) -> int:
+                preds: Sequence[Predicate],
+                ledger: dict[str, Any] | None = None) -> int:
     """把**基础谓词**作为键追加进 `Node.keys`（**就地**）。
 
     基础谓词 = 人起的名字 + 合取定义（`["出度档>2", "入度档>5"]`）。
     ⇒ 节点满足**定义里所有项** ⇒ 加键 `名`。
 
-    ⚠️ 只有**人命名过**的才进划分 —— 未命名的组合谓词只躺在 `待命名` 段里。
+    ## ★★ 三件 2026-10-20 修的事
+
+    **① 解析范围 = 所有推导出来的谓词，不只是预算内那 3 个。**
+      之前只传 `used` ⇒ 人想用一个**预算外**的谓词（它推导出来了、只是没进 top-3）
+      就查不到 ⇒ **静默跳过**（实测：加键 0 项、无任何提示）。
+      ⇒ 调用方要传 `used + dropped`。预算管的是「自动选谁」，**不是**「人能声明什么」。
+
+    **② 改名不是新增维度。**
+      若 `名` 的满足集与某个**已有派生键**完全相同 ⇒ 那是**改名**：
+      删旧键、加新名。实测（默认 36 项）：同扩展改名后**树形逐字相同**（41 方向、
+      成员分布、父子关系全同）—— 所以改名**不需要重构**，但**不能让同一个划分算两次**。
+
+    **③ 不静默。** 跳过/改名都写进 `ledger`（调用方可以并进自己的账本）。
     """
     if not basic:
         return 0
-    # 项 → (量, 阈值)（从已采用的单谓词里查）
+    # 项 → (量, 阈值)：**所有**推导出来的谓词（预算内 + 预算外）
     spec = {p.谓词: (p.量, p.阈值) for p in preds}
     vals = {w: measure(nodes, edges, w) for w in {v[0] for v in spec.values()}}
+    applied: set[str] = set()           # 本次已加的名字（第二条起可被改名覆盖）
     touched = 0
     for b in basic:
         name = str(b["名"])
         terms = [str(t) for t in b["定义"]]
         missing = [t for t in terms if t not in spec]
-        if missing:                     # 定义里引用了不存在的谓词 ⇒ 跳过（不静默造键）
+        if missing:                     # 真的没推导出来 ⇒ 跳过，但**要报**
+            if ledger is not None:
+                ledger.setdefault("未生效", []).append({
+                    "名": name, "缺项": missing,
+                    "原因": ("定义里的项**没有推导出来**（不是预算问题 —— 预算外的项也能用；"
+                             "这是材料里没有这个量/档）")})
             continue
         hit = {nid for nid in nodes
                if all(vals[spec[t][0]][nid] > spec[t][1] for t in terms)}
-        for nid in hit:
-            nodes[nid].keys = frozenset(set(nodes[nid].keys) | {name})
-            touched += 1
+        # ★ 查重：同扩展的**派生键** ⇒ 这是改名
+        rename_from = [k for k in (set(spec) | applied)
+                       if k != name
+                       and {nid for nid in nodes if k in nodes[nid].keys} == hit]
+        for nid in nodes:
+            keys = set(nodes[nid].keys) - set(rename_from)
+            if nid in hit:
+                keys.add(name)
+            nodes[nid].keys = frozenset(keys)
+        applied.add(name)
+        applied -= set(rename_from)
+        if rename_from and ledger is not None:
+            ledger.setdefault("改名", []).append({"名": name, "替换": rename_from})
+        touched += len(hit)
     return touched
