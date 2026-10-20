@@ -230,7 +230,9 @@ def derive_buffered(nodes: dict[str, Any], edges: dict[str, frozenset[str]],
 class Combination:
     """一个**组合谓词**（若干单谓词的合取）。
 
-    ⚠️ 它**不进划分** —— 只进「待命名」（复杂度 > K）或「组合候选」（≤ K）。
+    ⚠️ **2026-10-20 起它进划分**（用户拍板：共用预算）。`复杂度 <= K` 的组合
+       与单谓词一起按区分度排序、抢同一份预算；`复杂度 > K` 的进「待命名」
+       （**提示**，不阻塞 —— 人想改名再改，键名默认就是表达式）。
        进划分的只有单谓词（预算内）与**人命名后的基础谓词**。
        理由：预算 N 管的是「进划分的谓词数」；组合也进划分会让预算失控，
        而且会加剧细化（用户 2026-10-17 明确担心过）。
@@ -259,8 +261,8 @@ def combine(nodes: dict[str, Any], edges: dict[str, frozenset[str]],
                                             list[dict[str, Any]]]:
     """从**已采用的单谓词**做合取，返回 `(待命名, 组合候选, 拒收)`。
 
-    - **待命名**：`复杂度 > k`（3 项及以上）—— 报给人命名
-    - **组合候选**：`复杂度 <= k` —— 可读、不需要命名（**仍不进划分**）
+    - **待命名**：`复杂度 > k`（3 项及以上）—— 报给人**提示**（不阻塞）
+    - **组合候选**：`复杂度 <= k` —— 可读、不需要命名（**进划分，与单谓词抢预算**）
     - **拒收**：切不开的（满足数 0 或 = 总数）—— 与单谓词同一条判据
 
     ⚠️ 组合只从 `used`（采用的）里取 —— 不从被拒的里取（那些本身就切不开）。
@@ -304,6 +306,68 @@ def combine(nodes: dict[str, Any], edges: dict[str, frozenset[str]],
             else:
                 candidates.append(c)
     return to_name, candidates, rejected
+
+
+def choose_partition(used: Sequence[Predicate],
+                     combos: Sequence[Combination],
+                     budget: int = BUDGET
+                     ) -> tuple[list[Predicate], list[Combination], list[Any]]:
+    """从「单谓词 + 组合谓词」里挑**进划分**的那几个 —— **共用预算**（2026-10-20）。
+
+    规则只有一条：**按区分度降序取前 `budget` 个**（同分按谓词名，保证可复现）。
+
+    ⚠️ 「共用」的含义是**竞争**，不是各给一份：
+       组合赢了就**顶掉**一个单谓词 ⇒ 进划分的**总数恒 ≤ budget**。
+       （实测：mini / bitcoin 上组合赢；默认 / pypi / wiki 上输。）
+    ⚠️ 区分度**只用于排序**，不用于判断好坏（`docs/评估标准.md` 的「不作分」）。
+    """
+    pool: list[tuple[float, int, str, Any]] = (
+        [(p.区分度, 0, p.谓词, p) for p in used]
+        + [(c.区分度, 1, c.谓词, c) for c in combos])
+    pool.sort(key=lambda x: (-x[0], x[2]))
+    chosen = pool[:max(0, budget)]
+    singles = [x for _d, k, _s, x in chosen if k == 0]
+    picked = [x for _d, k, _s, x in chosen if k == 1]
+    return singles, picked, [x for _d, _k, _s, x in pool[max(0, budget):]]
+
+
+def apply_combinations(nodes: dict[str, Any], edges: dict[str, frozenset[str]],
+                       combos: Sequence[Combination],
+                       singles: Sequence[Predicate]) -> int:
+    """把**组合谓词**追加进 `keys`（键名 = 合取表达式）—— 2026-10-20。
+
+    ## 为什么键名就是表达式
+
+    键必须是**字符串**，而组合谓词要进划分就得有个表示。合取表达式本身就是
+    可读的（`出度档>2 ∧ 入度档>5`）⇒ **自动命名**，人想改成「活跃作者」再改，
+    **不阻塞**。这是用户 2026-10-20 的裁定：验证过就该能用，不等命名。
+
+    ## 与 `apply_to_nodes` 的关系
+
+    同一个量只算一次（`measure` 会遍历全图）；组合的满足集 = 各项满足集的**交集**，
+    复用同一份 `vals` ⇒ 不额外遍历。
+
+    ⚠️ `singles` 传**全部已采用的单谓词**（`used`），不是「进了预算的那几个」——
+       组合的项可能引用没进预算的单谓词（它仍是组合的一项）。
+    """
+    if not combos:
+        return 0
+    vals = {w: measure(nodes, edges, w) for w in {p.量 for p in singles}}
+    sat = {p.谓词: {nid for nid in nodes if vals[p.量][nid] > p.阈值}
+           for p in singles}
+    touched = 0
+    for c in combos:
+        if not c.项:
+            continue
+        try:
+            hit = set.intersection(*[sat[term] for term in c.项])
+        except KeyError:
+            continue                      # 项不在 `singles` 里 ⇒ 跳过（不猜）
+        for nid in hit:
+            node = nodes[nid]
+            node.keys = frozenset(set(node.keys) | {c.谓词})
+            touched += 1
+    return touched
 
 
 def apply_to_nodes(nodes: dict[str, Any], edges: dict[str, frozenset[str]],

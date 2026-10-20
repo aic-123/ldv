@@ -119,13 +119,32 @@ def load(predicates: bool = False, indexed: bool = False) -> tuple[dict[str, Nod
         nodes = load_nodes(root)
     edges, dangling = load_edges(nodes)
     if predicates:
-        from ..corpus.predicates import (apply_basic, apply_to_nodes, derive,
+        from ..corpus.predicates import (COMPLEXITY_K, apply_basic,
+                                         apply_combinations, apply_to_nodes,
+                                         choose_partition, combine, derive,
                                          load_basic, load_rules)
         rules, budget = load_rules(root.parent)
         used, _dropped, _params = derive(nodes, edges, rules, budget)
-        apply_to_nodes(nodes, edges, used)
-        # ★ **人命名**的基础谓词（`基础谓词` 段）—— 只有命名过的才进划分。
-        #   未命名的组合谓词躺在 `待命名` 段里，**不进结构**。
+
+        # ★★ **组合谓词共用预算**（2026-10-20 用户拍板：「共用预算，可以」）
+        #
+        #   在这之前 `combine()` **只在测试里被调用** —— 生产路径一次都没算过，
+        #   所以「组合谓词」在 CLI 里等于不存在（不是「被挡下」，是「没算」）。
+        #
+        #   现在的口径：单谓词与「复杂度 ≤ K 的组合」一起按**区分度**排序，
+        #   抢**同一份**预算 N（不是各给一份，也不绕过）。
+        #   实测 5 份语料：mini（0.492）与 bitcoin（0.472）上组合**真的赢**，
+        #   默认/pypi/wiki 上输给单谓词 —— 是竞争，不是摆设。
+        #
+        #   ⚠️ `复杂度 > K` 的进「待命名」——**提示，不阻塞**：键名默认就是合取
+        #      表达式（可读），人想改成「活跃作者」再改，不挡路。
+        _to_name, _cands, _crej = combine(nodes, edges, used, COMPLEXITY_K)
+        _singles, _combos, _out = choose_partition(used, _cands, budget)
+        apply_to_nodes(nodes, edges, _singles)
+        apply_combinations(nodes, edges, _combos, used)
+
+        # ★ **人命名**的基础谓词（`基础谓词` 段）—— 人给组合起的名字，
+        #   与自动名**并存**（两个键都加上去，不是替换）。
         basic = load_basic(root.parent)
         if basic:
             apply_basic(nodes, edges, basic, used)

@@ -5168,6 +5168,84 @@ def test_session() -> None:
 
 
 
+def test_combine_budget() -> None:
+    """★ 组合谓词**共用预算**并进划分（`corpus/predicates`，2026-10-20）。
+
+    在这之前 `combine()` **只在测试里被调用** —— 生产路径一次都没算过，
+    所以「组合谓词」在 CLI 里等于不存在（不是「被挡下」，是「没算」）。
+
+    用户 2026-10-20 的裁定：
+      「组合谓词经过验证以后应该可以使用，而不是等命名后才可使用」
+      「共用预算，可以」
+
+    ⇒ 口径：单谓词与「复杂度 ≤ K 的组合」一起按区分度排序，抢**同一份** N；
+      键名默认就是**合取表达式**（自动命名），`待命名` 只是**提示**，不阻塞。
+
+    ⚠️ 「共用」是**竞争**：组合赢了就顶掉一个单谓词 ⇒ 进划分的总数恒 ≤ N。
+       实测（5 份语料）：mini 0.492 / bitcoin 0.472 上组合赢，其余输。
+    """
+    from ldv.checks._fixtures import load as _load
+    from ldv.corpus import predicates as PR
+    from ldv.corpus.loader import load_edges, load_nodes
+    from ldv.checks._fixtures import find_corpus
+
+    root = find_corpus()
+    assert root is not None
+    nodes = load_nodes(root)
+    edges, _d = load_edges(nodes)
+    rules, budget = PR.load_rules(root.parent)
+    used, _dropped, _p = PR.derive(nodes, edges, rules, budget)
+    to_name, cands, _rej = PR.combine(nodes, edges, used, PR.COMPLEXITY_K)
+
+    # ── ㊷ **共用预算**：进划分的总数恒 ≤ N（不是各给一份） ──────────────
+    for b in (0, 1, 2, budget, budget + 2):
+        s, c, out = PR.choose_partition(used, cands, b)
+        assert len(s) + len(c) == min(b, len(used) + len(cands)), (b, len(s), len(c))
+    s3, c3, out3 = PR.choose_partition(used, cands, budget)
+    ok("★ [组合预算] ㊷ **共用预算**：进划分总数 = min(N, 候选数)，不是各给一份",
+       len(s3) + len(c3) == min(budget, len(used) + len(cands))
+       and len(out3) == max(0, len(used) + len(cands) - budget),
+       f"N={budget}｜单 {len(s3)} + 组合 {len(c3)} = {len(s3) + len(c3)}"
+       f"｜超预算 {len(out3)}")
+
+    # ── ㊸ 组合**顶掉**单谓词：N 不变，成分可以变 ────────────────────────
+    s_wide, c_wide, _o = PR.choose_partition(used, cands, budget + 1)
+    ok("★ [组合预算] ㊸ 组合赢了就**顶掉**一个单谓词（N 不变、成分可变）",
+       len(s_wide) + len(c_wide) == budget + 1
+       and len(c_wide) >= len(c3),
+       f"N={budget}: 单 {len(s3)}/组 {len(c3)} ⇒ N={budget + 1}: "
+       f"单 {len(s_wide)}/组 {len(c_wide)}")
+
+    # ── ㊹ 自动命名 = 合取表达式，且**只给交集**加键 ────────────────────
+    if cands:
+        import copy
+        n2 = copy.deepcopy(nodes)
+        PR.apply_to_nodes(n2, edges, used)
+        one = cands[0]
+        touched = PR.apply_combinations(n2, edges, [one], used)
+        want = " ∧ ".join(one.项)
+        hit = [nid for nid, nd in n2.items() if want in nd.keys]
+        ok("★ [组合预算] ㊹ 自动命名 = 合取表达式，且**只给交集**加键",
+           want == one.谓词 and len(hit) == touched == one.满足数 and touched > 0,
+           f"键名「{want[:26]}」｜加键 {touched} 项｜满足数 {one.满足数}")
+    else:
+        PASS.append("★ [组合预算] ㊹ 自动命名（**跳过**：本语料没有组合候选）")
+
+    # ── ㊺ `待命名`（复杂度 > K）**不阻塞**：不进键集，但被报出来 ────────
+    tn1, _c1, _r1 = PR.combine(nodes, edges, used, k=1)   # k=1 ⇒ 2 项也进待命名
+    names = {x.谓词 for x in tn1}
+    keys = {k for nd in nodes.values() for k in nd.keys}
+    ok("★ [组合预算] ㊺ `待命名` 只是**提示**：不进键集，但被报出来",
+       (not names) or (names & keys) == set(),
+       f"待命名 {len(names)} 个｜与键集相交 {len(names & keys)} 个")
+
+    # ── 读数：组合进划分后结构**未必变**（强相关 ⇒ 退化成单项） ─────────
+    print(f"    · 组合读数：候选 {len(cands)} 个｜进预算 {len(c3)} 个｜"
+          f"待命名(K={PR.COMPLEXITY_K}) {len(to_name)} 个；"
+          f"⚠️ 组合的两项若强相关，切分与单项等价 ⇒ **方向数/叶容量可能不变**")
+
+
+
 def test_approved_loop() -> None:
     """★ 反思层闭环：`directions.json` 的 `已批准` **真的被用上**（2026-10-19）。
 
@@ -8177,6 +8255,7 @@ def main() -> int:
                test_contra_merged,
                test_tree_snapshot,
                test_session,
+               test_combine_budget,
                test_leaf_cap_requests,
                test_candidate_dimensions,
                test_loader_sharded,
