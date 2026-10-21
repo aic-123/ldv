@@ -2,7 +2,7 @@
 
 > 仓库里每一处「实测 / 留档」的引用都指向这里的文件。**不是宣称，是实体。**
 
-共 **143** 个文件。下表按文件名排；「被谁引用」是仓库内引用它的文档。
+共 **149** 个文件。下表按文件名排；「被谁引用」是仓库内引用它的文档。
 
 | 文件 | 大小 | 被谁引用 |
 |---|---|---|
@@ -10,6 +10,8 @@
 | `_b19_depth_fullscale.txt` | 3 KB | docs/分层方向视图-设计文档.md、ldv/MEASUREMENTS.md |
 | `_d2_four_measured.txt` | 4 KB | ldv/MEASUREMENTS.md |
 | `_diag_hold_handle.py` | 2 KB | docs/并发接口设计.md |
+| `_dialogue_two_ldv.py` | 6 KB | README.md、docs/服务化设计.md |
+| `_e2e_exchange_staging.py` | 4 KB | docs/服务化设计.md |
 | `_findings_real_data.md` | 24 KB | docs/外生声明标准.md |
 | `_freeze_b18_full.txt` | 1 KB | docs/分层方向视图-设计文档.md、ldv/MEASUREMENTS.md |
 | `_inj_2026-10-15.txt` | 3 KB | docs/评估报告.md |
@@ -53,7 +55,7 @@
 | `_probe_b20_false_red.out.txt` | 31 KB | docs/分层方向视图-设计文档.md |
 | `_probe_b3_layers.py` | 6 KB | ldv/MEASUREMENTS.md |
 | `_probe_blind_spot.py` | 3 KB | docs/分层方向视图-多层抽象-前作核验.md |
-| `_probe_block_prune_soundness.py` | 3 KB | docs/分层方向视图-检索器层.md |
+| `_probe_block_prune_soundness.py` | 3 KB | docs/分层方向视图-检索器层.md、docs/形式化断言集.md |
 | `_probe_block_span_seq.py` | 3 KB | docs/分层方向视图-检索器层.md |
 | `_probe_buffer_real.out.txt` | 2 KB | docs/谓词推导与反思层.md |
 | `_probe_buffer_real.py` | 9 KB | docs/谓词推导与反思层.md |
@@ -117,6 +119,7 @@
 | `_probe_service_shell.out.txt` | 1 KB | docs/服务化设计.md |
 | `_probe_service_shell.py` | 7 KB | docs/服务化设计.md |
 | `_probe_skip_solvable.out.txt` | 3 KB | docs/分层方向视图-抽象层.md |
+| `_probe_t1_falsifiability.py` | 2 KB | docs/形式化断言集.md |
 | `_probe_view_growth.py` | 2 KB | docs/分层方向视图-多层抽象-前作核验.md、ldv/MEASUREMENTS.md |
 | `_probe_view_size.out.txt` | 1 KB | ldv/MEASUREMENTS.md |
 | `_probe_view_size.py` | 4 KB | docs/分层方向视图-抽象层.md、ldv/MEASUREMENTS.md |
@@ -129,6 +132,9 @@
 | `_rc_ghlangs_before.txt` | 1 KB | docs/分层方向视图-设计文档.md |
 | `_rc_ghlangs_findings.txt` | 32 KB | docs/分层方向视图-设计文档.md |
 | `_rc_small_noprobe.txt` | 14 KB | ldv/MEASUREMENTS.md |
+| `_realq_two_ldv.before.txt` | 17 KB | docs/服务化设计.md |
+| `_realq_two_ldv.out.txt` | 16 KB | docs/服务化设计.md |
+| `_realq_two_ldv.py` | 25 KB | docs/服务化设计.md |
 | `_rt_2026-10-15.txt` | 6 KB | docs/评估报告.md |
 | `_runchecks_openalex_seq_a4fix.out.txt` | 20 KB | docs/它是怎么长出来的.md |
 | `_scan_dead_stores.py` | 7 KB | ldv/MEASUREMENTS.md |

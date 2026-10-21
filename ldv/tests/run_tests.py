@@ -4803,6 +4803,72 @@ def test_protocol() -> None:
        f"键 `{probe}`｜A→B {ra['payload'].get('n_answer')} 项｜"
        f"B→A {rb['payload'].get('n_answer')} 项｜相同 {same_ans}")
 
+    # ── 71 真实问题形状过协议（2026-10-21 验收补的 CI 侧） ─────────
+    #    验收脚本 evidence/_realq_two_ldv.py 用**外部语料** ⇒ 进不了 CI；
+    #    同形状在这里用内置语料守：真实问题从不是单键 ⇒ 多键 require，
+    #    外加回声 / 自检 / 与本端逐字相同三件。
+    import itertools as _it
+    A3 = E.App(None)
+    B3 = E.App(None)
+    ks3 = sorted(k for k in A3.all_keys if "=" in k)
+    two = next((a, b) for a, b in _it.combinations(ks3, 2)
+               if B3.answer_set(frozenset([a, b]), frozenset()))
+    q3 = PRT.build_query(list(two), [], frm=A3.who(), fp=A3.fingerprint())
+    r3 = B3.msg(q3)
+    v3_ok, _ = PRT.verify_result(r3)
+    loc3 = B3.query({"require": list(two)})
+    ok("★ [协议] 71 真实问题形状过协议：多键 QUERY ⇒ RESULT 自检过、回声原查询、答案逐字相同",
+       r3.get("type") == PRT.MSG_RESULT and v3_ok
+       and r3["payload"]["answer_ids"] == loc3["answer_ids"]
+       and r3["payload"]["query"] == {"require": list(two), "forbid": []},
+       f"require {list(two)}｜答案 {r3['payload']['n_answer']} 项｜"
+       f"{len(r3['payload']['nodes'])} 支｜自检 {v3_ok}")
+
+    # ── 72 RESULT 的 from/fp 必须是**回答方**的 ────────────────────
+    #    ★ 2026-10-21 真实问题验收抓到的真 bug（留档：
+    #      evidence/_realq_two_ldv.before.txt，修前 8/8 全红）：
+    #      第一版 build_result 从 query_msg 拷贝 from/fp ⇒ 结构不同的两个
+    #      系统之间，RESULT 自称来自**提问方**的结构 —— fp 从票据变成误导。
+    #      **同结构时两边指纹相同 ⇒ 66/70 看不见它** ⇒ 这条必须两个结构。
+    #      （反向对照不做在判据里 —— 回退真源码跑一遍太重；
+    #        before.txt 就是那份反向证据：同一批消息，修前全红。）
+    import os as _os
+    import tempfile as _tf2
+    _tmp2 = Path(_tf2.mkdtemp())
+    _restored = True
+    r4: dict = {}
+    try:
+        c2 = _tmp2 / "corpus"
+        (c2 / "nodes").mkdir(parents=True)
+        for i in (1, 2):
+            (c2 / "nodes" / f"m{i}.md").write_text(
+                '---\nid: "m%d"\ntype: 概念\ntitle: "另一结构%d"\n---\n\n正文%d\n'
+                % (i, i, i), encoding="utf-8")
+        A4 = E.App(None)                    # 先建内置（36 项）—— 顺序不能反
+        _saved = _os.environ.get("LDV_CORPUS")
+        try:
+            B4 = E.App(str(c2 / "nodes"))   # 再建另一份结构（2 项，不同指纹）
+            q4 = PRT.build_query(["type=概念"], [], frm=A4.who(), fp=A4.fingerprint())
+            r4 = B4.msg(q4)
+            who_ok = (r4.get("from") == B4.who()
+                      and r4.get("fp") == B4.fingerprint()
+                      and B4.fingerprint() != A4.fingerprint()
+                      and r4["payload"]["answer_ids"]
+                      == B4.query({"require": ["type=概念"]})["answer_ids"])
+        finally:
+            if _saved is None:
+                _os.environ.pop("LDV_CORPUS", None)
+            else:
+                _os.environ["LDV_CORPUS"] = _saved
+            _restored = _os.environ.get("LDV_CORPUS") == _saved
+        ok("★ [协议] 72 RESULT 的 from/fp 必须是**回答方**的（跨结构；修前 8/8 全红）",
+           bool(who_ok) and _restored,
+           f"RESULT from={r4.get('from')} fp={r4.get('fp')}"
+           f"｜回答方 {B4.who()} fp={B4.fingerprint()}"
+           f"｜提问方 fp={A4.fingerprint()}｜环境已恢复 {_restored}")
+    finally:
+        shutil.rmtree(_tmp2, ignore_errors=True)
+
 
 def test_exchange_staging() -> None:
     """★ 一次交流记录 → 缓冲区里的**一次性树**（2026-10-21）。
@@ -5870,6 +5936,25 @@ def test_entry() -> None:
     ok("★ [入口] 56 示例里的键必须**真实存在**（不许给一个查不到的例子）",
        len(ex) >= 2 and not fake,
        f"{len(ex)} 条｜假键 {fake or '无'}")
+
+    # ── 57 零结果松弛（2026-10-21 真实问题验收补的洞） ─────────────
+    #    ⚠️ 这条路径此前**没有判据**：「键拼错」与「键都对但组合为空」
+    #       是两条不同的退化，一条也不许静默（54 管前者，这条管后者）。
+    #       内置语料上穷举二元组找**第一个**空组合（语料固定 ⇒ 确定性）。
+    empty_pair = None
+    for a, b in itertools.combinations(keys, 2):
+        if not app.answer_set(frozenset([a, b]), frozenset()):
+            empty_pair = (a, b)
+            break
+    r = app.query({"require": list(empty_pair)})
+    rl = r.get("relax") or []
+    replay = [len(app.answer_set(frozenset(empty_pair) - {x["drop"]}, frozenset()))
+              for x in rl]
+    ok("★ [入口] 57 零结果松弛：键都对但组合为空 ⇒ 0 项 + 松弛建议，且逐条复算为真",
+       r.get("ok") is True and r.get("n_answer") == 0 and bool(rl)
+       and replay == [x["n_answer"] for x in rl] and all(n > 0 for n in replay),
+       f"空组合 {list(empty_pair)}｜松弛 {[(x['drop'], x['n_answer']) for x in rl]}"
+       f"｜本地复算 {replay}")
 
 def test_quotes_evidence() -> None:
     """★ 引文核对记录与文档**逐条对齐**（`tools/quote_index.py`，2026-10-20）。

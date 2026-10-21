@@ -1,0 +1,172 @@
+
+============================================================================
+阶段 0｜构建两个 ldv（两个各自独立的系统，不共享词汇、不共享结构）
+============================================================================
+  A 就绪｜ext-wiki-vote｜7115 项｜边 103689｜20 键｜派生 {'influence': '7115 项（influence.json）'}｜建树 5.5s（本阶段耗时 5.6s）
+    who=ext-wiki-vote@ldv-entry｜fp=648a63fa7ba50ccf
+    树：{'方向数': 61, '层数': 8, '最大叶': 1888}
+    [evidence_status=] 4 个可筛值｜evidence_status=入度0(4734) evidence_status=入度11-100(1730) evidence_status=入度1-10(475) evidence_status=入度101-1000(176)
+    [influence=] 4 个可筛值｜influence=≥100(3771) influence=10-99(2256) influence=0(1005) influence=1-9(83)
+    [type=] 5 个可筛值｜type=出度1-3(3487) type=出度4-15(1328) type=出度0(1005) type=出度16-63(868) type=出度64+(427)
+    （恒定键 7 个已从 facet 剔除 —— 对全部项成立的键不是维度）
+  B 就绪｜openalex-citations｜3907 项｜边 24156｜37 键｜建树 4.9s（本阶段耗时 5.0s）
+    who=openalex-citations@ldv-entry｜fp=8d21371c921ce736
+    树：{'方向数': 79, '层数': 16, '最大叶': 3291}
+    [evidence_status=] 3 个可筛值｜evidence_status=同行评审(3735) evidence_status=仓储(124) evidence_status=未知(48)
+    [source.kind=] 6 个可筛值｜source.kind=journal(3630) source.kind=repository(102) source.kind=conference(85) source.kind=无出处(48) source.kind=ebook platform(22) source.kind=book series(20)
+    [type=] 19 个可筛值｜type=article(3331) type=review(319) type=conference-paper(135) type=preprint(60) type=book-chapter(15) type=book(14) type=reference-entry(7) type=editorial(6) …
+    （恒定键 9 个已从 facet 剔除）
+  ⇒ 两个系统的词汇表、结构、指纹全都不同 —— 这正是要测的形状。
+
+============================================================================
+阶段 1｜真实问题 → 人类接口（文件层直跑 App.query）
+============================================================================
+  性质判据：切分不重不漏（Σ各支含答案 == 答案总数）· 支数不虚报（n_branches == len(nodes)）· 每支指得到节点（有 did/rank）
+  「这个投票网络里，谁的意见有真正的影响力？」
+    映射：必须含 ['influence=≥100']｜不含 []（**这步映射在系统外**，见脚本头部老实话 1）
+    ⇒ 答案 3771 项｜16 支｜停法 split｜路径 （根就是这）｜4.51 ms
+        D44 第5层｜这一带 1222 项｜含答案 1222｜精确 1.0｜覆盖 0.324｜往下 0 个方向
+        D56 第6层｜这一带 88 项｜含答案 88｜精确 1.0｜覆盖 0.023｜往下 0 个方向
+        D49 第7层｜这一带 19 项｜含答案 19｜精确 1.0｜覆盖 0.005｜往下 0 个方向
+        D48 第6层｜这一带 1 项｜含答案 1｜精确 1.0｜覆盖 0.0｜往下 0 个方向
+        D22 第5层｜这一带 834 项｜含答案 834｜精确 1.0｜覆盖 0.221｜往下 0 个方向
+        D15 第6层｜这一带 441 项｜含答案 441｜精确 1.0｜覆盖 0.117｜往下 0 个方向
+        …另 10 支（接口不截断，界面才截）
+  「有哪些人只投票、从没被任何人投票过？」
+    映射：必须含 ['evidence_status=入度0', 'type=出度1-3']｜不含 []（**这步映射在系统外**，见脚本头部老实话 1）
+    ⇒ 答案 3191 项｜3 支｜停法 split｜路径 D0｜3.25 ms
+        D27 第4层｜这一带 1888 项｜含答案 1888｜精确 1.0｜覆盖 0.592｜往下 0 个方向
+        D43 第5层｜这一带 81 项｜含答案 81｜精确 1.0｜覆盖 0.025｜往下 0 个方向
+        D44 第5层｜这一带 1222 项｜含答案 1222｜精确 1.0｜覆盖 0.383｜往下 0 个方向
+  「被很多人投票、但自己从不投票的人是谁？」
+    映射：必须含 ['evidence_status=入度101-1000', 'type=出度0']｜不含 []（**这步映射在系统外**，见脚本头部老实话 1）
+    ⇒ 答案 40 项｜1 支｜停法 leaf｜路径 D0 → D2 → D4 → D6 → D34｜1.13 ms
+        D54 第6层｜这一带 40 项｜含答案 40｜精确 1.0｜覆盖 1.0｜往下 0 个方向
+  「我只要同行评审的期刊论文，别的都不要。」
+    映射：必须含 ['evidence_status=同行评审', 'source.kind=journal']｜不含 []（**这步映射在系统外**，见脚本头部老实话 1）
+    ⇒ 答案 3630 项｜13 支｜停法 split｜路径 （根就是这）｜2.23 ms
+        D3 第3层｜这一带 3291 项｜含答案 3291｜精确 1.0｜覆盖 0.907｜往下 0 个方向
+        D17 第4层｜这一带 316 项｜含答案 316｜精确 1.0｜覆盖 0.087｜往下 0 个方向
+        D53 第7层｜这一带 6 项｜含答案 6｜精确 1.0｜覆盖 0.002｜往下 0 个方向
+        D55 第8层｜这一带 5 项｜含答案 5｜精确 1.0｜覆盖 0.001｜往下 0 个方向
+        D57 第9层｜这一带 2 项｜含答案 2｜精确 1.0｜覆盖 0.001｜往下 0 个方向
+        D59 第10层｜这一带 2 项｜含答案 2｜精确 1.0｜覆盖 0.001｜往下 0 个方向
+        …另 7 支（接口不截断，界面才截）
+  「会议论文都在哪一带？」
+    映射：必须含 ['type=conference-paper']｜不含 []（**这步映射在系统外**，见脚本头部老实话 1）
+    ⇒ 答案 135 项｜5 支｜停法 split｜路径 D0 → D2｜0.88 ms
+        D32 第6层｜这一带 83 项｜含答案 83｜精确 1.0｜覆盖 0.615｜往下 0 个方向
+        D63 第12层｜这一带 1 项｜含答案 1｜精确 1.0｜覆盖 0.007｜往下 0 个方向
+        D27 第7层｜这一带 16 项｜含答案 16｜精确 1.0｜覆盖 0.119｜往下 0 个方向
+        D13 第7层｜这一带 3 项｜含答案 3｜精确 1.0｜覆盖 0.022｜往下 0 个方向
+        D21 第6层｜这一带 32 项｜含答案 32｜精确 1.0｜覆盖 0.237｜往下 0 个方向
+  「仓储（机构库）里的预印本有哪些？」
+    映射：必须含 ['evidence_status=仓储', 'type=preprint']｜不含 []（**这步映射在系统外**，见脚本头部老实话 1）
+    ⇒ 答案 58 项｜1 支｜停法 leaf｜路径 D0 → D2 → D6 → D8 → D9｜0.43 ms
+        D11 第6层｜这一带 58 项｜含答案 58｜精确 1.0｜覆盖 1.0｜往下 0 个方向
+  [过] P1-1 六条真实问题全部跑通，且切分不重不漏、可指认
+        6 条｜红 0
+  [红] P1-2 下钻一层（D44）⇒ 子节点各带覆盖率
+        D44 往下 0 个方向｜
+  [过] P1-3 建议是子串匹配：「出度」命中 A 的出度档、「同行评审」命中 B 的证据档
+        A「出度」→ ['type=出度1-3', 'type=出度4-15', 'type=出度0']｜B「同行评审」→ ['evidence_status=同行评审']
+  ⚠️ 老实话：B 上打「期刊」⇒ （空） —— 键是英文（source.kind=journal），中文子串打不出来。建议只补「可能拼错」，不负责「把话说成键」。
+  [过] P1-4 示例按数据形状挑，且键都真实存在
+        3 条｜假键 无
+  [过] P1-5A 拼错的键 ⇒ 拒收并给建议（type=出度1-4）
+        ok=False｜unknown=['type=出度1-4']｜建议 {'type=出度1-4': ['type=出度1-3', 'type=出度16-63', 'type=出度64+']}
+  [过] P1-5B 拼错的键 ⇒ 拒收并给建议（type=journal-article）
+        ok=False｜unknown=['type=journal-article']｜建议 {'type=journal-article': ['type=article', 'type=software', 'type=paratext']}
+  [过] P1-6A 组合为空 ⇒ 0 项 + 松弛建议，且建议逐条复算为真（['influence=0', 'type=出度64+']）
+        n=0｜松弛 [('type=出度64+', 1005, 1005), ('influence=0', 427, 427)]
+  [过] P1-6B 组合为空 ⇒ 0 项 + 松弛建议，且建议逐条复算为真（['source.kind=ebook platform', 'type=editorial']）
+        n=0｜松弛 [('type=editorial', 22, 22), ('source.kind=ebook platform', 6, 6)]
+
+============================================================================
+阶段 2｜真实问题 → 机器接口（ldv-msg/1：A 与 B 对等互问）
+============================================================================
+  消息不带自然语言：QUERY = {require, forbid}（键约束）；RESULT = 对方树上的查询结果 + 原查询回声 + 指纹。
+  文件层 stats：A→B {'in': 4, 'ok': 4, 'rejected': 0}｜B→A {'in': 4, 'ok': 4, 'rejected': 0}
+  逐条（对等：谁都能提问、谁都能回答；没有主从）：
+    [q0001] ext-wiki-vote@ldv-entry → openalex-citations@ldv-entry｜require ['evidence_status=同行评审', 'source.kind=journal']
+         ⇒ 答案 3630 项｜13 支｜verify True｜与本端逐字相同 True｜from/fp 是回答方的 False
+    [q0002] ext-wiki-vote@ldv-entry → openalex-citations@ldv-entry｜require ['type=conference-paper']
+         ⇒ 答案 135 项｜5 支｜verify True｜与本端逐字相同 True｜from/fp 是回答方的 False
+    [q0003] ext-wiki-vote@ldv-entry → openalex-citations@ldv-entry｜require ['evidence_status=仓储', 'type=preprint']
+         ⇒ 答案 58 项｜1 支｜verify True｜与本端逐字相同 True｜from/fp 是回答方的 False
+    [q0007] ext-wiki-vote@ldv-entry → openalex-citations@ldv-entry｜require ['influence=≥100']
+         ⇒ 如实报错：这些键在语料里不存在：`influence=≥100`。可能是拼错了 —— 最近的几个：`influence=≥100`｜verify True｜与本端逐字相同 True｜from/fp 是回答方的 False
+    [q0004] openalex-citations@ldv-entry → ext-wiki-vote@ldv-entry｜require ['influence=≥100']
+         ⇒ 答案 3771 项｜16 支｜verify True｜与本端逐字相同 True｜from/fp 是回答方的 False
+    [q0005] openalex-citations@ldv-entry → ext-wiki-vote@ldv-entry｜require ['evidence_status=入度0', 'type=出度1-3']
+         ⇒ 答案 3191 项｜3 支｜verify True｜与本端逐字相同 True｜from/fp 是回答方的 False
+    [q0006] openalex-citations@ldv-entry → ext-wiki-vote@ldv-entry｜require ['evidence_status=入度101-1000', 'type=出度0']
+         ⇒ 答案 40 项｜1 支｜verify True｜与本端逐字相同 True｜from/fp 是回答方的 False
+    [q0008] openalex-citations@ldv-entry → ext-wiki-vote@ldv-entry｜require ['evidence_status=同行评审']
+         ⇒ 如实报错：这些键在语料里不存在：`evidence_status=同行评审`。可能是拼错了 —— 最近的几个：`evidence_｜verify True｜与本端逐字相同 True｜from/fp 是回答方的 False
+  [过] P2-1 每条 RESULT 都过接收方自检（不依赖发送方诚信）
+        8 条｜红 无
+  [过] P2-2 成功答案与本端 query() 逐字相同（结构可传、可本地复算）
+        红 无
+  [红] P2-3 RESULT 的 from/fp 必须是**回答方**的（结果从哪份结构上跑出来的）
+        红 ['q0001:from=ext-wiki-vote@ldv-entry/fp=648a63fa7ba50ccf 期望 from=openalex-citations@ldv-entry/fp=8d21371c921ce736', 'q0002:from=ext-wiki-vote@ldv-entry/fp=648a63fa7ba50ccf 期望 from=openalex-citations@ldv-entry/fp=8d21371c921ce736', 'q0003:from=ext-wiki-vote@ldv-entry/fp=648a63fa7ba50ccf 期望 from=openalex-citations@ldv-entry/fp=8d21371c921ce736', 'q0007:from=ext-wiki-vote@ldv-entry/fp=648a63fa7ba50ccf 期望 from=openalex-citations@ldv-entry/fp=8d21371c921ce736', 'q0004:from=openalex-citations@ldv-entry/fp=8d21371c921ce736 期望 from=ext-wiki-vote@ldv-entry/fp=648a63fa7ba50ccf', 'q0005:from=openalex-citations@ldv-entry/fp=8d21371c921ce736 期望 from=ext-wiki-vote@ldv-entry/fp=648a63fa7ba50ccf', 'q0006:from=openalex-citations@ldv-entry/fp=8d21371c921ce736 期望 from=ext-wiki-vote@ldv-entry/fp=648a63fa7ba50ccf', 'q0008:from=openalex-citations@ldv-entry/fp=8d21371c921ce736 期望 from=ext-wiki-vote@ldv-entry/fp=648a63fa7ba50ccf']
+  [过] P2-4 A 拿自己的词汇（influence=≥100）问 B ⇒ 如实说词汇不通，不静默 0 条
+        这些键在语料里不存在：`influence=≥100`。可能是拼错了 —— 最近的几个：`influence=≥100` → （没有相近的）
+  HTTP 层（起两个真入口，人类页面与机器接口同一个端口）：
+    两个入口就绪：True
+  [过] P2-5 人类接口的页面在（GET / 200 且是查询页）
+        HTTP 200｜11863 字节｜标题在：True
+  [过] P2-6 机器接口的说明书在（GET /api 自描述：端点 + 协议 + 边界）
+        协议 ldv-msg/1｜8 个端点｜边界 3 条
+  [过] P2-7 HTTP 上也能拿键建议（/api/suggest，子串匹配）
+        「出度」→ ['type=出度1-3', 'type=出度4-15', 'type=出度0']
+  [过] P2-8 HTTP 层与文件层对同一组消息逐字相同（两条传输一个语义）
+        8 条｜红 无
+  [过] P2-9 坏信封（缺 fp）⇒ ERROR 指出缺什么，不静默丢弃
+        type=ERROR｜信封缺必填键：['fp']（缺 `fp` 尤其危险 —— 见 build_result 的说明）
+
+============================================================================
+阶段 3｜交流记录 → 缓冲区一次性树（默认抛弃；抛弃是显式动作）
+============================================================================
+  ingest：{"ok": true, "exchange": "realq-20261021", "目录": "C:\\Users\\19253\\WorkBuddy AI\\2026-10-05-14-16-35\\repo\\_data\\openalex-citations\\_staging\\exchanges\\realq-20261021", "消息": 16, "节点": 16, "撞 id 拒收": [], "树可用": "LDV_CORPUS=C:\\Users\\19253\\WorkBuddy AI\\2026-10-05-14-16-35\\repo\\_data\\openalex-citations\\_staging\\exchanges\\realq-20261021\\nodes", "默认命运": "抛弃（显式 abandon）"}
+  [过] P3-1 一次交流一棵树：一条消息一节点，撞 id 进 rejected（不覆写）
+        消息 16｜节点 16｜撞 id []
+  status：{"ok": true, "一次性树": [{"exchange": "realq-20261021", "节点": 16, "最后 touch": "2026-10-21 21:29"}], "棵": 1, "说明": "只报不淘汰；抛弃 = 显式 abandon（用户裁定）"}
+  一次性树可查：realq-20261021｜16 项｜建核 0.11s
+  [过] P3-2 一次性树按 type= 可筛，且三档计数与消息条数对得上
+        type=QUERY 8/8｜type=RESULT 8/8
+  [过] P3-3 who=/round= 是字段不是键 ⇒ 拒收（想按「谁问的」筛，得 promote 后由人声明维度）
+        这些键在语料里不存在：`who=A`。可能是拼错了 —— 最近的几个：`who=A` → `who`
+  [过] P3-4 正式结构不受影响：load_nodes(<语料>/nodes) 前后一致，无交流 id 漏入
+        正式 3907 项（启动时 3907）｜漏入 无
+  abandon（默认命运，显式动作）：{"ok": true, "抛弃": "realq-20261021", "删掉的节点": 16, "残留": false}
+  [过] P3-5 抛弃 = 删目录无残留；status 只报不淘汰
+        删掉 16 个节点｜残留 False｜status 剩 0 棵
+
+============================================================================
+阶段 4｜判据汇总
+============================================================================
+  [过] P1-1 六条真实问题全部跑通，且切分不重不漏、可指认
+  [红] P1-2 下钻一层（D44）⇒ 子节点各带覆盖率
+  [过] P1-3 建议是子串匹配：「出度」命中 A 的出度档、「同行评审」命中 B 的证据档
+  [过] P1-4 示例按数据形状挑，且键都真实存在
+  [过] P1-5A 拼错的键 ⇒ 拒收并给建议（type=出度1-4）
+  [过] P1-5B 拼错的键 ⇒ 拒收并给建议（type=journal-article）
+  [过] P1-6A 组合为空 ⇒ 0 项 + 松弛建议，且建议逐条复算为真（['influence=0', 'type=出度64+']）
+  [过] P1-6B 组合为空 ⇒ 0 项 + 松弛建议，且建议逐条复算为真（['source.kind=ebook platform', 'type=editorial']）
+  [过] P2-1 每条 RESULT 都过接收方自检（不依赖发送方诚信）
+  [过] P2-2 成功答案与本端 query() 逐字相同（结构可传、可本地复算）
+  [红] P2-3 RESULT 的 from/fp 必须是**回答方**的（结果从哪份结构上跑出来的）
+  [过] P2-4 A 拿自己的词汇（influence=≥100）问 B ⇒ 如实说词汇不通，不静默 0 条
+  [过] P2-5 人类接口的页面在（GET / 200 且是查询页）
+  [过] P2-6 机器接口的说明书在（GET /api 自描述：端点 + 协议 + 边界）
+  [过] P2-7 HTTP 上也能拿键建议（/api/suggest，子串匹配）
+  [过] P2-8 HTTP 层与文件层对同一组消息逐字相同（两条传输一个语义）
+  [过] P2-9 坏信封（缺 fp）⇒ ERROR 指出缺什么，不静默丢弃
+  [过] P3-1 一次交流一棵树：一条消息一节点，撞 id 进 rejected（不覆写）
+  [过] P3-2 一次性树按 type= 可筛，且三档计数与消息条数对得上
+  [过] P3-3 who=/round= 是字段不是键 ⇒ 拒收（想按「谁问的」筛，得 promote 后由人声明维度）
+  [过] P3-4 正式结构不受影响：load_nodes(<语料>/nodes) 前后一致，无交流 id 漏入
+  [过] P3-5 抛弃 = 删目录无残留；status 只报不淘汰
+
+合计 22 条｜过 20｜红 2

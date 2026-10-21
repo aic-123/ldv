@@ -440,7 +440,9 @@ class App:
                 frm=self.who())
         try:
             res = self.query(msg.get("payload") or {})
-            r = PROTO.build_result(msg, res)
+            # ★ from/fp 是**回答方**的（本端）—— 2026-10-21 真实问题验收抓到：
+            #   曾经从 query_msg 拷贝 ⇒ 跨结构时 RESULT 自称来自提问方的结构。
+            r = PROTO.build_result(msg, res, frm=self.who(), fp=self.fingerprint())
             v_ok, v_bad = PROTO.verify_result(r)
             if not v_ok:                      # 自己产出的结果必须过自己的自检
                 return PROTO.error_envelope(f"本端结果自检未过：{v_bad[:2]}", frm=self.who())

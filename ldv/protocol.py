@@ -137,25 +137,25 @@ def build_query(require=(), forbid=(), *, frm: str, fp: str) -> dict:
                     frm=frm, fp=fp)
 
 
-def build_result(query_msg: dict, result: dict) -> dict:
+def build_result(query_msg: dict, result: dict, *, frm: str, fp: str) -> dict:
     """RESULT = 对方树上的一次查询结果 + **原查询回声**。
 
     ⚠️ 回声原查询（`query` 段）是刻意的：**没有它，一条 RESULT 无法自证**
-       —— 接收方不知道这条结果是回答哪条需求的。`fp` 同理：
-       它回答「这是在**哪份结构**上跑出来的」，没有指纹的结果
-       就是「看着都对、其实配错」（`§T2` 那条边界的协议版）。
+       —— 接收方不知道这条结果是回答哪条需求的。
+
+    ★ `frm` / `fp` 必须是**回答方**的（2026-10-21 真实问题验收抓到的真 bug）：
+      第一版从 `query_msg` 拷贝（= 提问方的身份与指纹）⇒ 结构不同的两个
+      系统之间，B 回答 A 的 RESULT 自称 `from=A`、`fp=A 的指纹`，
+      而答案明明是在 **B 的树**上跑出来的 —— 指纹从「票据」变成「误导」
+      （§T2「看着都对、其实配错」的协议版）。
+      **同结构时两边指纹相同 ⇒ 旧判据（66/70，同语料两个实例）看不见它**；
+      跨结构一走协议就现形。
+      语义：`from` = 发送方身份（RESULT 的发送方是回答方）；
+            `fp`   = 「这是在**哪份结构**上跑出来的」（= 回答方的结构）。
     """
     payload = dict(result)
     payload["query"] = query_msg.get("payload") or {}
-    return envelope(MSG_RESULT, payload, frm=frm_of(query_msg), fp=fp_of(query_msg))
-
-
-def frm_of(msg: dict) -> str:
-    return str((msg or {}).get("from") or "")
-
-
-def fp_of(msg: dict) -> str:
-    return str((msg or {}).get("fp") or "")
+    return envelope(MSG_RESULT, payload, frm=str(frm), fp=str(fp))
 
 
 # ── 接收方自检：**不依赖发送方诚信** ────────────────────────────────────────
@@ -229,7 +229,10 @@ def exchange_file(app, inp: Path, outp: Path) -> dict:
         try:
             with _lock:                       # 与 App.query 同一把纪律：串行
                 res = app.query(msg.get("payload") or {})
-            r = build_result(msg, res)
+            # ★ from/fp 是**回答方**的（本端）—— 2026-10-21 验收抓到的 bug：
+            #   曾经从 query_msg 拷贝 ⇒ RESULT 自称来自提问方的结构。
+            #   app 需有 query/who/fingerprint 三样（entry.App）。
+            r = build_result(msg, res, frm=app.who(), fp=app.fingerprint())
             v_ok, v_bad = verify_result(r)
             if not v_ok:                      # 自己产出的结果必须过自己的自检
                 r = error_envelope(f"本端结果自检未过：{v_bad[:2]}")
