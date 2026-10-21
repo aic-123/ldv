@@ -4804,6 +4804,144 @@ def test_protocol() -> None:
        f"B→A {rb['payload'].get('n_answer')} 项｜相同 {same_ans}")
 
 
+def test_exchange_staging() -> None:
+    """★ 一次交流记录 → 缓冲区里的**一次性树**（2026-10-21）。
+
+    用户三句裁定逐条落地：
+      「把一次交换当成完成……记录一次完整的交流」⇒ 记录本身是成果
+      「每段当成一次缓冲区域的新建树，使用完成就可以抛弃」⇒ 一次交流一棵树，默认抛弃
+      「抛弃机制遵守缓冲区域的规则，不去特意设计」⇒ abandoned = 显式删目录；
+          容量只报不淘汰；`evict` 一行不加
+
+    目录形状（与 `_staging/nodes/` 平级，两种默认命运分开）：
+        _staging/nodes/           待提交（默认沉淀，走既有 commit）
+        _staging/exchanges/<id>/   一次交流 = 一棵一次性树（默认抛弃）
+    """
+    import json as _json
+    import shutil as _shutil
+    import tempfile as _tf
+
+    from ldv.corpus.loader import load_nodes
+    from ldv.tools import exchange_staging as XS
+
+    tmp = Path(_tf.mkdtemp())
+    corpus = tmp / "corpus"
+    (corpus / "nodes").mkdir(parents=True)
+    # 两个正式节点（让「隔离」判据有东西可比）
+    for i in (1, 2):
+        (corpus / "nodes" / f"n{i}.md").write_text(
+            '---\nid: "n%d"\ntype: 概念\ntitle: "正式%d"\n---\n\n正文%d\n' % (i, i, i),
+            encoding="utf-8")
+    before = len(load_nodes(corpus))
+
+    # 造一次「交流」：4 条消息（QUERY / RESULT / ERROR），字段从信封数出来
+    msgs = [
+        {"proto": "ldv-msg/1", "type": "QUERY", "from": "A", "fp": "f" * 16,
+         "ts": "t", "mid": "1", "payload": {"require": ["type=概念"], "forbid": []}},
+        {"proto": "ldv-msg/1", "type": "RESULT", "from": "B", "fp": "g" * 16,
+         "ts": "t", "mid": "2", "reply_to": "1",
+         "payload": {"ok": True, "n_answer": 2, "n_branches": 1,
+                     "answer_ids": ["n1", "n2"],
+                     "nodes": [{"did": "D1", "n_answer": 2}]}},
+        {"proto": "ldv-msg/1", "type": "QUERY", "from": "B", "fp": "g" * 16,
+         "ts": "t", "mid": "3", "payload": {"require": ["type=案例"], "forbid": []}},
+        {"proto": "ldv-msg/1", "type": "ERROR", "from": "A", "fp": "f" * 16,
+         "ts": "t", "mid": "4", "reply_to": "3",
+         "payload": {"ok": False, "error": "这些键在语料里不存在：`type=案例`"}},
+    ]
+    ex = tmp / "exchange.jsonl"
+    ex.write_text("\n".join(_json.dumps(m, ensure_ascii=False) for m in msgs) + "\n",
+                  encoding="utf-8")
+    try:
+        # ── ㉟ 往返：N 条消息 ⇒ N 个节点，**内容逐字未改** ──────────────
+        r = XS.ingest(corpus, ex, "x1")
+        nd = Path(r["目录"]) / "nodes"
+        files = sorted(nd.glob("*.md"))
+        ok("★ [缓冲] ㉟ 交流记录 → 一次性树：4 条消息 ⇒ 4 个节点，一条消息一节点",
+           r["ok"] and r["消息"] == 4 and r["节点"] == 4 and len(files) == 4,
+           f"消息 {r['消息']} ⇒ 节点 {r['节点']}｜目录 {nd.name}/")
+
+        # 逐字：节点正文里必须能找到 payload 的原文（防「生成内容」）
+        body = files[1].read_text(encoding="utf-8")
+        ok("★ [缓冲] ㊱ content = 消息原文：节点正文含 payload 的逐字段节选",
+           '"n_answer": 2' in body and '"did": "D1"' in body
+           and "reply_to" in files[1].read_text(encoding="utf-8")
+           and "round: 1" in files[0].read_text(encoding="utf-8"),
+           "payload 原文 JSON 在内，且 round/reply_to 从信封数出来")
+
+        # ── ㊲ 隔离 + 可建核 + 可筛 ────────────────────────────────────
+        # ⚠️ 传 **`nodes/` 子目录**，不传语料根 —— 这是真实调用链的形状
+        #    （`find_corpus` 返回的就是 `<语料>/nodes`）。
+        #    `load_nodes` 用 `rglob`（2026-10-18 为 28 万文件分片改的）⇒
+        #    **传语料根会把 `_staging/` 一起读进来**（且静默！）—— 这不是本工具
+        #    的 bug，是 loader 的既有行为；记在这里，免得下一个人拿根去调。
+        mids = len(load_nodes(corpus / "nodes"))
+        root_reads = len(load_nodes(corpus))
+        ok("★ [缓冲] ㊲ 一次性树不进正式结构：`load_nodes(<语料>/nodes)` 前后逐字相同",
+           mids == before and root_reads == before + 4,
+           f"nodes/ 子目录 {before} ⇒ {mids}（不变）｜语料根 {root_reads}"
+           f"（把 _staging 也读到了 —— 真实链路不传根，见上注）")
+
+        # 把它当语料建核（LDV_CORPUS 指路径 —— find_corpus 支持，实测过）
+        # ★★ 2026-10-21 **判据自己抓到的一次环境污染**：`App(路径)` 会把
+        #    `LDV_CORPUS` 写进 `os.environ`（`App.__init__` 干的事）⇒
+        #    不恢复的话，**本函数之后的所有判据都找不到语料** ⇒
+        #    CorpusError 兜底把它们全记成「跳过」（实测：748 → 660、跳过 12）。
+        #    ⇒ 判据不许改全局状态；改了就恢复，并**验恢复**。
+        import entry as _E
+        _saved = os.environ.get("LDV_CORPUS")
+        _app = _E.App(str(nd))
+        m = _app.meta()
+        q = _app.query({"require": ["type=RESULT"]})
+        ok("★ [缓冲] ㊳ 一次性树可直接当语料建核并查询（`LDV_CORPUS` 指路径）",
+           m["nodes"] == 4 and m["corpus_from"] == "external"
+           and q["n_answer"] == 1 and q["n_branches"] == 1,
+           f"{m['nodes']} 项｜type=RESULT ⇒ {q['n_answer']} 项/{q['n_branches']} 支"
+           f"（4 条消息 = QUERY×2 + RESULT×1 + ERROR×1）")
+
+        # ── ㊴ 边界：front matter 里的 who/round **不是键**（如实记） ────
+        q2 = _app.query({"require": ["who=A"]})
+        # 环境恢复（判据跑完必须把现场还原 —— 与「跑完还原」同一条纪律）
+        if _saved is None:
+            os.environ.pop("LDV_CORPUS", None)
+        else:
+            os.environ["LDV_CORPUS"] = _saved
+        restored = os.environ.get("LDV_CORPUS") == _saved
+        ok("★ [缓冲] ㊴ 边界：who/round 是**字段不是键** ⇒ 按它筛会被拒收（不静默 0）",
+           q2.get("ok") is False and "who=A" in str(q2.get("error", "")) and restored,
+           f"可筛维度只有 {sorted(k for k in _app.all_keys if '=' in k)}"
+           f"｜LDV_CORPUS 已恢复 = {restored}")
+
+        # ── ㊵ promote 走既有 commit；abandon 无残留 ───────────────────
+        p = XS.promote(corpus, "x1")
+        from ldv.tools import staging as _ST
+        c = _ST.commit(corpus)
+        after = len(load_nodes(corpus))
+        ok("★ [缓冲] ㊵ promote ⇒ 移进 `_staging/nodes/` ⇒ 既有 commit 判据收",
+           p["移进暂存"] == 4 and len(c.get("已提交", [])) == 4
+           and after == before + 4,
+           f"暂存 4 ⇒ 提交 4 ⇒ 正式 {before} → {after}")
+
+        # 还原（判据必须自己收拾）—— 删刚提交的，并**验还原**
+        for f in (corpus / "nodes").glob("x1-*.md"):
+            f.unlink()
+        ok("★ [缓冲] ㊶ 判据跑完还原：正式节点回到原数（不留下判据自己的痕迹）",
+           len(load_nodes(corpus)) == before,
+           f"{after} → {len(load_nodes(corpus))}（初值 {before}）")
+
+        a0 = XS.abandon(corpus, "不存在")
+        XS.ingest(corpus, ex, "x2")
+        a1 = XS.abandon(corpus, "x2")
+        ok("★ [缓冲] ㊷ 抛弃 = 显式删目录，无残留；不存在时报错不静默",
+           a0.get("ok") is False and a1.get("ok") is True
+           and not Path(a1.get("抛弃", "")) if False else
+           (a0.get("ok") is False and a1.get("ok") is True
+            and not (Path(r["目录"]).parent / "x2").exists()),
+           f"不存在 ⇒ 报错｜存在 ⇒ 删 {a1.get('删掉的节点')} 个｜残留 False")
+    finally:
+        _shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_leaf_cap_requests() -> None:
     """★ 叶容量 ⇒ 请求（`request.leaf_cap_requests`，2026-10-19）。
 
@@ -8792,6 +8930,7 @@ def main() -> int:
                test_evidence,
                test_quotes_evidence,
                test_entry, test_protocol,
+               test_exchange_staging,
                test_leaf_cap_requests,
                test_candidate_dimensions,
                test_loader_sharded,
