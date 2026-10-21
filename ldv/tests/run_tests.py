@@ -4781,6 +4781,28 @@ def test_protocol() -> None:
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
+    # ── 70 **对等**：两个实例互为问答方，同语料逐字相同 ──────────────────
+    #    ⚠️ 判据**不碰 HTTP**（纪律同 [入口] 51：起端口会把判据变成环境读数）；
+    #       HTTP 层由 `evidence/_dialogue_two_ldv.py` 实测（文件层与 HTTP 逐字相同）。
+    #    ⚠️ CI 上没有外部语料 ⇒ 这里用**内置语料的两个实例**（A/B 同材料）。
+    #       跨语料对话（词汇不通必须如实拒收）在留档脚本里用 ext-wiki-vote ×
+    #       cora-labeled 实测 —— 那条依赖外部语料，进不了 CI。
+    A2 = E.App(None)
+    B2 = E.App(None)
+    fp2 = A2.fingerprint()
+    keys2 = sorted(k for k in A2.all_keys if "=" in k)
+    probe = keys2[len(keys2) // 2] if keys2 else None
+    qa = PRT.build_query([probe] if probe else [], [], frm="A", fp=fp2)
+    qb = PRT.build_query([probe] if probe else [], [], frm="B", fp=fp2)
+    ra = B2.msg(qa)                      # A 问，B 答
+    rb = A2.msg(qb)                      # B 问，A 答 —— **对等**
+    same_ans = (ra["payload"].get("answer_ids") == rb["payload"].get("answer_ids"))
+    ok("★ [协议] 70 对等互问：A 问 B / B 问 A 的答案集逐字相同（同语料）",
+       ra.get("type") == PRT.MSG_RESULT and rb.get("type") == PRT.MSG_RESULT
+       and same_ans and PRT.verify_result(ra)[0] and PRT.verify_result(rb)[0],
+       f"键 `{probe}`｜A→B {ra['payload'].get('n_answer')} 项｜"
+       f"B→A {rb['payload'].get('n_answer')} 项｜相同 {same_ans}")
+
 
 def test_leaf_cap_requests() -> None:
     """★ 叶容量 ⇒ 请求（`request.leaf_cap_requests`，2026-10-19）。
