@@ -8,7 +8,11 @@ import subprocess
 import sys
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent / "repo"
+#: 本文件住在 repo/evidence/ 下 ⇒ parent.parent 就是 repo 根。
+#: ⚠️ 曾经写成 parent.parent / "repo"（outputs/ 时期的路径）⇒ 在 evidence/ 下
+#:    推成 repo/repo ⇒ import 直接失败；2026-10-21 与 _dialogue_two_ldv.py
+#:    同一天抓住（验收跑自己脚本时対照出来的）。
+REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 WRK = Path(__file__).resolve().parent / "_e2e"
 shutil.rmtree(WRK, ignore_errors=True)
@@ -89,3 +93,6 @@ XS.ingest(corpus, EX, "dlg-test")
 a = XS.abandon(corpus, "dlg-test")
 print(f"   abandon 存在的 ⇒ {a}")
 print("端到端结束。")
+# 收尾清理（开头已清过一次；结尾再清 ⇒ 可重跑不积累垃圾。残留文件会变成
+# evidence_index 的孤儿 —— 2026-10-21 实测踩到，与 _dialogue_two_ldv.py 同修）
+shutil.rmtree(WRK, ignore_errors=True)

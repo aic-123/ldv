@@ -12,12 +12,17 @@
 """
 import io
 import json
+import shutil
 import subprocess
 import sys
 import time
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent / "repo"
+#: 本文件住在 repo/evidence/ 下 ⇒ parent.parent 就是 repo 根。
+#: ⚠️ 曾经写成 parent.parent / "repo"（outputs/ 时期的路径）⇒ 在 evidence/ 下
+#:    推成 repo/repo ⇒ import 直接失败；2026-10-21 验收时实测「宣称可重跑、
+#:    实则跑不起来」才抓住。改路径行不够，还要真跑一遍才算数。
+REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
 from ldv import protocol as PRT          # noqa: E402
@@ -76,8 +81,11 @@ def main():
     show_msg("A 回答", r3)
 
     hr("④ 文件层批交换：三条消息（B 的键 / A 的键 / 坏信封）一次过")
+    # 临时目录：开头清（重跑保护）、结尾也清（可重跑不该积累垃圾；
+    # 残留文件还会变成 evidence_index 的孤儿 —— 2026-10-21 实测踩到）
     tmp = Path(__file__).resolve().parent / "_dlg"
-    tmp.mkdir(exist_ok=True)
+    shutil.rmtree(tmp, ignore_errors=True)
+    tmp.mkdir()
     bad = dict(q2)
     del bad["fp"]
     inp = tmp / "in.jsonl"
@@ -91,9 +99,14 @@ def main():
 
     hr("⑤ 同一句话，两棵不同的树 —— 各自「最大的那一类」")
     # 各取覆盖最多的那个键（不写死，按数据挑）
-    bestA = max((k for k in A.all_keys if "=" in k),
+    # ⚠️ 先 **sorted** 再 max：并列时 max 取「迭代序里第一个」，而 all_keys 是
+    #    frozenset（字符串哈希随进程随机化）⇒ 不排序的话，两个都覆盖全部的
+    #    恒定键之间选哪个**每次跑都可能不一样**（实测：B 上 同行评审 与
+    #    source.kind=数据集 都是 2708/2708，两次跑出了两个名字）⇒
+    #    §10.7 ⑤ 记的键名必须可复现，排序即固定（字典序）。
+    bestA = max(sorted(k for k in A.all_keys if "=" in k),
                 key=lambda k: sum(1 for ks in A.keys_of.values() if k in ks))
-    bestB = max((k for k in B.all_keys if "=" in k),
+    bestB = max(sorted(k for k in B.all_keys if "=" in k),
                 key=lambda k: sum(1 for ks in B.keys_of.values() if k in ks))
     ra = A.msg(PRT.build_query([bestA], [], frm="X", fp=fpA))
     rb = B.msg(PRT.build_query([bestB], [], frm="X", fp=fpB))
@@ -132,6 +145,7 @@ def main():
         for p in procs.values():
             p.terminate()
     print("\n实验结束。")
+    shutil.rmtree(tmp, ignore_errors=True)   # 收尾清理（见 ④ 的注释）
 
 
 if __name__ == "__main__":
