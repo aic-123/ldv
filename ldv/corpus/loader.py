@@ -30,7 +30,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -150,8 +150,15 @@ def keys_of(fields: dict[str, Any]) -> frozenset[str]:
 #:
 #: 键里带 `mtime_ns` 与字节数，所以**改了文件就会重新解析** ——
 #: 缓存不能把「语料变了」这件事吃掉（那正是「跳过 ≠ 通过」的同族错误）。
-#: 只缓存**解析**，不缓存 `load_nodes` 的返回值：每次仍然造一份新的 dict，
-#: 调用方改动它不会串味。
+#:
+#: ★★ 2026-10-21 修（`_probe_d7_rollback.py` 实测抓到）：缓存命中**必须返回副本**。
+#:    曾经直接返回缓存里的那个 `Node` 对象，而 `Node` 是**可变**的
+#:    （`entry.py` 的派生维度叠加、`predicates.apply_*` 都**就地改** `node.keys`）
+#:    ⇒ 调用方的改动静默写进缓存 ⇒ 同进程内下一次 `load_nodes` 拿到**被改过的**节点。
+#:    实测后果：把 `derived/influence.json` 移走再建一次入口，派生键**还在**、
+#:    树一模一样 —— 「删掉文件即完全回到原状」（sidecar 自己的 `reversible` 声明）
+#:    **在进程内不成立**；且下面那句「调用方改动它不会串味」的注释当时是**假的**。
+#:    ⇒ 缓存只省「解析」，**绝不共享可变对象**：命中即 `replace(hit)`。
 _NODE_CACHE: dict[tuple[str, int, int], Node] = {}
 
 
@@ -159,15 +166,16 @@ def _node_of(path: Path) -> Node:
     st = path.stat()
     key = (str(path), st.st_mtime_ns, st.st_size)
     hit = _NODE_CACHE.get(key)
-    if hit is not None:
-        return hit
-    fields, body = parse_front_matter(
-        path.read_text(encoding="utf-8", errors="replace"), str(path)
-    )
-    nid = str(fields.get("id") or path.stem)
-    node = Node(id=nid, fields=fields, body=body, keys=keys_of(fields))
-    _NODE_CACHE[key] = node
-    return node
+    if hit is None:
+        fields, body = parse_front_matter(
+            path.read_text(encoding="utf-8", errors="replace"), str(path)
+        )
+        nid = str(fields.get("id") or path.stem)
+        hit = Node(id=nid, fields=fields, body=body, keys=keys_of(fields))
+        _NODE_CACHE[key] = hit
+    # ★ 每次都返回**副本**（见上）：浅拷贝足以隔离 `keys` 的改写
+    #   （`fields` / `body` 无人就地改 —— 2026-10-21 全仓核过）。
+    return replace(hit)
 
 
 def load_nodes(directory: str | Path) -> dict[str, Node]:

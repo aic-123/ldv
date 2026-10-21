@@ -220,6 +220,31 @@ def test_loader() -> None:
         if saved is not None:
             os.environ["LDV_CORPUS"] = saved
 
+    # ── ★ 节点缓存**不串味**：就地改一份，另一份 load 读不到 ─────────────
+    #    2026-10-21 `_probe_d7_rollback.py`（§D7 的实体证据）实测抓到：
+    #    `_node_of` 缓存命中返回**同一个 Node 对象**，而派生维度叠加
+    #    （`entry.py`）与 `predicates.apply_*` 都**就地改** `node.keys`
+    #    ⇒ 改动静默写进缓存 ⇒ 同进程内移走 sidecar 再建，派生键**还在**、
+    #    树一模一样（「删文件即回到原状」在进程内不成立）。
+    #    ⇒ 修：命中返回 `replace(hit)`（副本）。这条判据守的就是那件事 ——
+    #    ⚠️ 它是**反转变异类**的判据：不验「读得对」，验「隔离得住」；
+    #       把 `replace(hit)` 改回 `return hit`，它必须红。
+    _root_now = find_corpus()
+    if _root_now is None:
+        PASS.append("节点缓存不串味（跳过：找不到语料）")
+    else:
+        from ldv.corpus.loader import load_nodes as _ln
+        _a = _ln(_root_now)
+        _one = sorted(_a)[0]
+        _old = _a[_one].keys
+        _a[_one].keys = frozenset(set(_old) | {"注入=缓存隔离判据"})
+        _b = _ln(_root_now)
+        ok("节点缓存不串味：就地改一份的 keys，另一份 load 读不到（解析仍被缓存）",
+           _b[_one].keys == _old and "注入=缓存隔离判据" not in _b[_one].keys
+           and _b[_one] is not _a[_one],
+           f"{_one}｜改后 {len(_a[_one].keys)} 键｜另一份 {len(_b[_one].keys)} 键"
+           f"｜是不同对象 {_b[_one] is not _a[_one]}")
+
 
 # ═══ 内核 ════════════════════════════════════════════════════════════════════
 

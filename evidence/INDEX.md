@@ -2,7 +2,7 @@
 
 > 仓库里每一处「实测 / 留档」的引用都指向这里的文件。**不是宣称，是实体。**
 
-共 **149** 个文件。下表按文件名排；「被谁引用」是仓库内引用它的文档。
+共 **151** 个文件。下表按文件名排；「被谁引用」是仓库内引用它的文档。
 
 | 文件 | 大小 | 被谁引用 |
 |---|---|---|
@@ -10,8 +10,8 @@
 | `_b19_depth_fullscale.txt` | 3 KB | docs/分层方向视图-设计文档.md、ldv/MEASUREMENTS.md |
 | `_d2_four_measured.txt` | 4 KB | ldv/MEASUREMENTS.md |
 | `_diag_hold_handle.py` | 2 KB | docs/并发接口设计.md |
-| `_dialogue_two_ldv.py` | 6 KB | README.md、docs/服务化设计.md |
-| `_e2e_exchange_staging.py` | 4 KB | docs/服务化设计.md |
+| `_dialogue_two_ldv.py` | 7 KB | README.md、docs/服务化设计.md |
+| `_e2e_exchange_staging.py` | 5 KB | docs/服务化设计.md |
 | `_findings_real_data.md` | 24 KB | docs/外生声明标准.md |
 | `_freeze_b18_full.txt` | 1 KB | docs/分层方向视图-设计文档.md、ldv/MEASUREMENTS.md |
 | `_inj_2026-10-15.txt` | 3 KB | docs/评估报告.md |
@@ -64,6 +64,8 @@
 | `_probe_contra_reverse.py` | 3 KB | docs/谓词推导与反思层.md |
 | `_probe_d2_four.py` | 4 KB | docs/分层方向视图-设计文档.md、ldv/MEASUREMENTS.md |
 | `_probe_d2_stage2.py` | 3 KB | docs/分层方向视图-设计文档.md |
+| `_probe_d7_rollback.out.txt` | 2 KB | **（无）** |
+| `_probe_d7_rollback.py` | 5 KB | docs/形式化断言集.md |
 | `_probe_deepcopy_cost.py` | 3 KB | ldv/MEASUREMENTS.md |
 | `_probe_deepen_seq.out.txt` | 2 KB | ldv/MEASUREMENTS.md |
 | `_probe_degree.py` | 8 KB | docs/分层方向视图-成熟方案与跨领域文献.md、ldv/MEASUREMENTS.md |
@@ -153,6 +155,12 @@
 | `ldv-待裁定清单.md` | 25 KB | docs/分层方向视图-设计文档.md |
 | `ldv-成熟答案印证.md` | 67 KB | docs/分层方向视图-设计文档.md |
 | `ldv-跨领域-增量报告.md` | 16 KB | docs/外生声明标准.md |
+
+## 没被正文引用、但同趟产出的伴生件
+
+主脚本被引用了，这些是它跑出来的输出，跟着一起进仓库：
+
+- `_probe_d7_rollback.out.txt`
 
 ## 怎么重跑
 
