@@ -89,7 +89,30 @@ UI_PLUGINS = ("keyset",)
 #:
 #: ⇒ **项多 ≠ 节点多**：cora 2708 项只有 13 个方向，内置 36 项反而有 25 个。
 #:   节点数由**维度**决定，不由项数决定 ⇒ 这份要再涨，只能加维度（且维度要有根据）。
-DEFAULT_CORPUS = "ext-wiki-vote"
+#: 优先语料 —— 实测**内容最多、节点也不少**的那份（7115 项 ⇒ 37 个方向 / 8 层）。
+#: 选它的判据是「项多且节点不塌」，不是单纯项多（实测：cora 2708 项只有 13 个方向，
+#: 内置 36 项反而有 25 个 ⇒ **项多 ≠ 节点多**，节点数由**维度**决定）。
+#:
+#: ★★ 2026-10-21 **本地 vs 远端的区分**：它住在 `_data/` 下，而 `_data/*`
+#:   **不进仓库**（.gitignore：外部语料只进「声明 + 认识」两个小文件）。
+#:   把它写成**无条件的默认值** ⇒ 新 clone 上 `python entry.py` 直接起不来
+#:   （实测 2026-10-21：`find_corpus()` 返回 None ⇒ SystemExit「找不到语料」）。
+#:   ⇒ 改成**回退链**：优先语料的 `nodes/` **在场才算默认**，
+#:     否则用随仓库提交的内置语料（`ldv/corpus`，36 项 —— 小，但**任何 clone 上都在**）。
+PREFERRED_CORPUS = "ext-wiki-vote"
+
+
+def default_corpus() -> str:
+    """优先语料的 `nodes/` 不在 ⇒ 回落**内置语料**（空名 = 仓内那份）。
+
+    ⚠️ 这不是「猜用户想要什么」，是**不让入口在新 clone 上死掉**。
+       兜底与首选如实分开报（`meta.corpus_from`）—— 把兜底说成首选，
+       正是「看起来一样、其实配错了」那种形状。
+    """
+    root = Path(__file__).resolve().parent
+    if (root / "_data" / PREFERRED_CORPUS / "nodes").is_dir():
+        return PREFERRED_CORPUS
+    return ""                    # 内置语料：find_corpus 的最后一级兜底
 
 
 class App:
@@ -184,7 +207,15 @@ class App:
             return k
 
     def meta(self) -> dict:
-        return {"corpus": self.corpus_name, "nodes": len(self.nodes),
+        builtin = self.corpus_name == "内置语料（ldv/corpus）"
+        return {"corpus": self.corpus_name,
+                # 本地 / 远端的区别如实报在这里：外部语料不进仓库，
+                # 新 clone 上入口自动兜底到内置那份 —— 不许把兜底印成首选。
+                "corpus_from": "builtin" if builtin else "external",
+                "corpus_note": ("" if not builtin else
+                                "外部语料在 `_data/` 下、**不进仓库** ⇒ 这份是内置兜底；"
+                                "`--corpus ext-wiki-vote` 需要本地有语料"),
+                "nodes": len(self.nodes),
                 "edges": sum(len(v) for v in self.edges.values()),
                 "plugins": list(self._known), "built": sorted(self.kernels),
                 "ui_plugins": list(UI_PLUGINS), "facets": self.facets,
@@ -852,7 +883,8 @@ def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--corpus", default=None,
-                    help=f"语料名（默认 {DEFAULT_CORPUS}；也可用 LDV_CORPUS 环境变量）")
+                    help="语料名（默认：优先 ext-wiki-vote，"
+                         "**它的 nodes/ 不在就回落到内置语料** —— 见 default_corpus()）")
     ap.add_argument("--batch", default=None)
     ap.add_argument("--out", default=None)
     a = ap.parse_args(argv)
@@ -860,7 +892,7 @@ def main(argv: list[str]) -> int:
     # 默认用**真实分类表**，不用仓库那 36 项 demo —— 入口是给人用的，得先有内容。
     # ⚠️ 这里是「换材料」，不是「造材料」：155 项全部来自 arXiv 官方分类表，
     #    `filled_by` 逐项写着出处。**不代填任何内容**（立项红线）。
-    corpus = a.corpus or os.environ.get("LDV_CORPUS") or DEFAULT_CORPUS
+    corpus = a.corpus or os.environ.get("LDV_CORPUS") or default_corpus()
     APP = App(corpus)
     print(f"语料 {APP.corpus_name}｜{len(APP.nodes)} 项｜建树 {APP.boot_s:.2f}s")
     if a.batch:

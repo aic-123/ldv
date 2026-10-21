@@ -151,6 +151,14 @@ jobs:
       #
       #    如果哪天有人把缺数据改成了 `return 0` + 印「全部通过」，
       #    这一步会红。那正是本仓库最贵的那个形状（「空转与通过长得一模一样」）。
+      # ★ 2026-10-21：**「本地能做」与「远端测试能做」分开**。
+      #   这两个守门在**新 clone 上就能跑**（它们只读仓库内文件：
+      #   evidence/ 与 docs/ 的版本行），与外部语料在不在无关
+      #   ⇒ 放进 CI，远端也守住「每个宣称都有实体」「版本落点不漂移」。
+      - name: 证据完整性 · 每个宣称都有实体（新 clone 上即可跑）
+        run: python -m ldv.tools.evidence_index check
+      - name: 版本落点一致 · 六处彼此相同（新 clone 上即可跑）
+        run: python -m ldv.tools.version_spots check
       - name: 外部语料验收 · 没有数据时必须报「跳过」而不是「通过」
         shell: bash
         run: |
