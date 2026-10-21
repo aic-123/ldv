@@ -4678,6 +4678,110 @@ def test_candidate_dimensions() -> None:
     ok("★ [候选维度] ㊥ 说明里明说「可以当维度的 N 个」或「没有可用的新维度」",
        ("可以当维度的" in r["说明"]) or ("没有可用的新维度" in r["说明"]),
        r["说明"][:60])
+def test_protocol() -> None:
+    """★ **两个 ldv 系统之间的交流协议**（`ldv-msg/1`，2026-10-21）。
+
+    用户 2026-10-21：「设计两个 ldv 系统之间的交流协议，不必将其转化成自然语言，
+    允许直接对 ldv 的输出进行解析」。
+
+    为什么不做自然语言：ldv 的输出**本来就是结构**，翻成话是双重有损
+    （丢掉「到底是哪 1888 项」；丢掉**可核验性**）。⇒ 协议 = 信封化 + 接收方自检。
+
+    两条红线（写进判据，不只写在 docstring 里）：
+      ① 只换结构不换语义 —— 不许回「这些人很有影响力」（模型代填）；
+      ② **两个系统之间也不排序** —— 消息里出现跨系统可比的标量字段一律拒收（E-1/E-2 延伸）。
+    """
+    import json
+    import shutil
+    import tempfile
+    from pathlib import Path
+
+    from ldv import protocol as PRT
+    import entry as E
+
+
+    # ── 64 信封五查：五种坏法各自拒收，且**带理由** ────────────────────
+    good = PRT.envelope(PRT.MSG_QUERY, {"require": ["type=概念"]}, frm="A", fp="f" * 16)
+    bad_proto = dict(good, proto="ldv-msg/999")
+    bad_type = dict(good, type="MAGIC")
+    no_fp = {k: v for k, v in good.items() if k != "fp"}
+    not_dict = ["不是对象"]
+    checks = [(good, True), (bad_proto, False), (bad_type, False),
+              (no_fp, False), (not_dict, False)]
+    results = [(PRT.check_envelope(m)[0] == want, PRT.check_envelope(m)[1][:30])
+               for m, want in checks]
+    ok("★ [协议] 64 信封五查（版本/类型/必填/是不是 dict），坏法各自拒收并给理由",
+       all(r[0] for r in results) and all(r[1] for r in results[1:]),
+       "｜".join(("过" if r[0] else "拒：" + r[1]) for r in results))
+
+    # ── 65 **协议级禁词**：嵌套的 score/order ⇒ 拒收并指出路径 ──────────
+    # ⚠️ 禁词**不含** `rank` / `order`：`nodes[].rank` 是 ldv 的**骨架**字段
+    #    （第几层），不是排序分。第一版含它们 ⇒ 每条合法 RESULT 都被拒
+    #    （判据 66 端到端当场撞出来的）。⇒ 这里用两个真禁词：`weight`（顶层）
+    #    与 `rating`（嵌在 nodes 里，验递归）。
+    nasty = PRT.envelope(PRT.MSG_QUERY,
+                        {"require": ["a"], "weight": 3,
+                         "nodes": [{"did": "D1", "rating": 0.9}]},
+                        frm="A", fp="f" * 16)
+    okk, why = PRT.check_envelope(nasty)
+    ok("★ [协议] 65 嵌套禁词字段 ⇒ 拒收（两个系统之间也不排序 / 不打分）",
+       okk is False and "weight" in why and "rating" in why,
+       f"拒收理由：{why[:70]}")
+
+    # ── 66 **对等端到端**：A 问 B，B 的 RESULT 过自检且与本地同答案 ────
+    #    ⚠️ 两个 App 实例 = 两个系统（同语料时它们必须给同一答案 ——
+    #      这正是协议「可核验」的意思：B 报的答案，A 能自己重算）。
+    A = E.App(None)                     # 内置 36 项语料；不设环境变量
+    B = E.App(None)
+    q = PRT.build_query(["type=概念"], [], frm=A.who(), fp=A.fingerprint())
+    r = B.msg(q)
+    v_ok, v_bad = PRT.verify_result(r)
+    local = B.query({"require": ["type=概念"]})
+    ok("★ [协议] 66 对等端到端：QUERY→RESULT 过自检，且答案与本端逐字相同",
+       r.get("type") == PRT.MSG_RESULT and v_ok
+       and r["payload"]["answer_ids"] == local["answer_ids"]
+       and r["payload"]["query"] == {"require": ["type=概念"], "forbid": []},
+       f"答案 {r['payload']['n_answer']} 项｜{len(r['payload']['nodes'])} 支｜"
+       f"自检 {v_ok}｜回声查询 ✓")
+
+    # ── 67 **反向对照①**：谎报项数 ⇒ 自检必须红 ─────────────────────────
+    lied = json.loads(json.dumps(r))
+    lied["payload"]["n_answer"] = lied["payload"]["n_answer"] + 7
+    v1_ok, v1_bad = PRT.verify_result(lied)
+    ok("★ [协议] 67 反向：谎报 n_answer ⇒ 自检报红（接收方不依赖发送方诚信）",
+       v1_ok is False and any("谎报项数" in b for b in v1_bad),
+       f"抓到：{v1_bad[0][:60] if v1_bad else '（没抓到！）'}")
+
+    # ── 68 **反向对照②**：Σ各支 ≠ 答案 ⇒ 自检必须红 ────────────────────
+    broken = json.loads(json.dumps(r))
+    if broken["payload"]["nodes"]:
+        broken["payload"]["nodes"][0]["n_answer"] += 3
+    v2_ok, v2_bad = PRT.verify_result(broken)
+    ok("★ [协议] 68 反向：Σ各支 ≠ 答案 ⇒ 自检报红（不重不漏破了）",
+       v2_ok is False and any("不重不漏" in b for b in v2_bad),
+       f"抓到：{v2_bad[0][:60] if v2_bad else '（没抓到！）'}")
+
+    # ── 69 **文件传输**：一条好 + 两条坏 ⇒ 1 RESULT + 2 ERROR，留痕不静默 ──
+    tmp = Path(tempfile.mkdtemp())
+    try:
+        inp = tmp / "in.jsonl"
+        inp.write_text(
+            json.dumps(q, ensure_ascii=False) + "\n"
+            + "{这不是 JSON\n"
+            + json.dumps({**no_fp, "from": "X"}, ensure_ascii=False) + "\n",
+            encoding="utf-8")
+        st = PRT.exchange_file(B, inp, tmp / "out.jsonl")
+        out_lines = [ln for ln in (tmp / "out.jsonl").read_text(
+            encoding="utf-8").splitlines() if ln.strip()]
+        types = [json.loads(ln)["type"] for ln in out_lines]
+        ok("★ [协议] 69 文件交换：坏 JSON / 坏信封 ⇒ ERROR 留痕，不拖垮好的那条",
+           st == {"in": 3, "ok": 1, "rejected": 2}
+           and types.count(PRT.MSG_RESULT) == 1 and types.count(PRT.MSG_ERROR) == 2,
+           f"stats {st}｜消息类型 {types}")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_leaf_cap_requests() -> None:
     """★ 叶容量 ⇒ 请求（`request.leaf_cap_requests`，2026-10-19）。
 
@@ -8665,7 +8769,7 @@ def main() -> int:
                test_version_spots,
                test_evidence,
                test_quotes_evidence,
-               test_entry,
+               test_entry, test_protocol,
                test_leaf_cap_requests,
                test_candidate_dimensions,
                test_loader_sharded,

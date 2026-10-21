@@ -162,7 +162,15 @@ set PYTHONIOENCODING=utf-8 & set PYTHONUTF8=1
        ⇒ 同一套 `§K2`，形状越自然，两个数都越小。**省单元 ⟺ 丢分辨率**
 
     ✅ 四条流程都能跑（A 运行 / B 维护 / C 构建验收 / D 自优化）+ **B′ 删除**
-    ✅ **落盘（P6）与并发（P8）落地** —— 并发壳走 `--locked` 可选入口，**默认路径不锁**
+    ✅ **两个 ldv 之间的交流协议**（`ldv-msg/1`）：QUERY/RESULT 对等，**不做自然语言**
+       —— 信封（proto/type/from/fp/ts/payload）+ 接收方自检（n_answer/Σ各支/did）；
+       文件（.jsonl 可 diff）与 HTTP（`POST /api/msg`）**两层共用内容层**。
+       跨系统标量字段一律拒收（E-1/E-2 的协议延伸）。见 `docs/服务化设计.md` §10
+        ✅ **两个 ldv 之间的交流协议**（`ldv-msg/1`）：QUERY/RESULT 对等，**不做自然语言**
+       —— 信封（proto/type/from/fp/ts/payload）+ 接收方自检（n_answer/Σ各支/did）；
+       文件（.jsonl 可 diff）与 HTTP（`POST /api/msg`）**两层共用内容层**。
+       跨系统标量字段一律拒收（E-1/E-2 的协议延伸）。见 `docs/服务化设计.md` §10
+        ✅ **落盘（P6）与并发（P8）落地** —— 并发壳走 `--locked` 可选入口，**默认路径不锁**
     ✅ **跨进程落盘落地**：临时文件 + `os.replace` + **写者/读者双侧重试**；
        判据六条，其中「失败不留半份」「重试接上了」「重试有界」是**确定性**的
     ✅ **流程 E · 抽象层**：`§A1`–`§A7` 七条判据 + 视图层声明 `§M0`–`§M6`

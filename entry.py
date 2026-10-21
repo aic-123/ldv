@@ -69,6 +69,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+from ldv import protocol as PROTO
 from ldv.checks._fixtures import build_keyset, build_reach
 from ldv.corpus.loader import load_edges, load_nodes
 
@@ -372,6 +373,50 @@ class App:
                 "relax": (self._relax(req, forb) if not ans else []),
                 "ms": round(ms, 2)}
 
+    def fingerprint(self) -> str:
+        """**结构指纹** —— 「这是在**哪份结构**上跑出来的」（协议的 `fp` 段）。
+
+        ⚠️ 不含时间戳：指纹要**稳定可比**（同结构同值），不是「跑的时间」。
+        ⚠️ 它只描述**形状**（语料名 / 项数 / 键数 / 方向数 / 各支条数），
+           不含内容 —— 所以它是「同一份材料的同一棵树」的票据，不是内容哈希。
+        ⚠️ 没有它，一条 RESULT 无法自证是在哪棵树上跑的 —— 那就是
+           `§T2` 那条「看着都对、其实配错」的协议版。
+        """
+        import hashlib
+        h = hashlib.sha1()
+        h.update(self.corpus_name.encode("utf-8"))
+        for part in (len(self.nodes), len(self.all_keys),
+                     self.tree["方向数"], self.tree["最大叶"]):
+            h.update(("|" + str(part)).encode())
+        return h.hexdigest()[:16]
+
+    def who(self) -> str:
+        """本端在协议里的身份。默认「语料名@ldv」—— 不做网络身份管理。"""
+        return f"{self.corpus_name}@ldv-entry"
+
+    def msg(self, msg) -> dict:
+        """**对等消息入口**：收一条信封 ⇒ 回一条信封（`/api/msg` 用）。
+
+        形状照 `ldv.protocol`（内容层）：五查 envelope ⇒ 只跑 `QUERY` ⇒
+        RESULT 必须过 `verify_result` 才发出。**拒收带理由，不静默。**
+        """
+        ok, why = PROTO.check_envelope(msg)
+        if not ok:
+            return PROTO.error_envelope(why, frm=self.who())
+        if msg.get("type") != PROTO.MSG_QUERY:
+            return PROTO.error_envelope(
+                f"只处理 {PROTO.MSG_QUERY}，收到 {msg.get('type')!r}（对端角色可能反了）",
+                frm=self.who())
+        try:
+            res = self.query(msg.get("payload") or {})
+            r = PROTO.build_result(msg, res)
+            v_ok, v_bad = PROTO.verify_result(r)
+            if not v_ok:                      # 自己产出的结果必须过自己的自检
+                return PROTO.error_envelope(f"本端结果自检未过：{v_bad[:2]}", frm=self.who())
+            return r
+        except Exception as e:                # 一条坏不拖垮调用方
+            return PROTO.error_envelope(f"{type(e).__name__}: {e}", frm=self.who())
+
     def drill(self, did: str, req=(), forb=()) -> dict:
         k = self.ensure("keyset")
         try:
@@ -403,6 +448,19 @@ class App:
                 "GET /api/examples": "按数据形状挑的示例需求（最大/最小/交叉）",
                 "POST /api/query": '{"require":["…"],"forbid":["…"]} 或 {"queries":[…]}（批处理）',
                 "POST /api/drill": '{"did":"D3","require":["…"]} 往下看一层，子节点带覆盖率',
+                "POST /api/msg": "**对等消息**（`ldv-protocol`）：收一条信封回一条信封",
+            },
+            "protocol": {
+                "version": PROTO.PROTOCOL_VERSION,
+                "types": list(PROTO.KNOWN_TYPES),
+                "shape": "信封 = proto/type/from/fp/ts/payload；缺一 ⇒ 拒收并给理由",
+                "message": "QUERY = {require,forbid}（键约束，无自然语言）；"
+                           "RESULT = 本端 query() 的返回 + 原查询回声 + fp",
+                "self_check": "verify_result：n_answer==len(answer_ids) 且 Σ各支==n_answer"
+                              " —— 接收方不依赖发送方诚信",
+                "forbidden": "跨系统标量字段（score/rank/order/weight/priority/rating）"
+                             " ⇒ 出现即拒收（E-1/E-2 的协议延伸）",
+                "file_transport": "python -m ldv.protocol --in in.jsonl --out out.jsonl",
             },
             "query_response": {
                 "nodes": "答案切成的若干支（1 支 = 落在一带；N 支 = 横跨 N 带，合起来正好是答案）",
@@ -497,6 +555,9 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == "/api/drill":
                 self._json(APP.drill(str(body.get("did") or ""),
                                      body.get("require") or (), body.get("forbid") or ()))
+            elif u.path == "/api/msg":      # 对等消息（ldv-msg/1 信封）
+                # ⚠️ 必须用**已解析的** body：流读一次就没了，再调会读到空
+                self._json(APP.msg(body))
             elif u.path == "/api/query":
                 if isinstance(body, dict) and "queries" in body:
                     self._json(APP.batch(list(body["queries"])))
