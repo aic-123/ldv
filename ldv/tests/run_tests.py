@@ -9316,6 +9316,26 @@ def test_motivation() -> None:
        okp and "起点 1 个方向" in ptext and "剩余待展开 0" in ptext,
        next((ln.strip() for ln in ptext.splitlines() if "起点" in ln), ptext[:60]))
 
+    # ⑨ ★★ 半成品树**能查** —— 这条守的是一个**被说错过的事实**：
+    #    「树不完整 ⇒ 查询会漏 ⇒ 撞 §K8」是**错的**。`query` 对每个说「是」的方向
+    #    **无条件 `expand`**（`core/kernel.py` 的 `v is Tri.YES` 分支）⇒ 边查边建。
+    from ldv.core.kernel import Query as _Q
+
+    if loaded3 is None:
+        ok("★ [动机] ⑨ 半成品树能查（**跳过**：内置语料加载不了）", True, "0")
+    else:
+        _n4 = loaded3[0]
+        kl3 = _mkr(_n4)()
+        kf3, _pf3 = build_keyset(_n4)
+        qq = _Q(ideal=frozenset(_n4))
+        r_lz, r_fu = kl3.query(qq), kf3.query(qq)
+        ok("★ [动机] ⑨ ★★ 半成品树能查：查询自动展开，答案与完整建树逐字相同",
+           r_lz.hit_items == r_fu.hit_items and r_lz.counts == r_fu.counts
+           and str(r_lz.status) == str(r_fu.status),
+           f"查询前 1 个方向 → 后 {len(kl3.all_directions())}"
+           f"｜命中 {len(r_lz.hit_items)} vs {len(r_fu.hit_items)}"
+           f"｜三态 {r_lz.counts} vs {r_fu.counts}")
+
 
 def test_self_corpus() -> None:
     """★ 认知原型的两条自我判据（2026-10-22，§S5）。
