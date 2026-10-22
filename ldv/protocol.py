@@ -175,6 +175,13 @@ def verify_result(msg: dict) -> tuple[bool, list[str]]:
         return False, [f"信封不过关：{why}"]
     p = msg.get("payload") or {}
     if not p.get("ok"):
+        # ★ **④ 防「谎报超出结构」**（2026-10-22）：`ok=False` 有两种含义 ——
+        #    「键拼错了」与「这个问题超出本结构的词汇」。后者必须给出 `unknown_keys`
+        #    作为**凭证**，否则可以拿它当**逃避回答**的借口（键明明在，硬说超出）。
+        #    ⚠️ 这条必须在 `return` **之前**查 —— 第一版写在后面，`ok=False`
+        #       早就 return 了，永远走不到。
+        if p.get("out_of_structure") and not (p.get("unknown_keys") or []):
+            return False, ["声称「超出结构」却没给 `unknown_keys` —— 不能空口说超出"]
         return True, []                      # 对方如实报错（如键不存在）—— 不是违约
     bad: list[str] = []
     ids = p.get("answer_ids") or []

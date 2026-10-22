@@ -4788,6 +4788,16 @@ def test_protocol() -> None:
        v2_ok is False and any("不重不漏" in b for b in v2_bad),
        f"抓到：{v2_bad[0][:60] if v2_bad else '（没抓到！）'}")
 
+    # ── 68c **反向对照③**：谎报「超出结构」⇒ 自检必须红（2026-10-22）──────
+    #    `ok=False` 有两种含义（键拼错 / 超出结构），后者必须给 `unknown_keys` 作凭证，
+    #    否则可以拿「超出结构」当**逃避回答**的借口（键明明在，硬说超出）。
+    lie2 = PRT.build_result(q, {"ok": False, "error": "x",
+                                "out_of_structure": True}, frm="B", fp="fpB")
+    v4_ok, v4_bad = PRT.verify_result(lie2)
+    ok("★ [协议] 68c 反向：谎报「超出结构」（不给 unknown_keys）⇒ 自检报红",
+       v4_ok is False and any("空口说超出" in b for b in v4_bad),
+       f"{v4_bad[:1] if v4_bad else '（没抓到！）'}")
+
     # ── 69 **文件传输**：一条好 + 两条坏 ⇒ 1 RESULT + 2 ERROR，留痕不静默 ──
     tmp = Path(tempfile.mkdtemp())
     try:
