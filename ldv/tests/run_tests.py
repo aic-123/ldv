@@ -9270,6 +9270,43 @@ def test_motivation() -> None:
        RF.report(k)["分级"]["必须"] == RF.report(k)["分级"]["必须"],
        f"必须 {len(RF.report(k)['分级']['必须'])} 条（两次相同）")
 
+    # ⑥ **建树计划**：惰性内核（只建根）上，plan() 一轮轮报出该展开哪些。
+    #    ★ 这是「动机」在**建树阶段**的落地 —— 完整树上这一档恒空（树建完就没待办）。
+    from ldv.checks._fixtures import make_keyset_root as _mkr
+
+    loaded3 = _load()
+    if loaded3 is None:
+        ok("★ [动机] ⑥ 建树计划（**跳过**：内置语料加载不了）", True, "0")
+    else:
+        _n3, _e3, _d3 = loaded3
+        kl = _mkr(_n3)()
+        before_dirs = len(kl.all_directions())
+        p1 = RF.plan(kl, rounds=2)
+        after_dirs = len(kl.all_directions())
+        ok("★ [动机] ⑥ **建树计划**：惰性内核上一轮轮展开，方向数增长、待展开收敛",
+           before_dirs == 1 and after_dirs > before_dirs
+           and p1["轮次"][0]["展开"] == ["D0"],
+           f"方向 {before_dirs} → {after_dirs}｜第1轮展开 {p1['轮次'][0]['展开']}"
+           f"｜总展开 {p1['总展开']}｜剩余待展开 {p1['剩余待展开']}")
+
+        # ⑦ ★★ 惰性 + plan 的终态与完整建树**同构**（划分集合相同）
+        #    ⚠️ **不能比 did**：did 是**创建顺序编号**，惰性建树的展开顺序不同
+        #       ⇒ 同一个划分单元拿到不同编号（实测：25 个方向里 20 个 did 对不上）。
+        #       `B15` 说的也是「同构」，不是「did 相同」。
+        #    ⇒ 比**划分集合**：每个方向的成员集（按内容排序），忽略编号。
+        kl2 = _mkr(_n3)()
+        RF.plan(kl2, rounds=60, per_round=3)
+        kf, _pf = build_keyset(_n3)
+
+        def _parts(kk):
+            return sorted(tuple(sorted(kk.members_of(d))) for d in kk.all_directions())
+
+        ok("★ [动机] ⑦ ★★ 惰性 + plan 的终态与完整建树**同构**（划分集合逐字相同）",
+           _parts(kl2) == _parts(kf),
+           f"惰性 {len(_parts(kl2))} 个划分｜完整 {len(_parts(kf))} 个"
+           f"｜划分集合相同 {_parts(kl2) == _parts(kf)}"
+           f"（did 编号可不同 —— 那是创建顺序，不是结构）")
+
 
 def test_self_corpus() -> None:
     """★ 认知原型的两条自我判据（2026-10-22，§S5）。

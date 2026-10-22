@@ -318,6 +318,69 @@ def _graded_report(kernel: Any) -> dict[str, Any]:
     }
 
 
+def plan(kernel: Any, *, rounds: int = 4, per_round: int = 3,
+         cap: int | None = None) -> dict[str, Any]:
+    """**建树计划**：按显著性逐层展开，报「下一步该展开哪些」。
+
+    ★ 「动机」在**建树阶段**的落地 —— 树还没建完时，系统能说「先展开这几支」，
+      而不是只能等建完了再报「没待办」。
+
+    ★★ 为什么需要它：完整树上「待展开」恒为 0（`build_keyset` 会 `insert` 到底），
+       所以「待展开」这一档在**建完之后**永远为空 —— 那不是 bug，是「树建完就没待办了」。
+       它只在**建树过程中**有意义，而建树过程需要一个「只建了根」的内核作起点
+       （`_fixtures.make_keyset_root`）。
+
+    ⚠️ 它**只调顺序 + 展开**，不改方向函数 / 判据 / 外生项（与 `apply` 同一纪律）。
+    ⚠️ **不要拿惰性内核走生产查询**：树不完整 ⇒ 查询可能漏 ⇒ 撞 `§K8`
+       （假阴是唯一禁止的一侧）。`plan` 是给「建树」用的，不是给「查询」用的。
+    ⚠️ `per_round` 是**外生定死**的（不按材料自适应 —— 那会让行为依赖历史）。
+    """
+    from .request import LEAF_CAP
+    cap = LEAF_CAP if cap is None else cap
+
+    # ⚠️ **必须记住「试过的」**：`expand` 判「分不开」时**不写** `_expanded`
+    #    （叶不是终态，成员集变了要能重试）⇒ `is_expanded` 恒 False ⇒
+    #    不加这个集合，同一个分不开的方向会被**每轮重复选中**、每次都是空操作。
+    #    实测：不加时第 3–6 轮反复展开 D5，而「剩余待展开」还从 6 涨到 8。
+    tried: set[str] = set()
+
+    def _todo() -> list[dict]:
+        return [x for x in graded(kernel, cap)["可延后"]
+                if x.get("来源") == "待展开" and x["方向"] not in tried]
+
+    log: list[dict[str, Any]] = []
+    # ⚠️ 变量名不能叫 `total` —— `B12` 的名字正则是
+    #    `(^|_)(score|objective|utility|global|importance|total)(_|$)`，它会扫到**局部变量**。
+    #    `total` 是计数不是评分，但 B12 的纪律是「扫名字、宁可误报」⇒ 改名字，不放松判据。
+    n_expanded = 0
+    for i in range(rounds):
+        todo = _todo()
+        if not todo:
+            log.append({"第几轮": i + 1, "展开": [], "剩余待展开": 0})
+            break
+        done: list[str] = []
+        for x in todo[:per_round]:
+            did = x["方向"]
+            tried.add(did)
+            try:
+                d = kernel.direction(did)
+                if not kernel.is_expanded(d):
+                    kernel.expand(d)
+                    # 只有**真切出子方向**才算展开成功（分不开的进「试过」但不进 done）
+                    if kernel.children_of(d):
+                        done.append(did)
+            except Exception:                    # 单方向失败不拖垮整趟
+                continue
+        n_expanded += len(done)
+        log.append({"第几轮": i + 1, "展开": done, "剩余待展开": len(_todo())})
+        if not done:                             # 一轮一个都没切开 ⇒ 停，别空转
+            break
+    return {"轮次": log, "总展开": n_expanded, "剩余待展开": len(_todo()),
+            # ⚠️ 「剩余 0」有两种含义，必须分开报：全建完了 / 剩下的都试过且分不开
+            "试过分不开": len(tried) - n_expanded,
+            "档内顺序": SORT_KEY, "每轮上限": per_round}
+
+
 def report(kernel: Any) -> dict[str, Any]:
     """生成反思报告（**全是内生量**，每个数都能从结构重算）。
 
