@@ -36,6 +36,87 @@ from typing import Any
 SORT_KEY = "成员数降序·did 升序"
 
 
+# ── 显著性分档（2026-10-22）──────────────────────────────────────────────────
+#
+# ★★ **返回档位，不返回分数。** 一旦有分，它就会被拿去跨方向比较/排序 ——
+#    那是裁判，撞 E-1「不作分」。三档是**有序等级**，不是 0/1/2 的数值。
+#
+# ★★ 判据是**后果**（不处理会不会错），不是影响面：
+#    影响面只用来定**档内顺序**。「分档管什么时候做，排序管先做哪个」。
+SIGNIFICANCE = {
+    "必须": "不处理 ⇒ **结论可能错**（结构自相矛盾：边打架 / 子覆盖越出父 / 孤立方向）",
+    "可延后": "不处理 ⇒ **结论对但不全**（切不开 / 待展开 —— 结构一致，只是不够细）",
+    "可忽略": "不处理 ⇒ **没有变化**（切了白切 m≤1 / 已展开）",
+}
+
+#: 哪些矛盾类型属于「结论可能错」—— 这三类都是结构自相矛盾
+MUST_TYPES = ("边打架", "子覆盖越出父", "孤立方向")
+
+
+def significance(item: dict) -> str:
+    """**显著性函数** —— 一条待办 ⇒ 档位（`必须` / `可延后` / `可忽略`）。
+
+    输入两种形状：
+        矛盾：  `{"类型": "边打架" | "子覆盖越出父" | "孤立方向" | "切不开", ...}`
+        待展开：`{"待展开": True, "成员数": m, "子方向数": c, ...}`
+
+    ★★ 只看**后果**，不看大小：一个 3 项的方向如果结构矛盾，仍然「必须」；
+       一个 5000 项的叶如果只是「切不开」，仍然「可延后」。
+       把大小混进档位，就是把分档做成排序（那是另一件事，见 `graded` 的档内排序）。
+
+    ⚠️ 「可延后」**不等于不重要** —— 它只是「不处理不会让结论错」。
+       切不开往往要人加维度（`§D1`），所以它照样会被提给人，只是不挡路。
+    """
+    t = item.get("类型")
+    if t in MUST_TYPES:
+        return "必须"
+    if t == "切不开":
+        return "可延后"
+    # 「展开失败」= 试过展开、但分不出子方向 ⇒ 表达力不足（要人加维度）。
+    # ⚠️ 它和「待展开」都满足 `m > 1 且 c == 0`，区别只在 `is_expanded`：
+    #    不看这个标志就会把「试过分不开」当成「还没试」—— 实测 ④ 第一版就栽在这。
+    if item.get("来源") == "展开失败":
+        return "可延后"
+    if item.get("待展开"):
+        return "可延后"
+    return "可忽略"
+
+
+def graded(kernel: Any, cap: int | None = None) -> dict[str, list[dict]]:
+    """把「待办」按显著性分档 —— **档内**按成员数降序（影响面定序）。
+
+    ⚠️ 档内排序沿用 `SORT_KEY`（成员数降序 · did 升序）：
+       分档管「什么时候做」，排序管「先做哪个」—— 两件事，不混。
+    ⚠️ 三个桶**都是清单**（`可忽略` 也列出来），由调用方决定要不要显示 ——
+       在报告里只报它的**数量**，免得清单被噪声撑满。
+    """
+    rows: list[dict] = []
+    # ① 结构矛盾（三类）+ 切不开（给了 cap 才查）
+    for row in (contradictions(kernel, cap).get("矛盾") or []):
+        d = kernel.direction(row["方向"]) if row.get("方向") else None
+        m = len(kernel.members_of(d)) if d is not None else 0
+        rows.append({**row, "来源": "矛盾", "成员数": m})
+    # ② 待展开（还有东西可分但没分）/ 展开失败（试过分不开）
+    for d in kernel.all_directions():
+        m = len(kernel.members_of(d))
+        c = len(kernel.children_of(d))
+        if m > 1 and c == 0:
+            if kernel.is_expanded(d):
+                # ⚠️ `is_expanded` 为真但没子方向 ⇒ **表达力不足**，不是「还没试」
+                rows.append({"来源": "展开失败", "方向": d.did, "成员数": m,
+                             "说明": "试过展开，但分不开 —— 需要新维度（§D1 人的动作）"})
+            else:
+                rows.append({"来源": "待展开", "方向": d.did, "成员数": m,
+                             "子方向数": c, "待展开": True,
+                             "说明": "还有东西可分但没分"})
+    buckets: dict[str, list[dict]] = {"必须": [], "可延后": [], "可忽略": []}
+    for it in rows:
+        buckets[significance(it)].append(it)
+    for k in buckets:
+        buckets[k].sort(key=lambda x: (-(x.get("成员数") or 0), x.get("方向") or ""))
+    return buckets
+
+
 def contradictions(kernel: Any, cap: int | None = None) -> dict[str, Any]:
     """**结构层**的矛盾清单（2026-10-17，用户拍板「就在结构层」）。
 
@@ -220,6 +301,23 @@ def contradiction_requests(kernel: Any, contra: dict[str, Any] | None = None
     }
 
 
+def _graded_report(kernel: Any) -> dict[str, Any]:
+    """报告里的「分级」段 —— 三档清单 + 档内顺序。
+
+    ⚠️ `可忽略` **只报数量不列清单**：它是最多的那档（每个已展开的方向都在里面），
+       列出来会把真正的待办淹掉。要全量看用 `graded()`。
+    """
+    from .request import LEAF_CAP          # 局部导入：避免 core 内部循环
+    g = graded(kernel, LEAF_CAP)
+    return {
+        "档位说明": SIGNIFICANCE,
+        "必须": g["必须"],
+        "可延后": g["可延后"],
+        "可忽略数": len(g["可忽略"]),
+        "档内顺序": SORT_KEY,
+    }
+
+
 def report(kernel: Any) -> dict[str, Any]:
     """生成反思报告（**全是内生量**，每个数都能从结构重算）。
 
@@ -247,6 +345,9 @@ def report(kernel: Any) -> dict[str, Any]:
         "排序规则": SORT_KEY,
         # ★ **结构层**矛盾清单（2026-10-17）—— 只聚合已有检查，不新增判据
         "矛盾": contradictions(kernel),
+        # ★ **显著性分档**（2026-10-22）—— 三档由**后果**定，档内按成员数定序。
+        #   ⚠️ 它不是分数：`必须` / `可延后` / `可忽略` 是**有序等级**（E-1「不作分」）。
+        "分级": _graded_report(kernel),
     }
 
 

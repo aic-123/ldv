@@ -4552,7 +4552,9 @@ def test_reflect() -> None:
     # ⚠️ 白名单要**跟着报告一起改**：2026-10-17 加了 `矛盾`（结构层矛盾清单）。
     #    白名单的意义是「报告里出现意料之外的字段就红」—— 加字段必须显式改这里，
     #    这样「偷偷往报告里塞一个分数」会当场被这条判据抓住。
-    allowed = {"方向数", "待展开数", "展开序", "逐方向", "排序规则", "矛盾"}
+    allowed = {"方向数", "待展开数", "展开序", "逐方向", "排序规则", "矛盾",
+               # 2026-10-22 加了 `分级`（显著性三档：必须 / 可延后 / 可忽略）
+               "分级"}
     ok("★ [反思] ㉕ 无标量分：报告字段在白名单内（没有分数 / 健康度 / 优先级分）",
        set(rep) == allowed, f"多出来的字段：{set(rep) - allowed}")
 
@@ -9192,6 +9194,72 @@ def test_forgetting() -> None:
         _sh.rmtree(tmp, ignore_errors=True)
 
 
+def test_motivation() -> None:
+    """★ [动机] 显著性分档：三档由**后果**定，档内按影响面定序。
+
+    用户 2026-10-22 定：三档分类 · 后果定档 + 影响面定序 · 要**完整通路**
+    （从列清单、提问，一直到实施处理）。
+
+    ① 分档看**后果**不看大小：99999 项的「切不开」仍是「可延后」，
+       3 项的「边打架」仍是「必须」—— 大小混进档位就是把分档做成排序
+    ② 档位是**等级不是分数**：返回值必须是三档字符串之一
+    ③ 报告里三档齐全，档内按成员数降序
+    ④ **闭环**：待展开的方向 expand 之后，不再出现在「可延后」
+    ⑤ **持续**：矛盾没解决时，两次 report 的「必须」档逐字相同（不因提过而消失）
+    """
+    import entry as E
+
+    from ldv.core import reflect as RF
+
+    cases = [
+        ({"类型": "边打架"}, "必须"),
+        ({"类型": "子覆盖越出父"}, "必须"),
+        ({"类型": "孤立方向"}, "必须"),
+        ({"类型": "切不开", "项数": 99999}, "可延后"),
+        ({"待展开": True, "成员数": 99999}, "可延后"),
+        ({"成员数": 1, "子方向数": 0}, "可忽略"),
+    ]
+    bad = [(c, RF.significance(c)) for c, want in cases if RF.significance(c) != want]
+    ok("★ [动机] ① 分档看**后果**不看大小（99999 项的切不开仍是「可延后」）",
+       not bad, f"{len(cases)} 个用例｜不符 {bad or '无'}")
+
+    ok("★ [动机] ② 档位是**等级不是分数**（返回值必须是三档字符串之一）",
+       all(RF.significance(c) in RF.SIGNIFICANCE for c, _ in cases),
+       f"档位 {sorted(RF.SIGNIFICANCE)}｜"
+       f"返回类型 {type(RF.significance(cases[0][0])).__name__}")
+
+    app = E.App(None)
+    k = app.kernels["keyset"]
+    g = RF.report(k)["分级"]
+    must, later = g["必须"], g["可延后"]
+
+    def _order(xs):
+        return sorted(xs, key=lambda x: (-(x.get("成员数") or 0), x.get("方向") or ""))
+
+    ok("★ [动机] ③ 报告里三档齐全，且档内按成员数降序",
+       set(g) >= {"档位说明", "必须", "可延后", "可忽略数", "档内顺序"}
+       and must == _order(must) and later == _order(later),
+       f"必须 {len(must)}｜可延后 {len(later)}｜可忽略 {g['可忽略数']}")
+
+    # ④ 闭环（**状态迁移**）：处理之后，档位必须下降。
+    # ⚠️ 真实 kernel 上测不了 —— `_assemble` / `E.App` 造出来的都是**完整树**，
+    #    「待展开」恒为 0（实测：内置 36 项 0 个、ext-wiki-vote 0 个）。
+    #    ⇒ 这同时是既有「预展开」通路的**空转点**：`expand_order` 恒空、
+    #      `apply` 什么也不做，而判据 ㉔ 照样绿（`before == after` 在两边都空时成立）。
+    #      如实记在 docs/谓词推导与反思层.md §11.3。
+    s_before = RF.significance({"待展开": True, "成员数": 5})
+    s_after = RF.significance({"成员数": 5, "子方向数": 2})
+    s_fail = RF.significance({"来源": "展开失败", "成员数": 5})
+    ok("★ [动机] ④ **闭环**：待展开 → 已展开，档位从「可延后」落到「可忽略」",
+       s_before == "可延后" and s_after == "可忽略",
+       f"待展开 {s_before} → 已展开 {s_after}"
+       f"（另：展开失败仍是 {s_fail}，它要人加维度，不自动降档）")
+
+    ok("★ [动机] ⑤ **持续**：矛盾没解决时，两次 report 的「必须」档逐字相同",
+       RF.report(k)["分级"]["必须"] == RF.report(k)["分级"]["必须"],
+       f"必须 {len(RF.report(k)['分级']['必须'])} 条（两次相同）")
+
+
 def test_self_corpus() -> None:
     """★ 认知原型的两条自我判据（2026-10-22，§S5）。
 
@@ -9289,7 +9357,8 @@ def main() -> int:
                test_multilevel, test_retriever, test_cli_paths,
                test_never_judged, test_b17_cyclic_corpus,
                test_skip_evidence_table, test_self_corpus,
-               test_growth_autonomy, test_usage_wiring, test_forgetting):
+               test_growth_autonomy, test_usage_wiring, test_forgetting,
+               test_motivation):
         # ★ **兜底：外部语料不在 ⇒ 跳过该函数，不崩**（2026-10-19 修 CI）
         #
         #   外部语料在 `_data/` 下，而 `.gitignore` 规定 `_data/*` **不进仓库**
