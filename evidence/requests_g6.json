@@ -1,0 +1,48 @@
+{
+  "_meta": {
+    "what": "G6 请求命中度的外生请求集",
+    "why": "命中度必须有一个不随结果调整的请求集，否则命中率可以被刷",
+    "authored_by": "人（逐条对照语料真实键集手写；系统不参与出题）",
+    "version": "g6-20261022",
+    "rule": "只记「人会问什么」+「人做的键映射」，不记预期分类。分类由探针算。",
+    "frozen": "定下后不再因读数好坏而增删条目；要改只能整版换新版本号，老版本留档"
+  },
+  "corpora": {
+    "ext-wiki-vote": [
+      {"id": "W01", "q": "谁的意见有真正的影响力？", "require": ["influence=≥100"]},
+      {"id": "W02", "q": "只投票、从没被任何人投票过的人", "require": ["type=出度1-3", "evidence_status=入度0"]},
+      {"id": "W03", "q": "被很多人投票、但自己从不投票的人", "require": ["evidence_status=入度101-1000", "type=出度0"]},
+      {"id": "W04", "q": "完全不活跃的人（既不投也不被投）", "require": ["type=出度0", "evidence_status=入度0"]},
+      {"id": "W05", "q": "影响力中等的那一批", "require": ["influence=10-99"]},
+      {"id": "W06", "q": "出度极大的人", "require": ["type=出度64+"]},
+      {"id": "W07", "q": "被投票 11 到 100 次、但自己投得很少的人", "require": ["evidence_status=入度11-100", "type=出度1-3"]},
+      {"id": "W08", "q": "影响力很小但很活跃的人", "require": ["influence=1-9", "type=出度16-63"]},
+      {"id": "W09", "q": "完全没有影响力的人", "require": ["influence=0"]},
+      {"id": "W10", "q": "投得少、被投得也少的人", "require": ["type=出度1-3", "evidence_status=入度1-10"]},
+      {"id": "W11", "q": "从不投票、但被别人投过 1 到 10 次", "require": ["type=出度0", "evidence_status=入度1-10"]},
+      {"id": "W12", "q": "投得很多、影响力也很大的人", "require": ["type=出度16-63", "influence=≥100"]},
+      {"id": "W13", "q": "投得中等、被投得很多的人", "require": ["type=出度4-15", "evidence_status=入度101-1000"]},
+      {"id": "W14", "q": "影响力大、却从来没被投票过的人", "require": ["influence=≥100", "evidence_status=入度0"]},
+      {"id": "W15", "q": "从不投票、也完全没有影响力的人", "require": ["type=出度0", "influence=0"]},
+      {"id": "W16", "q": "出度在 1 到 4 之间的人", "require": ["type=出度1-4"]}
+    ],
+    "openalex-citations": [
+      {"id": "O01", "q": "只要同行评审的期刊论文", "require": ["evidence_status=同行评审", "source.kind=journal"]},
+      {"id": "O02", "q": "会议论文", "require": ["type=conference-paper"]},
+      {"id": "O03", "q": "仓储里的预印本", "require": ["evidence_status=仓储", "type=preprint"]},
+      {"id": "O04", "q": "综述文章", "require": ["type=review"]},
+      {"id": "O05", "q": "书的章节", "require": ["type=book-chapter"]},
+      {"id": "O06", "q": "电子书平台上的社论", "require": ["source.kind=ebook platform", "type=editorial"]},
+      {"id": "O07", "q": "预印本", "require": ["type=preprint"]},
+      {"id": "O08", "q": "期刊上发表的综述", "require": ["source.kind=journal", "type=review"]},
+      {"id": "O09", "q": "会议上的摘要", "require": ["source.kind=conference", "type=conference-abstract"]},
+      {"id": "O10", "q": "仓储里的期刊文章", "require": ["evidence_status=仓储", "source.kind=journal"]},
+      {"id": "O11", "q": "没有出处的书", "require": ["source.kind=无出处", "type=book"]},
+      {"id": "O12", "q": "书系列里的章节", "require": ["source.kind=book series", "type=book-chapter"]},
+      {"id": "O13", "q": "状态未知的参考条目", "require": ["evidence_status=未知", "type=reference-entry"]},
+      {"id": "O14", "q": "仓储里的会议论文", "require": ["evidence_status=仓储", "type=conference-paper"]},
+      {"id": "O15", "q": "期刊上的预印本", "require": ["source.kind=journal", "type=preprint"]},
+      {"id": "O16", "q": "期刊论文（journal article）", "require": ["type=journal-article"]}
+    ]
+  }
+}

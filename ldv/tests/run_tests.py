@@ -9007,6 +9007,50 @@ def test_skip_evidence_table() -> None:
        sorted(caught) == sorted(fakes), f"抓到的 {sorted(caught)}｜期望 {sorted(fakes)}")
 
 
+def test_growth_autonomy() -> None:
+    """★ [发展] 自主度红线：系统不许自己改规则（A3 = 0，§4.6 G5）。
+
+    ★★ 判据盯**实现**不盯**声明**：探针第一版把「禁止 A3」的声明和
+       「已实现的 A3 动作」混在一张表里数，判据就去数了声明 ⇒ 误红 2 条。
+       这条测试因此不看任何表，只扫代码与留档。
+
+    ① 代码里没有对 `_data/*/derived/` 的写路径 —— 系统无法自造维度。
+    ② 每个派生维度都记了命名者（`_meta.named_by`）—— 人是命名者。
+       外部语料不在（新 clone）⇒ **跳过**，不是过。
+    """
+    import re as _re
+
+    repo = Path(__file__).resolve().parents[2]
+    hits = []
+    files = sorted((repo / "ldv").rglob("*.py")) + [repo / "entry.py"]
+    for f in files:
+        if "test" in f.name:
+            continue
+        txt = f.read_text(encoding="utf-8", errors="replace")
+        for i, ln in enumerate(txt.splitlines(), 1):
+            if "derived" in ln and _re.search(r'write_text|\.write\(|json\.dump|"w"|\'w\'', ln):
+                hits.append(f"{f.relative_to(repo)}:{i}")
+    ok("★ [发展] ① 系统无法自造维度：代码里没有对 derived 的写路径（A3 = 0）",
+       not hits, f"命中 {len(hits)} 行" + ("：" + "；".join(hits[:3]) if hits else ""))
+
+    side = sorted((repo / "_data").glob("*/derived/*.json"))
+    if not side:
+        ok("★ [发展] ② 每个派生维度都记了命名者（外部语料不在 ⇒ **跳过**）",
+           True, "0 个 sidecar")
+        return
+    unnamed = []
+    for p in side:
+        try:
+            meta = json.loads(p.read_text(encoding="utf-8")).get("_meta") or {}
+        except Exception:                                    # noqa: BLE001
+            unnamed.append(p.name + "（读不出）")
+            continue
+        if not str(meta.get("named_by") or "").strip():
+            unnamed.append(p.name)
+    ok("★ [发展] ② 每个派生维度都记了命名者（人是命名者，不是系统）",
+       not unnamed, f"{len(side)} 个 sidecar｜未记名 {len(unnamed) or '无'}")
+
+
 def test_self_corpus() -> None:
     """★ 认知原型的两条自我判据（2026-10-22，§S5）。
 
@@ -9103,7 +9147,8 @@ def main() -> int:
                test_view_oracles, test_influence_channels, test_views,
                test_multilevel, test_retriever, test_cli_paths,
                test_never_judged, test_b17_cyclic_corpus,
-               test_skip_evidence_table, test_self_corpus):
+               test_skip_evidence_table, test_self_corpus,
+               test_growth_autonomy):
         # ★ **兜底：外部语料不在 ⇒ 跳过该函数，不崩**（2026-10-19 修 CI）
         #
         #   外部语料在 `_data/` 下，而 `.gitignore` 规定 `_data/*` **不进仓库**
