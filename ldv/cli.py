@@ -380,8 +380,56 @@ def run_one(name: str, holdout: int, only: str | None,
     return not guards, "\n".join([head, body, tail])
 
 
+def plan_report(*, rounds: int = 8, per_round: int = 3) -> tuple[bool, str]:
+    """`--plan`：从「只建根」开始报**建树计划** —— 诊断用，**不落盘、不改结构**。
+
+    ⚠️ 它**不解决**大语料超时：`plan` 只改**展开顺序**，`insert` 的工作量一样
+       （每项仍要走一遍路径）。真要「分几次建完」得把 `_expanded` 落盘 ——
+       那会撞 `T2`（陈旧与当前混）与 `§K8`（不完整树 ⇒ 查询漏 ⇒ 假阴）。
+    ⇒ 它的定位是「**建之前先知道要几步**」，不是「分几次建完」。
+    """
+    from .checks._fixtures import load, make_keyset_root
+    from .core.reflect import plan as _plan
+
+    loaded = load()
+    if loaded is None:
+        return False, "语料读不到（`_data/` 不在？）—— 建树计划需要能加载的材料"
+    nodes, _edges, _d = loaded
+    k = make_keyset_root(nodes)()
+    # ⚠️ 「起点」必须在 `plan()` **之前**取 —— 它会把 k 展开到底，
+    #    之后再取 `len(k.all_directions())` 拿到的是**终态**（实测：起点被打成 25）。
+    n_before = len(k.all_directions())
+    p = _plan(k, rounds=rounds, per_round=per_round)
+    lines = [
+        "建树计划（诊断｜**不落盘、不改结构**）",
+        f"  起点 {n_before} 个方向｜每轮上限 {per_round}"
+        f"｜最多 {rounds} 轮｜材料 {len(nodes)} 项",
+    ]
+    for r in p["轮次"]:
+        lines.append(f"  第 {r['第几轮']:2d} 轮 展开 {r['展开'] or ['（无可展开）']}"
+                     f"　剩余待展开 {r['剩余待展开']}")
+    lines.append(f"  总展开 {p['总展开']}｜试过分不开 {p['试过分不开']}"
+                 f"｜剩余待展开 {p['剩余待展开']}"
+                 f"｜终态 {len(k.all_directions())} 个方向")
+    lines.append("  ⚠️ 「剩余 0」有两种含义：全建完了 / 剩下的都试过且分不开"
+                 "—— 看「试过分不开」那一格。")
+    return True, "\n".join(lines)
+
+
 def main(argv: list[str]) -> int:
     args = argv[1:]
+    # ★ **可选入口：建树计划**（2026-10-22，`--plan [轮数]`）。
+    #   只报「建树要几步」，**不落盘、不改结构**（诊断）。放在最前面 ——
+    #   它不走 A/B/D/R 任何一条流程，也不该打印「本轮跑：A+B+D」那些行。
+    if "--plan" in args:
+        _i = args.index("--plan")
+        _rounds = 8
+        if _i + 1 < len(args) and args[_i + 1].isdigit():
+            _rounds = int(args[_i + 1])
+        _ok, _text = plan_report(rounds=_rounds)
+        print(_text)
+        print(f"\n退出码 {0 if _ok else 1}")
+        return 0 if _ok else 1
     which = [a for a in args if not a.startswith("-")]
     plugin = "all"
     if "--plugin" in args:

@@ -9307,6 +9307,15 @@ def test_motivation() -> None:
            f"｜划分集合相同 {_parts(kl2) == _parts(kf)}"
            f"（did 编号可不同 —— 那是创建顺序，不是结构）")
 
+    # ⑧ `--plan` 入口：报「起点 1 个方向」并收敛到剩余 0
+    #    ⚠️ 「起点」必须在 plan() **之前**取 —— 之后取拿到的是终态（实测被打成 25）。
+    from ldv.cli import plan_report as _pr
+
+    okp, ptext = _pr(rounds=12)
+    ok("★ [动机] ⑧ `cli --plan` 入口：起点 1 个方向、收敛到剩余 0",
+       okp and "起点 1 个方向" in ptext and "剩余待展开 0" in ptext,
+       next((ln.strip() for ln in ptext.splitlines() if "起点" in ln), ptext[:60]))
+
 
 def test_self_corpus() -> None:
     """★ 认知原型的两条自我判据（2026-10-22，§S5）。
