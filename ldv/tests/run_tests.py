@@ -7369,11 +7369,11 @@ def test_spec_paths() -> None:
     inside = _ab.VIEW_SPEC_PATH.parent.parent / "corpus" / "nodes"        # ldv/corpus/nodes
     outside = Path(tempfile.gettempdir()) / "_ldv_probe_corpus" / "nodes"  # 包外
     got = _ab.spec_paths(inside)
-    ok("① [S1] `spec_paths` 对**包内**语料：仍以仓内那份为准（顺序 = 语料旁、仓内）",
+    ok("① [spec路径-1] `spec_paths` 对**包内**语料：仍以仓内那份为准（顺序 = 语料旁、仓内）",
        len(got) == 2 and got[-1] == _ab.VIEW_SPEC_PATH,
        f"{[str(g) for g in got]}")
     got2 = _ab.spec_paths(outside)
-    ok("① [S2] `spec_paths` 对**包外**语料：语料旁那份排在**前**（优先级）",
+    ok("① [spec路径-2] `spec_paths` 对**包外**语料：语料旁那份排在**前**（优先级）",
        got2[0] == outside.parent / "view_spec.json" and got2[-1] == _ab.VIEW_SPEC_PATH,
        f"{[str(g) for g in got2]}")
     ok("① [S3] `spec_paths(None)`：只给仓内那份（不知道语料时只有兜底）",
@@ -9401,6 +9401,85 @@ def test_motivation() -> None:
            f"｜剩余 {r6['剩余待展开'] if r6 else '?'}")
 
 
+def test_no_unsourced_strings() -> None:
+    """★ [不产内容] 查询输出里**每个字符串都能指回材料**（§S1）。
+
+    判据不是「看起来没生成」——是**逐字符串找出处**：
+
+        项 id / 方向 id / 标题 / 键  ⇒ 必须在这四类材料里
+        协议字段名与枚举值            ⇒ 必须在固定词表里
+        错误与建议文案                ⇒ 固定模板（前缀白名单），不参与内容判定
+
+    ⚠️ 这条守的是**未来**：现在这些字段都由构造保证（`_node` 只从 `fields` 取标题）。
+       一旦有人加「自动摘要」「模型润色」，第一个被抓到的就是这里 ——
+       而那种改动**不会让任何现有判据变红**（这正是它存在的理由）。
+    """
+    import entry as E
+
+    app = E.App(None)
+    k = app.kernels["keyset"]
+
+    material: set[str] = set(app.nodes)
+    for nid, n in app.nodes.items():
+        material |= {str(v) for v in n.fields.values()}
+        material |= set(n.keys)
+    material |= {d.did for d in k.all_directions()}
+    material |= set(app.titles.values())
+
+    protocol = {
+        "ok", "plugin", "keyset", "reach", "sequence", "require", "forbid",
+        "node", "nodes", "did", "title", "n", "n_branches", "n_answer",
+        "answer_ids", "answer_titles", "ordered_by", "default", "usage",
+        "path", "stopped", "relax", "unknown_keys", "suggest", "ms",
+        "requirement", "branches_shown", "error", "fingerprint",
+        # 停因的枚举值（`stopped` 字段的取值，代码写的）
+        "split", "leaf", "root",
+    }
+    # 错误 / 建议 / 停因文案：**固定模板**（句子是代码写的，键名来自数据）
+    fixed_prefix = ("这些键", "不认识的", "没有插件", "没有这个节点",
+                    "已经是最细", "已经到底", "停在了")
+
+    # ⚠️ **只查值，不查键** —— 键是协议（代码写的字段名：`rank` / `n_members` / `must`…），
+    #    值是数据（应来自材料）。第一版连键一起查 ⇒ 报 139 个「无出处」，全是字段名。
+    def walk_values(o):
+        if isinstance(o, str):
+            yield o
+        elif isinstance(o, dict):
+            for vv in o.values():
+                yield from walk_values(vv)
+        elif isinstance(o, (list, tuple)):
+            for x in o:
+                yield from walk_values(x)
+
+    bad: list[str] = []
+    for spec in ({"require": []}, {"require": ["type=概念"]},
+                 {"require": ["不存在=x"]}):
+        # ⚠️ 输出会**原样回显**查询条件（`requirement` 段）—— 那是用户自己的话，
+        #    不是系统生成的内容 ⇒ 回显合法，把这一趟的 require/forbid 计入材料。
+        material |= set(spec.get("require") or ())
+        material |= set(spec.get("forbid") or ())
+        for s in walk_values(app.query(spec)):
+            if not s or s in material or s in protocol:
+                continue
+            if s.startswith(fixed_prefix):
+                continue
+            bad.append(s[:60])
+
+    ok("★ [不产内容] 查询输出里每个字符串都能指回材料（§S1）",
+       not bad,
+       f"3 次查询｜材料 {len(material)} 个字符串｜协议词 {len(protocol)}｜"
+       f"无出处 {len(bad)} 个" + (f"：{bad[:3]}" if bad else ""))
+
+    # ★ **合成对照**：判据必须**能红**。故意塞一个不在材料里的字符串，
+    #   同一套过滤逻辑必须抓到它 —— 否则「无出处 0 个」只是「没查」。
+    probe = {"answer_titles": ["这是一句凭空生成的话"]}
+    caught = [s for s in walk_values(probe)
+              if s and s not in material and s not in protocol
+              and not s.startswith(fixed_prefix)]
+    ok("★ [不产内容] 判据自检：故意塞一个无出处字符串 ⇒ **抓得到**",
+       caught == ["这是一句凭空生成的话"], f"抓到 {caught}")
+
+
 def test_self_corpus() -> None:
     """★ 认知原型的两条自我判据（2026-10-22，§S5）。
 
@@ -9499,7 +9578,7 @@ def main() -> int:
                test_never_judged, test_b17_cyclic_corpus,
                test_skip_evidence_table, test_self_corpus,
                test_growth_autonomy, test_usage_wiring, test_forgetting,
-               test_motivation):
+               test_motivation, test_no_unsourced_strings):
         # ★ **兜底：外部语料不在 ⇒ 跳过该函数，不崩**（2026-10-19 修 CI）
         #
         #   外部语料在 `_data/` 下，而 `.gitignore` 规定 `_data/*` **不进仓库**
