@@ -9035,7 +9035,10 @@ def test_growth_autonomy() -> None:
 
     side = sorted((repo / "_data").glob("*/derived/*.json"))
     if not side:
-        ok("★ [发展] ② 每个派生维度都记了命名者（外部语料不在 ⇒ **跳过**）",
+        # ⚠️ 格式必须是「（**跳过**」——汇总只认这个格式。
+        #    写成「⇒ **跳过**」会被算成「过」，那就是「跳过 ≠ 通过」的违规。
+        ok("★ [发展] ② 每个派生维度都记了命名者"
+           "（**跳过**：外部语料不在，没有 sidecar 可判）",
            True, "0 个 sidecar")
         return
     unnamed = []
