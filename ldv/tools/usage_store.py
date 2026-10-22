@@ -24,12 +24,19 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 DIRNAME = "usage"
 #: 缓冲区子目录 —— 查询先落这里，**不参与倾向**（`load` 不递归进来）
 STAGE = "_staging"
+#: 缓冲区容量上限（批次数）—— **外生参数、暂定值，未经标定**。
+#:
+#: ⚠️ 这个 50 是「先让功能能用」的暂定数，不是测出来的。要动它得先有刻度：
+#:    多少次查询之内还该记得住？—— 那是人的判断，不是这里能算的。
+#: ⚠️ **只淘汰缓冲，正式记录永不淘汰**（正式是账本，缓冲是状态）。
+STAGE_CAP = 50
 FIELDS = ("id", "did", "outcome", "propensity", "qfp", "note")
 
 
@@ -117,20 +124,42 @@ def _stage_dir(corpus_dir: Any) -> Path:
     return _dir(corpus_dir) / STAGE
 
 
+def _evict(corpus_dir: Any, cap: int = STAGE_CAP) -> list[str]:
+    """缓冲有界：超过 `cap` 就删最旧的（按 `at`，再按文件名 —— 确定性）。
+
+    ⚠️ **只动缓冲区**。正式记录是账本，**永不淘汰** —— 删正式只能 `clear`。
+    """
+    rows = stage_load(corpus_dir)
+    if len(rows) <= cap:
+        return []
+    rows.sort(key=lambda r: (r.get("at") or "", r["file"]))
+    drop = rows[: len(rows) - cap]
+    d = _stage_dir(corpus_dir)
+    for r in drop:
+        try:
+            (d / r["file"]).unlink()
+        except OSError:
+            pass
+    return [r["file"] for r in drop]
+
+
 def stage(corpus_dir: Any, *, qfp: str, shown: list[str], note: str = "") -> dict:
     """把「这次展示了哪些支」写进缓冲区 —— **一次查询一批，同 qfp 覆盖**。
 
     ⚠️ 覆盖是**刻意**的：缓冲区存的是「这次查询摆了什么」这个**状态**，
        不是账本。同一次查询重跑 ⇒ 展示列表一样 ⇒ 覆盖成同一份。
+    ⚠️ 有界（`STAGE_CAP`）：超了淘汰最旧的**缓冲**，正式记录一条不动。
     """
     d = _stage_dir(corpus_dir)
     d.mkdir(parents=True, exist_ok=True)
     p = d / f"{_qfp8(qfp)}.md"
     existed = p.exists()
+    at = datetime.now().isoformat(timespec="microseconds")
     body = (
         "---\n"
         f"id: {p.stem}\n"
         f"qfp: {qfp}\n"
+        f"at: {at}\n"
         f"shown: {','.join(str(x) for x in shown)}\n"
         f"n_shown: {len(shown)}\n"
         f"note: {note}\n"
@@ -141,7 +170,10 @@ def stage(corpus_dir: Any, *, qfp: str, shown: list[str], note: str = "") -> dic
         "⚠️ 缓冲不参与倾向计算（load 只读正式目录）。\n"
     )
     io.open(p, "w", encoding="utf-8", newline="\n").write(body)
-    return {"ok": True, "path": str(p), "overwrote": existed, "n_shown": len(shown)}
+    # 有界：**只列文件名**判超没超，超了才解析 —— 常态是 O(1)
+    evicted = _evict(corpus_dir) if len(list(d.glob("*.md"))) > STAGE_CAP else []
+    return {"ok": True, "path": str(p), "overwrote": existed,
+            "n_shown": len(shown), "evicted": evicted}
 
 
 def stage_load(corpus_dir: Any) -> list[dict]:
@@ -160,6 +192,7 @@ def stage_load(corpus_dir: Any) -> list[dict]:
                     k, v = line.split(":", 1)
                     row[k.strip()] = v.strip()
             out.append({"qfp": row.get("qfp", ""),
+                        "at": row.get("at", ""),
                         "shown": [x for x in (row.get("shown") or "").split(",") if x],
                         "file": p.name})
         except Exception:                                    # noqa: BLE001
@@ -220,6 +253,7 @@ def status(corpus_dir: Any) -> dict:
         per[r["did"]] = per.get(r["did"], 0) + 1
     return {"记录数": len(rows), "覆盖方向数": len(per),
             "缓冲批次数": len(staged),
+            "缓冲上限": STAGE_CAP,
             "缓冲里待 promote 的支": sum(len(r["shown"]) for r in staged),
             "目录": str(_dir(corpus_dir)),
             "最多的方向": sorted(per.items(), key=lambda kv: (-kv[1], kv[0]))[:5]}

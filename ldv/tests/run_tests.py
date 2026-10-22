@@ -9117,6 +9117,16 @@ def test_usage_wiring() -> None:
         bad = US.promote(tmp, qfp="q2", did="D9", propensity=0.5)
         ok("★ [接入] ⑦ 不在缓冲里的支不许 promote（翻到了 ≠ 用了）",
            bad.get("written") is False, f"{bad.get('why')}")
+
+        # ⑧ 缓冲有界 —— **只淘汰缓冲，正式记录一条不动**
+        before_n = len(US.load(tmp))
+        for i in range(US.STAGE_CAP + 5):
+            US.stage(tmp, qfp=f"cap-{i:04d}", shown=["D1"])
+        after = len(US.stage_load(tmp))
+        ok("★ [接入] ⑧ 缓冲有界：写 cap+5 批 ⇒ 只剩 cap，正式记录一条不动",
+           after == US.STAGE_CAP and len(US.load(tmp)) == before_n,
+           f"缓冲 {after} 批（上限 {US.STAGE_CAP}）｜正式 {len(US.load(tmp))} 条"
+           f"（写前 {before_n} 条）")
     finally:
         _sh.rmtree(tmp, ignore_errors=True)
 
