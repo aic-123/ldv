@@ -13,8 +13,8 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from ._paths import REPO
 
-REPO = Path(__file__).resolve().parents[2]
 
 
 def main() -> int:

@@ -70,6 +70,7 @@ from .interfaces import (
     validate_plugin,
 )
 from .tri import Tri, fold
+from .direction import did_order as _did_order
 
 #: 曝光曲线的**指数**：`propensity(k) = k ** (-EXPOSURE_ALPHA)`，再夹下界。
 #:
@@ -1250,13 +1251,6 @@ class Kernel:
             "事件": len(self.ledger),
             "使用记录": len(self.usage),
         }
-
-
-def _did_order(did: str) -> tuple[int, str]:
-    """`D12` 要排在 `D3` 后面 —— 按数值排，不按字典序。"""
-    if did.startswith("D") and did[1:].isdigit():
-        return (int(did[1:]), "")
-    return (1 << 30, did)
 
 
 class _NoGuard:

@@ -35,9 +35,9 @@ from pathlib import Path
 from typing import Any
 
 from ..corpus.loader import parse_front_matter
+from ._paths import STAGING
 
 #: 缓冲目录名（与 `nodes/` 平级）
-STAGING = "_staging"
 
 #: 缓冲区**容量上限**（外生，2026-10-17）。超限**报出来**，不静默淘汰。
 #: ⚠️ 为什么要有上限：缓冲区一大，人就不看了 ⇒ 待提交越积越多 ⇒ 退化成仓库。

@@ -82,8 +82,8 @@ from .checks.coverage import corpus_fingerprint
 from .core import view_persist
 from .core.views import maintain, shrink_ratio
 from .run_checks import batch_kernel, maintenance_kernel
+from .plugins import DIRECTIONS
 
-DIRECTIONS = ("keyset", "reach", "sequence")
 
 #: 视图列表在落盘字典里的**键名**。一处定义（`to_dict` 用的就是它）。
 VIEWS_KEY = "视图"

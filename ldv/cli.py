@@ -55,9 +55,9 @@ from .flow import (
 from .plugins.keyset import KeysetPlugin
 from .plugins.reach import ReachPlugin
 from .plugins.sequence import SequencePlugin
+from .plugins import DIRECTIONS
 
 #: 每个方向：插件工厂 · 根 payload · 查询集 · 最外层意图（**外生，人声明**）
-DIRECTIONS = ("keyset", "reach", "sequence")
 
 INTENTS = {
     "keyset": "键集包含 —— 最外层意图不约束任何键",

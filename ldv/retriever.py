@@ -66,11 +66,12 @@ import json
 from dataclasses import dataclass, field, replace
 from typing import Any, Iterable, Mapping
 
-from .cli import DIRECTIONS as BAR_NAMES
+from .plugins import DIRECTIONS as BAR_NAMES
 from .core.kernel import Kernel, Query
 from .core.tri import Tri
 from .core.views import ViewSpec, coarsest_stable_refinement, partition_of
 from . import flow
+from .core.direction import did_order as _did_order
 
 __all__ = [
     "BAR_NAMES",
@@ -790,12 +791,3 @@ def render_explanation(r: Retrieval) -> str:
                      "（「不用一开始就创建最完美的规则」—— 增量，不要求一开始就对）")
     return "\n".join(lines)
 
-
-def _did_order(did: str) -> tuple[int, str]:
-    """方向 id 的**规范化**顺序：`D12` 排在 `D3` 后面。
-
-    ⚠️ 这只是「同一个集合只有一种写法」（§8.2 可复现性）—— **不是**任何度量顺序，
-       更**不是**遍历顺序（`基线§3.2`）。
-    """
-    head = did.lstrip("D")
-    return (int(head), did) if head.isdigit() else (1 << 30, did)

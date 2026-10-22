@@ -175,3 +175,17 @@ class Ledger:
 def _fingerprint(ev: Event) -> tuple:
     """事件的指纹。`detail` 排序后再比，避免字典序影响。"""
     return (ev.seq, ev.kind, ev.did, tuple(sorted((k, repr(v)) for k, v in ev.detail.items())))
+
+def did_order(did: str) -> tuple[int, str]:
+    """方向 id 的**规范化**顺序：`D12` 排在 `D3` 后面（按数值，不按字典序）。
+
+    ★ 只有**一处**实现 —— 原来 `kernel` 与 `retriever` 各一份，且**边界不同**：
+      `kernel` 用 `did[1:].isdigit()`（严格）；`retriever` 用 `did.lstrip("D")`，
+      而 `lstrip` 会剥掉**所有**前导 `D` ⇒ `DD5` 会被当成 `5` 排到中间。
+      这里取严格版：非 `D<数字>` 一律排到最后。
+    ⚠️ 这只是「同一个集合只有一种写法」（§8.2 可复现性）—— **不是**度量顺序，
+       更**不是**遍历顺序。
+    """
+    if did.startswith("D") and did[1:].isdigit():
+        return (int(did[1:]), did)
+    return (1 << 30, did)

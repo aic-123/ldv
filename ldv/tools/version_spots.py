@@ -24,8 +24,8 @@ import io
 import re
 import sys
 from pathlib import Path
+from ._paths import REPO
 
-REPO = Path(__file__).resolve().parent.parent.parent
 
 VER = r"(v\d+\.\d+\.\d+)"
 DATE = r"(\d{4}-\d{2}-\d{2})"

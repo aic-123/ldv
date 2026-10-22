@@ -53,10 +53,10 @@ import shutil
 import time
 from pathlib import Path
 from typing import Any
+from ._paths import STAGING
 
 #: 缓冲目录名 —— 与 `ldv/tools/staging.py` 的 `STAGING` **故意同名**：
 #: 缓冲区是一个概念，不是一个模块的私有财产。改一处不改另一处会漂。
-STAGING = "_staging"
 #: 一次性树的父目录（与 `nodes/` / `rejected/` 平级）
 EXCHANGES = "exchanges"
 

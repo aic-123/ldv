@@ -31,8 +31,8 @@ import io
 import re
 import sys
 from pathlib import Path
+from ._paths import REPO
 
-REPO = Path(__file__).resolve().parent.parent.parent
 EV = REPO / "evidence"
 
 #: 取 token：允许 `,` `*` `{` `}`（花括号/通配要用），遇到空白与引号类就停

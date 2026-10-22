@@ -29,8 +29,8 @@ import io
 import re
 import sys
 from pathlib import Path
+from ._paths import REPO
 
-REPO = Path(__file__).resolve().parent.parent.parent
 WS = REPO.parent
 OUT = REPO / "evidence" / "quotes-index.md"
 
