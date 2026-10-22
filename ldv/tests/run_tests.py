@@ -9054,6 +9054,54 @@ def test_growth_autonomy() -> None:
        not unnamed, f"{len(side)} 个 sidecar｜未记名 {len(unnamed) or '无'}")
 
 
+def test_usage_wiring() -> None:
+    """★ [接入] 使用记录的落盘通道（§4.6 G5 表里「使用者入口」那一格）。
+
+    这四条都**不依赖外部语料** ⇒ clone 上真跑，不跳过。
+
+    ① 内置语料**不启用**使用记录 —— 内置语料在仓库里，
+       往那儿写 usage 等于把运行时产物写进仓库。
+    ② 去重：同一 `(qfp, did)` 只写一次，不覆写、不叠加
+       （叠加等于把「多看了一眼」当成「更有用」）。
+    ③ 写盘是 LF —— Windows 上默认写 CRLF，而仓库规定 LF。
+    ④ `clear` 之后为空，再 load 为 0 条（可回退）。
+
+    ⚠️ 「排序不改答案集合」那条（`W5`）需要外部语料 ⇒ 留在
+       `evidence/_probe_usage_wiring.py`，不在这里假装跑过。
+    """
+    import shutil as _sh
+    import tempfile as _tf
+
+    import entry as E
+
+    from ldv.tools import usage_store as US
+
+    app = E.App(None)                     # 内置 36 项语料
+    r = app.query({"require": []})
+    ok("★ [接入] ① 内置语料不启用使用记录（不往仓库里写运行时产物）",
+       app._usage_dir is None and r.get("ordered_by") == "default",
+       f"_usage_dir = {app._usage_dir}｜ordered_by = {r.get('ordered_by')}")
+
+    tmp = Path(_tf.mkdtemp(prefix="ldv_usage_"))
+    try:
+        a = US.append(tmp, did="D1", outcome=1.0, propensity=0.5, qfp="q1", note="t")
+        b = US.append(tmp, did="D1", outcome=1.0, propensity=0.5, qfp="q1", note="t")
+        ok("★ [接入] ② 同一 (qfp, did) 只写一次（不覆写、不叠加）",
+           a.get("written") is True and b.get("written") is False,
+           f"第一次 written={a.get('written')}｜第二次 written={b.get('written')}")
+
+        raw = Path(a["path"]).read_bytes()
+        ok("★ [接入] ③ 记录写盘是 LF（Windows 上默认会写 CRLF）",
+           b"\r\n" not in raw, f"CRLF {raw.count(b'\\r\\n')} 个｜{len(raw)} 字节")
+
+        n = US.clear(tmp)
+        ok("★ [接入] ④ clear 之后为空，再 load 为 0 条（可回退）",
+           n.get("deleted") == 1 and US.load(tmp) == [],
+           f"删了 {n.get('deleted')}｜再 load {len(US.load(tmp))} 条")
+    finally:
+        _sh.rmtree(tmp, ignore_errors=True)
+
+
 def test_self_corpus() -> None:
     """★ 认知原型的两条自我判据（2026-10-22，§S5）。
 
@@ -9151,7 +9199,7 @@ def main() -> int:
                test_multilevel, test_retriever, test_cli_paths,
                test_never_judged, test_b17_cyclic_corpus,
                test_skip_evidence_table, test_self_corpus,
-               test_growth_autonomy):
+               test_growth_autonomy, test_usage_wiring):
         # ★ **兜底：外部语料不在 ⇒ 跳过该函数，不崩**（2026-10-19 修 CI）
         #
         #   外部语料在 `_data/` 下，而 `.gitignore` 规定 `_data/*` **不进仓库**

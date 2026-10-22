@@ -71,7 +71,10 @@ from urllib.parse import parse_qs, urlparse
 
 from ldv import protocol as PROTO
 from ldv.checks._fixtures import build_keyset, build_reach
+from ldv.core.interfaces import WeightedRecord
+from ldv.core.selfopt import tendency_by_direction
 from ldv.corpus.loader import load_edges, load_nodes
+from ldv.tools import usage_store
 
 FIELDS = ("require", "forbid")
 UI_PLUGINS = ("keyset",)
@@ -170,6 +173,72 @@ class App:
         self.facets, self.n_constant = self._facets()
         self.lock = threading.Lock()
         self.n_queries = 0
+        # ── 使用记录（§4.6 G5 表里「使用者入口」那一格）────────────────────
+        # ⚠️ 只在 **`_data/` 下**的语料启用：内置语料的 root 也是 `.../nodes`
+        #    （`ldv/corpus/nodes`），按 name == "nodes" 判会把**仓库目录**当成
+        #    可写目标 —— 实测当场抓到（`_usage_dir` 落成 `repo/ldv/corpus`）。
+        #    `_data/*` 被 gitignore ⇒ 写在那里不算污染仓库。
+        _rp = Path(root).resolve()
+        self._usage_dir = (_rp.parent if (_rp.name == "nodes" and "_data" in _rp.parts)
+                           else None)
+        self._last_shown: list[str] = []
+        self._last_qfp = ""
+        self._tendency: dict[str, float] = {}
+        self.usage_loaded = 0
+        self._load_usage()
+
+    # ── 使用记录：加载 / 记录 / 清空 ─────────────────────────────────────────
+    def _load_usage(self) -> None:
+        """把历史使用记录灌进 `kernel.usage`，并算出每个方向的倾向。
+
+        ★★ **记录不改结构**：它只进 `kernel.usage`（一个 list），
+           树的项数 / 键集 / 指纹一个都不动。判据 `[接入] ②` 守这条 ——
+           这也是「使用记录**不进** `nodes/`」的兑现点（`§K9`）。
+        """
+        if self._usage_dir is None:
+            return
+        recs = []
+        for r in usage_store.load(self._usage_dir):
+            try:
+                recs.append(WeightedRecord(did=r["did"], outcome=float(r["outcome"]),
+                                           propensity=float(r["propensity"]),
+                                           note=r.get("note", "")))
+            except ValueError:
+                continue                       # 倾向越界的记录不收（§K7 / B11）
+        if not recs:
+            return
+        k = self.kernels["keyset"]
+        k.usage.extend(recs)
+        self.usage_loaded = len(recs)
+        self._tendency = tendency_by_direction(k)
+
+    def _record_use(self, k, d) -> dict | None:
+        """下钻 = 这次「这个方向有用」的**真实**信号（不是合成反馈）。
+
+        ⚠️ 只在**这一支刚被展示过**时才记 —— 否则就是把「翻到了」当成「用了」。
+        ⚠️ 没被下钻的方向**不记负信号**（`§K6`：没看见 ≠ 看见了不好）。
+        ⚠️ 同一次查询对同一方向只记一次（`usage_store` 用 `(qfp, did)` 去重）。
+        """
+        if self._usage_dir is None or d.did not in self._last_shown:
+            return None
+        rec = k.record_usage(d, {"outcome": 1.0})
+        if rec is None:
+            return None
+        out = usage_store.append(self._usage_dir, did=d.did, outcome=rec.outcome,
+                                 propensity=rec.propensity, qfp=self._last_qfp,
+                                 note="drill")
+        self._last_shown = [x for x in self._last_shown if x != d.did]
+        return out
+
+    def clear_usage(self) -> dict:
+        """显式清空 —— **唯一的删除路径**，不做自动淘汰。清完次序回默认。"""
+        if self._usage_dir is None:
+            return {"ok": False, "error": "内置语料不启用使用记录"}
+        n = usage_store.clear(self._usage_dir)
+        self.kernels["keyset"].usage.clear()
+        self._tendency = {}
+        self.usage_loaded = 0
+        return {**n, "次序": "已回到默认（无倾向）"}
 
     # ── facet：剔掉「对全部项都成立」的键（那是常量，不是维度） ────────────
     def _facets(self) -> tuple[dict[str, list[dict]], int]:
@@ -381,8 +450,22 @@ class App:
         t0 = time.perf_counter()
         with self.lock:                      # `query` 会写（expand）⇒ 串行
             nodes, path, why, ans = self._resolve(k, req, forb)
+            # ── 按历史倾向排「先看哪一支」——**只改次序，不改集合** ──────────
+            #   ⚠️ 这是「接入」的全部作用面：`answer_ids` / `n_answer` /
+            #      `n_branches` 排序前后必须**逐字相同**（判据 `[接入] ③` 守这条）。
+            #      参数只影响「先说哪一支」，不影响「有哪些答案」——
+            #      与「答案是位置」的定位一致：答案 = 节点集合，次序只是界面。
+            ordered_by = "default"
+            if self._tendency and len(nodes) > 1:
+                nodes = sorted(nodes,
+                               key=lambda n: (-self._tendency.get(n["did"], 0.0), n["did"]))
+                ordered_by = "usage"
+            # §8.1：展示是**显式一步**，不是遍历的副作用（否则曝光位次是假的）
+            k.show([n["did"] for n in nodes])
+            self._last_shown = [n["did"] for n in nodes]
         ms = (time.perf_counter() - t0) * 1000
         self.n_queries += 1
+        self._last_qfp = f"{self.fingerprint()}|{'&'.join(sorted(req))}"
         # ⚠️ **接口不截断**：`nodes` 给全部支，`n_branches` 与 `len(nodes)` 恒等。
         #    只有界面才截显示（否则「Σ各支 == 答案」在客户端无法验证 —— 实测踩到：
         #    空需求 31 支被截成 12 支，合计 3610 ≠ 7115，看起来像切分漏了）。
@@ -391,6 +474,9 @@ class App:
         shown = nodes[:cap] if cap > 0 else nodes
         return {"ok": True, "plugin": plugin,
                 "requirement": {"require": sorted(req), "forbid": sorted(forb)},
+                # 「先看哪一支」由谁定：default = 无历史；usage = 按使用记录排的
+                # ⚠️ 它只描述**次序**，不是分数、不可跨系统比较（协议禁词那一类）
+                "ordered_by": ordered_by,
                 # 1 支时 `node` 仍给（兼容旧调用方）；多支时 `node` 为 null，看 `nodes`
                 "node": nodes[0] if len(nodes) == 1 else None,
                 "nodes": shown,
@@ -456,9 +542,18 @@ class App:
             d = k.direction(did)
         except Exception as e:
             return {"ok": False, "error": f"没有这个节点 {did!r}：{e}"}
+        # 下钻 = 「这一支有用」的唯一**真实**信号（入口没有「点赞」界面，也不合成反馈）
+        used = self._record_use(k, d)
         ans = self.answer_set(frozenset(req), frozenset(forb))
         return {"ok": True, "parent": self._node(k, d, ans),
-                "children": [self._node(k, c, ans) for c in k.children_of(d)]}
+                "children": [self._node(k, c, ans) for c in k.children_of(d)],
+                # 记了就报，没记就报**为什么** —— 不许静默，也不许「成功与失败共用一句话」
+                "recorded": bool((used or {}).get("written")),
+                "record_note": (
+                    "已记录（下钻 = 有用）" if (used or {}).get("written")
+                    else (used or {}).get("why")
+                    or ("未启用：内置语料不写使用记录" if self._usage_dir is None
+                        else "这一支不在刚展示的候选里，不记"))}
 
     def batch(self, specs: list[dict]) -> dict:
         out = []
