@@ -9241,19 +9241,30 @@ def test_motivation() -> None:
        and must == _order(must) and later == _order(later),
        f"必须 {len(must)}｜可延后 {len(later)}｜可忽略 {g['可忽略数']}")
 
-    # ④ 闭环（**状态迁移**）：处理之后，档位必须下降。
-    # ⚠️ 真实 kernel 上测不了 —— `_assemble` / `E.App` 造出来的都是**完整树**，
-    #    「待展开」恒为 0（实测：内置 36 项 0 个、ext-wiki-vote 0 个）。
-    #    ⇒ 这同时是既有「预展开」通路的**空转点**：`expand_order` 恒空、
-    #      `apply` 什么也不做，而判据 ㉔ 照样绿（`before == after` 在两边都空时成立）。
-    #      如实记在 docs/谓词推导与反思层.md §11.3。
-    s_before = RF.significance({"待展开": True, "成员数": 5})
-    s_after = RF.significance({"成员数": 5, "子方向数": 2})
-    s_fail = RF.significance({"来源": "展开失败", "成员数": 5})
-    ok("★ [动机] ④ **闭环**：待展开 → 已展开，档位从「可延后」落到「可忽略」",
-       s_before == "可延后" and s_after == "可忽略",
-       f"待展开 {s_before} → 已展开 {s_after}"
-       f"（另：展开失败仍是 {s_fail}，它要人加维度，不自动降档）")
+    # ④ 闭环：用**只建根**的内核 —— `make_keyset_root` 只 `build` 根、**不 insert**，
+    #    所以 D0 装着全部项但**没展开** ⇒ 这是真的「待展开」状态。
+    #    ⚠️ 完整树里待展开恒为 0（`build_keyset` 与 `E.App` 都会 insert 到底），
+    #       拿它们测这条会**空转** —— 实测内置 36 项 0 个、ext-wiki-vote 0 个。
+    from ldv.checks._fixtures import load as _load
+    from ldv.checks._fixtures import make_keyset_root
+
+    loaded = _load()
+    if loaded is None:
+        ok("★ [动机] ④ 闭环（**跳过**：内置语料加载不了）", True, "0")
+    else:
+        _nodes, _edges, _d = loaded
+        k3 = make_keyset_root(_nodes)()
+        before_later = [x for x in RF.report(k3)["分级"]["可延后"]
+                        if x["方向"] == "D0"]
+        n_before = len(k3.all_directions())
+        k3.expand(k3.direction("D0"))
+        after_later = [x for x in RF.report(k3)["分级"]["可延后"]
+                       if x["方向"] == "D0"]
+        ok("★ [动机] ④ **闭环**：展开 D0 之后，它不再出现在「可延后」",
+           len(before_later) == 1 and not after_later,
+           f"只建根：{n_before} 个方向｜展开前「可延后」{len(before_later)} 条"
+           f"（成员 {before_later[0]['成员数'] if before_later else 0}）"
+           f" → 展开后 {len(after_later)} 条｜方向数 → {len(k3.all_directions())}")
 
     ok("★ [动机] ⑤ **持续**：矛盾没解决时，两次 report 的「必须」档逐字相同",
        RF.report(k)["分级"]["必须"] == RF.report(k)["分级"]["必须"],
