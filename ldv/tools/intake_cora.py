@@ -70,6 +70,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 from typing import Iterable
+from ._intake_common import scalar as _scalar
 
 SOURCE_URL = "https://linqs-data.soe.ucsc.edu/public/lbc/cora.tgz"
 
@@ -117,11 +118,6 @@ def read_cites(path: Path, known: set[str]) -> tuple[dict[str, list[str]], int, 
     for pid in out:
         out[pid] = sorted(set(out[pid]))
     return out, dangling, self_loops
-
-
-def _scalar(text: object, limit: int = 120) -> str:
-    s = " ".join(str(text or "").split())
-    return s.replace('"', "'").replace("\x00", "")[:limit]
 
 
 def node_markdown(pid: str, label: str, outs: list[str],

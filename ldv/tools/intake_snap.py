@@ -74,6 +74,7 @@ import json
 from collections import Counter
 from pathlib import Path
 from typing import Iterable
+from ._intake_common import scalar as _scalar
 
 SOURCE_URL = "https://snap.stanford.edu/data/"
 
@@ -120,11 +121,6 @@ def year_of(pid: str) -> str | None:
         return None
     yy = int(pid[:2])
     return f"19{yy:02d}" if yy >= 90 else f"20{yy:02d}"
-
-
-def _scalar(text: object, limit: int = 120) -> str:
-    s = " ".join(str(text or "").split())
-    return s.replace('"', "'").replace("\x00", "")[:limit]
 
 
 def node_markdown(nid: str, label: str, title: str, outs: list[str],

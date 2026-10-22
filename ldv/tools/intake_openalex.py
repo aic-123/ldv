@@ -102,6 +102,8 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Iterable
 
+from ._intake_common import scalar as _scalar
+
 BASE = "https://api.openalex.org/works"
 MAILTO = "ldv-intake@example.org"
 UA = f"ldv-intake/0.1 (mailto:{MAILTO})"
@@ -188,13 +190,6 @@ def source_type(rec: dict) -> str:
 
 def evidence_of(kind: str) -> str:
     return "同行评审" if kind in REVIEWED else ("仓储" if kind != "无出处" else "未知")
-
-
-def _scalar(text: Any, limit: int = 120) -> str:
-    """压成**单行标量**：语料解析器只认单行，且值里的引号会破坏 front-matter。"""
-    s = " ".join(str(text or "").split())
-    s = s.replace('"', "'").replace("\x00", "")
-    return s[:limit]
 
 
 def node_markdown(rec: dict, internal: list[str]) -> str:
