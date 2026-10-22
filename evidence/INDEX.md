@@ -2,7 +2,7 @@
 
 > 仓库里每一处「实测 / 留档」的引用都指向这里的文件。**不是宣称，是实体。**
 
-共 **159** 个文件。下表按文件名排；「被谁引用」是仓库内引用它的文档。
+共 **160** 个文件。下表按文件名排；「被谁引用」是仓库内引用它的文档。
 
 | 文件 | 大小 | 被谁引用 |
 |---|---|---|
@@ -115,6 +115,7 @@
 | `_probe_recognition_drift.py` | 5 KB | ldv/MEASUREMENTS.md |
 | `_probe_region_fold.out.txt` | 2 KB | ldv/MEASUREMENTS.md |
 | `_probe_region_fold.py` | 8 KB | docs/分层方向视图-抽象层.md、ldv/MEASUREMENTS.md |
+| `_probe_resume_query.py` | 6 KB | docs/谓词推导与反思层.md |
 | `_probe_retrieval_selectivity.out.txt` | 2 KB | ldv/MEASUREMENTS.md |
 | `_probe_retrieval_selectivity.py` | 7 KB | docs/分层方向视图-抽象层.md、ldv/MEASUREMENTS.md |
 | `_probe_root_ab.py` | 1 KB | ldv/MEASUREMENTS.md |
