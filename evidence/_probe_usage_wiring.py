@@ -125,6 +125,12 @@ def main() -> int:
         f"正式删 {out.get('deleted')} / 缓冲删 {out.get('staged')}"
         f"｜ordered_by = {r2.get('ordered_by')}")
 
+    # ⚠️ 收尾：W10 那次 query **必然又写了一批缓冲**（这是设计，不是 bug）。
+    #    「可重跑」不该积累垃圾 ⇒ 再清一次。不清的话重跑时起始态不干净。
+    tail = usage_store.clear(d)
+    print(f"\n  收尾：正式删 {tail.get('deleted')} / 缓冲删 {tail.get('staged')}"
+          f"（W10 那次 query 留下的批次）")
+
     print("\n" + "=" * 78)
     print(f"  红 {FAIL} 条" if FAIL else "  全过")
     return 1 if FAIL else 0
