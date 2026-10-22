@@ -319,7 +319,7 @@ def _graded_report(kernel: Any) -> dict[str, Any]:
 
 
 def plan(kernel: Any, *, rounds: int = 4, per_round: int = 3,
-         cap: int | None = None) -> dict[str, Any]:
+         cap: int | None = None, tried: Any = None) -> dict[str, Any]:
     """**建树计划**：按显著性逐层展开，报「下一步该展开哪些」。
 
     ★ 「动机」在**建树阶段**的落地 —— 树还没建完时，系统能说「先展开这几支」，
@@ -345,11 +345,11 @@ def plan(kernel: Any, *, rounds: int = 4, per_round: int = 3,
     #    （叶不是终态，成员集变了要能重试）⇒ `is_expanded` 恒 False ⇒
     #    不加这个集合，同一个分不开的方向会被**每轮重复选中**、每次都是空操作。
     #    实测：不加时第 3–6 轮反复展开 D5，而「剩余待展开」还从 6 涨到 8。
-    tried: set[str] = set()
+    tried_set: set[str] = set(tried or ())
 
     def _todo() -> list[dict]:
         return [x for x in graded(kernel, cap)["可延后"]
-                if x.get("来源") == "待展开" and x["方向"] not in tried]
+                if x.get("来源") == "待展开" and x["方向"] not in tried_set]
 
     log: list[dict[str, Any]] = []
     # ⚠️ 变量名不能叫 `total` —— `B12` 的名字正则是
@@ -364,7 +364,7 @@ def plan(kernel: Any, *, rounds: int = 4, per_round: int = 3,
         done: list[str] = []
         for x in todo[:per_round]:
             did = x["方向"]
-            tried.add(did)
+            tried_set.add(did)
             try:
                 d = kernel.direction(did)
                 if not kernel.is_expanded(d):
@@ -380,7 +380,9 @@ def plan(kernel: Any, *, rounds: int = 4, per_round: int = 3,
             break
     return {"轮次": log, "总展开": n_expanded, "剩余待展开": len(_todo()),
             # ⚠️ 「剩余 0」有两种含义，必须分开报：全建完了 / 剩下的都试过且分不开
-            "试过分不开": len(tried) - n_expanded,
+            "试过分不开": len(tried_set) - n_expanded,
+            # 续建要把它存进快照 —— 否则每次重试那几支，剩余**不收敛**
+            "试过方向": sorted(tried_set),
             "档内顺序": SORT_KEY, "每轮上限": per_round}
 
 

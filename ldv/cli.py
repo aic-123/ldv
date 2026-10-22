@@ -380,38 +380,62 @@ def run_one(name: str, holdout: int, only: str | None,
     return not guards, "\n".join([head, body, tail])
 
 
-def plan_report(*, rounds: int = 8, per_round: int = 3) -> tuple[bool, str]:
-    """`--plan`：从「只建根」开始报**建树计划** —— 诊断用，**不落盘、不改结构**。
+def plan_report(*, rounds: int = 8, per_round: int = 3,
+                snapshot: bool = False) -> tuple[bool, str]:
+    """`--plan`：从「只建根」开始报**建树计划**。
 
-    ⚠️ 它**不解决**大语料超时：`plan` 只改**展开顺序**，`insert` 的工作量一样
-       （每项仍要走一遍路径）。
+    不带 `--snapshot` ⇒ 纯诊断：**不落盘、不改结构**。
+    带 `--snapshot` ⇒ **续建**：先试恢复上次的半成品快照，接着展开，再存回去。
+       ⇒ 反复跑到 `剩余待展开 0` 就是「分几次建完」。
 
-    ★★ **但「半成品树」本身是能查的**（实测 2026-10-22）：`kernel.query` 对每个
-       说「是」的方向**无条件 `expand`**（`core/kernel.py` 的 `v is Tri.YES` 分支）
-       ⇒ 半成品树查询 = **边查边建**，答案与完整树**逐字相同**。
-       实测（内置 36 项，全量查询）：查询前 1 个方向 → 查询后 25 个，
-       命中 36 vs 36、三态计数相同。
-       而且 `persist` **已经存了** `已展开` 与 `判过`（`_tried`）⇒ 半成品能存能读回。
-       ⇒ 续建**不缺能力**，缺的是流程：`--snapshot` 存半成品 + `--plan` 接着展开。
-       ⚠️ 真正的代价是**首次查询会边建边答**（慢），不是「会漏」。
+    ★★ **半成品树是能查的**（实测 2026-10-22）：`kernel.query` 对每个说「是」的方向
+       **无条件 `expand`**（`core/kernel.py` 的 `v is Tri.YES` 分支）⇒ **边查边建**，
+       答案与完整树**逐字相同**（内置 36 项：查询前 1 个方向 → 后 25 个，命中 36 vs 36）。
+       而且 `persist`/`snapshot` **都存了** `已展开` 与 `试过` ⇒ 状态能精确读回。
+       ⚠️ 真正的代价是「首次查询会边建边答（慢）」，**不是「会漏」**。
+
+    ⚠️ `plan` 只改**展开顺序**，`insert` 的工作量一样 ⇒ 续建把工作**分批**，
+       **不减少**总量。
+    ⚠️ 快照指纹里带 `用途=plan-续建` ⇒ 与 `--snapshot` 建完整树的快照**互不覆盖**。
     """
-    from .checks._fixtures import load, make_keyset_root
+    from .checks._fixtures import items, load, make_keyset_root
+    from .core import snapshot as _snap
+    from .core.kernel import Kernel
     from .core.reflect import plan as _plan
+    from .plugins.keyset import KeysetPlugin
 
     loaded = load()
     if loaded is None:
         return False, "语料读不到（`_data/` 不在？）—— 建树计划需要能加载的材料"
-    nodes, _edges, _d = loaded
-    k = make_keyset_root(nodes)()
+    nodes, edges, _d = loaded
+    plug = KeysetPlugin()
+    its = items(nodes)
+
+    fp = _snap.fingerprint(its, edges, {"方向函数": "keyset", "用途": "plan-续建"})
+    p_path = _snap.tree_path("keyset", fp)
+    k, rep = None, {}
+    if snapshot:
+        k, rep = _snap.restore(Kernel, plug, its, p_path, fp)
+    if k is None:
+        k = make_keyset_root(nodes)()
+        if snapshot:
+            rep = {"结果": "新建（只建根）", "原因": rep.get("原因") or "没有可用的半成品快照"}
+
     # ⚠️ 「起点」必须在 `plan()` **之前**取 —— 它会把 k 展开到底，
     #    之后再取 `len(k.all_directions())` 拿到的是**终态**（实测：起点被打成 25）。
     n_before = len(k.all_directions())
-    p = _plan(k, rounds=rounds, per_round=per_round)
-    lines = [
-        "建树计划（诊断｜**不落盘、不改结构**）",
-        f"  起点 {n_before} 个方向｜每轮上限 {per_round}"
-        f"｜最多 {rounds} 轮｜材料 {len(nodes)} 项",
-    ]
+    # 续建：上次「试过但分不开」的方向要从快照带回来 ——
+    # 否则每轮都重试它们、占掉每轮名额 ⇒ **剩余不收敛**（实测：4 次都停在剩余 6）。
+    tried_saved = set((rep.get("extra") or {}).get("plan_tried") or ())
+    p = _plan(k, rounds=rounds, per_round=per_round, tried=tried_saved)
+
+    lines = [("建树计划（**续建**｜落盘到快照）" if snapshot
+              else "建树计划（诊断｜**不落盘、不改结构**）"),
+             f"  起点 {n_before} 个方向｜每轮上限 {per_round}"
+             f"｜最多 {rounds} 轮｜材料 {len(nodes)} 项"]
+    if snapshot:
+        lines.append(f"  快照：{rep.get('结果', '?')}"
+                     + (f"（{rep['原因']}）" if rep.get("原因") else ""))
     for r in p["轮次"]:
         lines.append(f"  第 {r['第几轮']:2d} 轮 展开 {r['展开'] or ['（无可展开）']}"
                      f"　剩余待展开 {r['剩余待展开']}")
@@ -420,6 +444,12 @@ def plan_report(*, rounds: int = 8, per_round: int = 3) -> tuple[bool, str]:
                  f"｜终态 {len(k.all_directions())} 个方向")
     lines.append("  ⚠️ 「剩余 0」有两种含义：全建完了 / 剩下的都试过且分不开"
                  "—— 看「试过分不开」那一格。")
+    if snapshot:
+        saved = _snap.save(k, plug, "keyset", fp, path=p_path,
+                           extra={"plan_tried": p["试过方向"]})
+        lines.append(f"  已写快照 {saved.name}"
+                     + ("　✅ 建完了（剩余 0）" if p["剩余待展开"] == 0
+                        else f"　⏭ 还有 {p['剩余待展开']} 支待展开，再跑一次接着建"))
     return True, "\n".join(lines)
 
 
@@ -433,7 +463,7 @@ def main(argv: list[str]) -> int:
         _rounds = 8
         if _i + 1 < len(args) and args[_i + 1].isdigit():
             _rounds = int(args[_i + 1])
-        _ok, _text = plan_report(rounds=_rounds)
+        _ok, _text = plan_report(rounds=_rounds, snapshot="--snapshot" in args)
         print(_text)
         print(f"\n退出码 {0 if _ok else 1}")
         return 0 if _ok else 1

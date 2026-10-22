@@ -90,8 +90,13 @@ def fingerprint(items: dict[str, Any], edges: dict[str, frozenset[str]] | None =
 # --- 写 -------------------------------------------------------------------
 
 def save(kernel: Any, plugin: Any, direction: str, fp: str,
-         path: Path | None = None, root: Path | None = None) -> Path:
+         path: Path | None = None, root: Path | None = None,
+         extra: dict[str, Any] | None = None) -> Path:
     """把**已建好**的树写盘。返回落盘路径。
+
+    `extra` 是**调用方自己的附加段**（原样存、原样读回），`_verify` **不查它** ——
+    它不参与内核不变量。用途：`--plan --snapshot` 把「试过展开但分不开的方向」存下来
+    （否则每次续建都会重试那几支，占掉每轮名额 ⇒ **剩余不收敛**，实测两次都是 5）。
 
     ⚠️ 写**临时文件后 `os.replace`**（`core/view_persist.commit` 的同一套做法）：
        半份快照比没有快照更坏 —— 它会被读成「有快照」。
@@ -125,6 +130,9 @@ def save(kernel: Any, plugin: Any, direction: str, fp: str,
         #    账本是内核状态的一部分，不还原就不是同一棵树。
         "账本": [[e.seq, e.kind, e.did, dict(e.detail)] for e in kernel.ledger],
     }
+    # 调用方附加段（原样存、原样读回，**不参与** `_verify` 的内核不变量）
+    if extra:
+        doc["extra"] = extra
     p = path if path is not None else tree_path(direction, fp, root)
     p.parent.mkdir(parents=True, exist_ok=True)
     body = json.dumps(doc, ensure_ascii=False, sort_keys=True)
@@ -240,6 +248,8 @@ def restore(KernelCls: Any, plugin: Any, items: dict[str, Any],
         return None, rep
 
     rep.update(结果="命中", 原因="", 方向数=len(k._dirs))
+    # 调用方附加段（`save(extra=...)` 存的）—— 原样带出，**不参与**不变量校验
+    rep["extra"] = doc.get("extra") or {}
     return k, rep
 
 

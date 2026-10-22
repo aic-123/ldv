@@ -9336,6 +9336,50 @@ def test_motivation() -> None:
            f"｜命中 {len(r_lz.hit_items)} vs {len(r_fu.hit_items)}"
            f"｜三态 {r_lz.counts} vs {r_fu.counts}")
 
+    # ⑩ **续建**：`save(extra=试过方向)` → `restore` → `plan` 能**接着推进**，直到剩余 0。
+    #    ⚠️ 「试过方向」**必须持久化**：不存的话每次重试「分不开」的那几支、
+    #       占掉每轮名额 ⇒ 剩余**永远不收敛**（实测：4 次都停在剩余 6）。
+    if loaded3 is None:
+        ok("★ [动机] ⑩ 续建（**跳过**：内置语料加载不了）", True, "0")
+    else:
+        import shutil as _sh2
+        import tempfile as _tf2
+
+        from ldv.checks._fixtures import items as _its
+        from ldv.core import snapshot as _snap
+        from ldv.core.kernel import Kernel as _K
+        from ldv.plugins.keyset import KeysetPlugin as _KP
+
+        _n5, _e5 = loaded3[0], loaded3[1]
+        tmpd = Path(_tf2.mkdtemp(prefix="ldv_snap_"))
+        try:
+            plug5, its5 = _KP(), _its(_n5)
+            fp5 = _snap.fingerprint(its5, _e5, {"方向函数": "keyset", "用途": "test-续建"})
+            pp5 = _snap.tree_path("keyset", fp5, tmpd)
+            k5 = _mkr(_n5)()
+            tried5: set[str] = set()
+            rounds_used = 0
+            for _ in range(10):
+                r5 = RF.plan(k5, rounds=2, per_round=3, tried=tried5)
+                tried5 = set(r5["试过方向"])
+                _snap.save(k5, plug5, "keyset", fp5, path=pp5,
+                           extra={"plan_tried": sorted(tried5)})
+                k5, _rep5 = _snap.restore(_K, plug5, its5, pp5, fp5)
+                rounds_used += 1
+                if r5["剩余待展开"] == 0:
+                    break
+
+            kf5, _pf5 = build_keyset(_n5)
+            _parts5 = lambda kk: sorted(tuple(sorted(kk.members_of(d)))  # noqa: E731
+                                        for d in kk.all_directions())
+            ok("★ [动机] ⑩ **续建**：save/restore 循环推进到剩余 0，终态与完整建树同构",
+               rounds_used < 10 and _parts5(k5) == _parts5(kf5),
+               f"{rounds_used} 轮｜终态 {len(k5.all_directions())} vs 完整 "
+               f"{len(kf5.all_directions())}｜试过 {len(tried5)} 个"
+               f"｜划分集合相同 {_parts5(k5) == _parts5(kf5)}")
+        finally:
+            _sh2.rmtree(tmpd, ignore_errors=True)
+
 
 def test_self_corpus() -> None:
     """★ 认知原型的两条自我判据（2026-10-22，§S5）。
