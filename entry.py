@@ -453,7 +453,16 @@ class App:
                               "。可能是拼错了 —— 最近的几个：" +
                               "；".join(f"`{k}` → " + ("、".join(f"`{x}`" for x in v) or "（没有相近的）")
                                        for k, v in hint.items())),
-                    "unknown_keys": unknown, "suggest": hint}
+                    "unknown_keys": unknown, "suggest": hint,
+                    # ★★ **超出结构 ≠ 查不到**（2026-10-22 新增）。
+                    #    「键不在词汇表」是一个**结构信号** —— 不需要理解语义，
+                    #    所以它不撞「不做语义推理」。而「键在、组合为空」是另一回事：
+                    #    那说明**结构里有这个维度，只是这批材料没命中**。
+                    #    ⇒ 两者必须分开报：前者该请人介入，后者只是「这一格是空的」。
+                    "out_of_structure": True,
+                    "out_of_structure_note":
+                        "这个问题**超出本结构的词汇** —— 它不代表材料里没有，"
+                        "只代表这里没有这个维度。要不要换一种问法，或者找真人？"}
         k = self.ensure(plugin)
         t0 = time.perf_counter()
         with self.lock:                      # `query` 会写（expand）⇒ 串行
@@ -491,6 +500,9 @@ class App:
                 # 「先看哪一支」由谁定：default = 无历史；usage = 按使用记录排的
                 # ⚠️ 它只描述**次序**，不是分数、不可跨系统比较（协议禁词那一类）
                 "ordered_by": ordered_by,
+                # ★ 「超出结构」的另一半：键都在词汇表里 ⇒ 这个问题**落在结构内**
+                #   （命中 0 项只是「这一格是空的」，不是「这里没有这个维度」）
+                "out_of_structure": False,
                 # 1 支时 `node` 仍给（兼容旧调用方）；多支时 `node` 为 null，看 `nodes`
                 "node": nodes[0] if len(nodes) == 1 else None,
                 "nodes": shown,

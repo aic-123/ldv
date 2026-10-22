@@ -9436,8 +9436,11 @@ def test_no_unsourced_strings() -> None:
         "split", "leaf", "root",
     }
     # 错误 / 建议 / 停因文案：**固定模板**（句子是代码写的，键名来自数据）
+    # ⚠️ 加一条就红一次 —— 这正是它该有的行为：新增文案必须**显式**进白名单，
+    #    否则「偷偷生成一句话」和「加了个提示」长得一样。
     fixed_prefix = ("这些键", "不认识的", "没有插件", "没有这个节点",
-                    "已经是最细", "已经到底", "停在了")
+                    "已经是最细", "已经到底", "停在了",
+                    "这个问题")          # ← `out_of_structure_note`（2026-10-22 新增）
 
     # ⚠️ **只查值，不查键** —— 键是协议（代码写的字段名：`rank` / `n_members` / `must`…），
     #    值是数据（应来自材料）。第一版连键一起查 ⇒ 报 139 个「无出处」，全是字段名。
@@ -9478,6 +9481,86 @@ def test_no_unsourced_strings() -> None:
               and not s.startswith(fixed_prefix)]
     ok("★ [不产内容] 判据自检：故意塞一个无出处字符串 ⇒ **抓得到**",
        caught == ["这是一句凭空生成的话"], f"抓到 {caught}")
+
+
+def test_out_of_structure() -> None:
+    """★ [超出结构] 「**超出结构**」与「**查不到**」必须分开报。
+
+    - 键不在词汇表 ⇒ `out_of_structure = True` + 提示「请人介入」
+    - 键都在、只是组合为空 ⇒ `out_of_structure = False`（**这一格是空的**）
+
+    ⚠️ 判据用**结构信号**（键在不在 `all_keys`），**不做语义判断** ——
+       那会撞「不做语义推理」。所以「超出结构」只能抓到「用户用了结构里没有的词」，
+       抓不到「用户用的词都在、但问的东西结构表达不了」—— 后者**如实做不到**。
+    """
+    import entry as E
+
+    app = E.App(None)
+
+    r_bad = app.query({"require": ["这个词根本不存在=x"]})
+    ok("① [超出结构] 键不在词汇表 ⇒ out_of_structure = True（并提示请人介入）",
+       r_bad.get("out_of_structure") is True
+       and bool(r_bad.get("unknown_keys"))
+       and "超出本结构的词汇" in (r_bad.get("out_of_structure_note") or ""),
+       f"out_of_structure={r_bad.get('out_of_structure')}"
+       f"｜unknown_keys={len(r_bad.get('unknown_keys') or [])}")
+
+    r_ok = app.query({"require": ["type=概念"]})
+    ok("② [超出结构] 键都在词汇表 ⇒ out_of_structure = False",
+       r_ok.get("ok") is True and r_ok.get("out_of_structure") is False,
+       f"命中 {r_ok.get('n_answer')} 项｜out_of_structure={r_ok.get('out_of_structure')}")
+
+    # ③ **反向对照**：组合为空 ≠ 超出结构 —— 这一格是空的，不是没有这个维度
+    r_empty = app.query({"require": ["type=概念", "type=立场"]})
+    ok("③ [超出结构] **组合为空 ≠ 超出结构**（反向对照）",
+       r_empty.get("ok") is True and r_empty.get("out_of_structure") is False
+       and r_empty.get("n_answer") == 0,
+       f"命中 {r_empty.get('n_answer')} 项｜out_of_structure={r_empty.get('out_of_structure')}"
+       f"｜松弛建议 {len(r_empty.get('relax') or [])} 条")
+
+
+def test_verified_external_only() -> None:
+    """★ [外部授予] 系统不许自己把节点标成「已验证」。
+
+    立场（`USER.md`）：「已验证」只能**外部授予** —— **人或外部工具都能写**，
+    **系统运行时不写**。现在这条靠「没人写」维持；本判据把它变成**可查**。
+
+    查法：扫 `ldv/` + `entry.py` 的**字符串字面量**（`ast.Constant`），
+    排除 docstring（那里解释这条立场是合法的），排除 test 文件（判据自己的描述里就有这个词）。
+    """
+    import ast as _ast
+
+    repo = Path(__file__).resolve().parents[2]
+    files = sorted((repo / "ldv").rglob("*.py")) + [repo / "entry.py"]
+    bad: list[str] = []
+    scanned = 0
+    for f in files:
+        if "test" in f.name:
+            continue
+        scanned += 1
+        try:
+            tree = _ast.parse(f.read_text(encoding="utf-8", errors="replace"))
+        except SyntaxError:
+            continue
+        docs: set[int] = set()
+        for node in _ast.walk(tree):
+            if isinstance(node, (_ast.Module, _ast.FunctionDef,
+                                 _ast.AsyncFunctionDef, _ast.ClassDef)):
+                body = getattr(node, "body", [])
+                if (body and isinstance(body[0], _ast.Expr)
+                        and isinstance(body[0].value, _ast.Constant)):
+                    docs.add(id(body[0].value))
+        for node in _ast.walk(tree):
+            if (isinstance(node, _ast.Constant) and isinstance(node.value, str)
+                    and id(node) not in docs
+                    # ⚠️ 只认**字段值形态**：`"已验证"` 或 `"...=已验证"`。
+                    #    第一版用 `"已验证" in value` ⇒ 误报 `structure.py` 的
+                    #    「探测器**已验证**有效」（那是动词，不是字段值）。
+                    and (node.value == "已验证" or "=已验证" in node.value)):
+                bad.append(f"{f.name}:{node.lineno}")
+
+    ok("★ [外部授予] 系统源码里没有把节点标成「已验证」的字符串字面量（docstring 不算）",
+       not bad, f"扫 {scanned} 个模块｜命中 {len(bad)} 处" + (f"：{bad[:3]}" if bad else ""))
 
 
 def test_self_corpus() -> None:
@@ -9578,7 +9661,8 @@ def main() -> int:
                test_never_judged, test_b17_cyclic_corpus,
                test_skip_evidence_table, test_self_corpus,
                test_growth_autonomy, test_usage_wiring, test_forgetting,
-               test_motivation, test_no_unsourced_strings):
+               test_motivation, test_no_unsourced_strings,
+               test_out_of_structure, test_verified_external_only):
         # ★ **兜底：外部语料不在 ⇒ 跳过该函数，不崩**（2026-10-19 修 CI）
         #
         #   外部语料在 `_data/` 下，而 `.gitignore` 规定 `_data/*` **不进仓库**
