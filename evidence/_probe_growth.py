@@ -175,8 +175,10 @@ def g4() -> None:
             f"rho = {rho:.2f}" + ("（完全同序 ⇒ 重复记账）" if abs(rho) >= 1.0 else ""))
 
     out = REPO / "evidence" / "_probe_growth_g4.json"
-    out.write_text(json.dumps({"rows": rows, "alpha": alpha}, ensure_ascii=False,
-                              indent=1), encoding="utf-8")
+    # ⚠️ 显式 newline="\n"：Windows 上 write_text 会把 \n 转成 \r\n，
+    #    而仓库规定 LF（.gitattributes 的 eol=lf）⇒ 工作区会漂。
+    io.open(out, "w", encoding="utf-8", newline="\n").write(
+        json.dumps({"rows": rows, "alpha": alpha}, ensure_ascii=False, indent=1))
     print(f"\n  留档：{out.relative_to(REPO)}")
 
 
@@ -360,8 +362,9 @@ def g6() -> None:
         print("  ⚠️ 这个比率只描述状态，不进退出码、不排序、不与别的读数合成。")
 
     out = REPO / "evidence" / "_probe_growth_g6.json"
-    out.write_text(json.dumps({"version": meta.get("version"), "counts": total},
-                              ensure_ascii=False, indent=1), encoding="utf-8")
+    io.open(out, "w", encoding="utf-8", newline="\n").write(
+        json.dumps({"version": meta.get("version"), "counts": total},
+                   ensure_ascii=False, indent=1))
     print(f"  留档：{out.relative_to(REPO)}")
 
 
