@@ -35,7 +35,10 @@ from pathlib import Path
 from typing import Any
 
 # 语料里出现过的枚举字段 —— 它们的**取值**也进键集
-ENUM_FIELDS = ("type", "evidence_status")
+#: ★ 2026-10-22 加后四个：`我` 是自我维度（`docs/认知原型.md` §3），
+#:   其余三个是**自我语料**的字段（`ldv/tools/make_self_corpus.py` 生成）。
+#:   它们只在该字段**存在**时才产键 ⇒ 对外部语料零影响。
+ENUM_FIELDS = ("type", "evidence_status", "我", "种类", "级", "含定理")
 
 _FM_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n?(.*)$", re.DOTALL)
 

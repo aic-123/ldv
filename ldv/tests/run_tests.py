@@ -9007,6 +9007,61 @@ def test_skip_evidence_table() -> None:
        sorted(caught) == sorted(fakes), f"抓到的 {sorted(caught)}｜期望 {sorted(fakes)}")
 
 
+def test_self_corpus() -> None:
+    """★ 认知原型的两条自我判据（2026-10-22，§S5）。
+
+    ① **自描述一致**：断言集总表的行数 == 引言声称的条数；每行「级」合法。
+    ② **能回答自己**：自我语料建树后，`种类=断言` 的项集 == 总表编号集；
+       `含定理=是` 的项集 == 从总表**独立重算**的编号集 —— 两条路互相核对
+       （解析表格 vs 建语料再查），不是自己证自己。
+
+    ⚠️ 环境纪律：`App(<路径>)` 会把 `LDV_CORPUS` 写进 `os.environ` ⇒
+       save/restore + 验恢复（`[缓冲] ㊳` 那条教训）。
+    """
+    import shutil as _shutil
+    import tempfile as _tf
+    from pathlib import Path as _P
+
+    from ldv.tools import make_self_corpus as MSC
+    import entry as E
+
+    # ⚠️ 本文件在 ldv/tests/ 下 ⇒ parents[2] 才是 repo 根（parents[1] 是 ldv/）
+    repo = _P(__file__).resolve().parents[2]
+    rows = MSC.parse_assertions(repo)
+    claimed = MSC.claimed_count(repo)
+    bad_tier = [r["编号"] for r in rows
+                if not any(x in r["级"] for x in ("Ⅰ", "Ⅱ", "Ⅲ"))]
+    ok("★ [自我] ⑴ 断言集自描述一致：总表行数 == 引言声称条数，且每行「级」合法",
+       len(rows) == claimed and not bad_tier,
+       f"总表 {len(rows)} 行｜声称 {claimed} 条｜非法级 {bad_tier or '无'}")
+
+    tmp = _P(_tf.mkdtemp())
+    try:
+        st = MSC.build(repo, tmp)
+        saved = os.environ.get("LDV_CORPUS")
+        try:
+            app = E.App(str(tmp / "nodes"))
+            r1 = app.query({"require": ["种类=断言"]})
+            r2 = app.query({"require": ["含定理=是"]})
+        finally:
+            if saved is None:
+                os.environ.pop("LDV_CORPUS", None)
+            else:
+                os.environ["LDV_CORPUS"] = saved
+            restored = os.environ.get("LDV_CORPUS") == saved
+        want_all = {f"asrt-{r['编号']}" for r in rows}
+        want_thm = {f"asrt-{r['编号']}" for r in rows if "Ⅰ" in r["级"]}
+        ok("★ [自我] ⑵ 自我语料能回答自己：断言集 / 含定理集与总表独立重算逐字相同",
+           bool(r1.get("ok")) and bool(r2.get("ok"))
+           and set(r1["answer_ids"]) == want_all
+           and set(r2["answer_ids"]) == want_thm and restored,
+           f"断言 {r1.get('n_answer')}/{len(want_all)}｜"
+           f"含定理 {r2.get('n_answer')}/{len(want_thm)}｜节点 {st['节点']}"
+           f"｜环境已恢复 {restored}")
+    finally:
+        _shutil.rmtree(tmp, ignore_errors=True)
+
+
 def main() -> int:
     for fn in (test_tri, test_loader, test_kernel, test_exposure_model, test_selfopt,
                test_sequence, test_flows, test_emergence, test_divergence,
@@ -9048,7 +9103,7 @@ def main() -> int:
                test_view_oracles, test_influence_channels, test_views,
                test_multilevel, test_retriever, test_cli_paths,
                test_never_judged, test_b17_cyclic_corpus,
-               test_skip_evidence_table):
+               test_skip_evidence_table, test_self_corpus):
         # ★ **兜底：外部语料不在 ⇒ 跳过该函数，不崩**（2026-10-19 修 CI）
         #
         #   外部语料在 `_data/` 下，而 `.gitignore` 规定 `_data/*` **不进仓库**

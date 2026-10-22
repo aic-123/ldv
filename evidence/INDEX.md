@@ -64,7 +64,7 @@
 | `_probe_contra_reverse.py` | 3 KB | docs/谓词推导与反思层.md |
 | `_probe_d2_four.py` | 4 KB | docs/分层方向视图-设计文档.md、ldv/MEASUREMENTS.md |
 | `_probe_d2_stage2.py` | 3 KB | docs/分层方向视图-设计文档.md |
-| `_probe_d7_rollback.out.txt` | 2 KB | **（无）** |
+| `_probe_d7_rollback.out.txt` | 2 KB | docs/形式化断言集.md |
 | `_probe_d7_rollback.py` | 5 KB | docs/形式化断言集.md |
 | `_probe_deepcopy_cost.py` | 3 KB | ldv/MEASUREMENTS.md |
 | `_probe_deepen_seq.out.txt` | 2 KB | ldv/MEASUREMENTS.md |
@@ -155,12 +155,6 @@
 | `ldv-待裁定清单.md` | 25 KB | docs/分层方向视图-设计文档.md |
 | `ldv-成熟答案印证.md` | 67 KB | docs/分层方向视图-设计文档.md |
 | `ldv-跨领域-增量报告.md` | 16 KB | docs/外生声明标准.md |
-
-## 没被正文引用、但同趟产出的伴生件
-
-主脚本被引用了，这些是它跑出来的输出，跟着一起进仓库：
-
-- `_probe_d7_rollback.out.txt`
 
 ## 怎么重跑
 
