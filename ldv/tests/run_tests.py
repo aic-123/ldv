@@ -9055,16 +9055,18 @@ def test_growth_autonomy() -> None:
 
 
 def test_usage_wiring() -> None:
-    """★ [接入] 使用记录的落盘通道（§4.6 G5 表里「使用者入口」那一格）。
+    """★ [接入] 使用记录的两段通道：**缓冲区 → 正式**（§4.6 G5 的「使用者入口」）。
 
-    这四条都**不依赖外部语料** ⇒ clone 上真跑，不跳过。
+    这七条都**不依赖外部语料** ⇒ clone 上真跑，不跳过。
 
     ① 内置语料**不启用**使用记录 —— 内置语料在仓库里，
        往那儿写 usage 等于把运行时产物写进仓库。
-    ② 去重：同一 `(qfp, did)` 只写一次，不覆写、不叠加
-       （叠加等于把「多看了一眼」当成「更有用」）。
+    ② 去重：同一 `(qfp, did)` 只写一次，不覆写、不叠加。
     ③ 写盘是 LF —— Windows 上默认写 CRLF，而仓库规定 LF。
-    ④ `clear` 之后为空，再 load 为 0 条（可回退）。
+    ④ `clear` 之后为空（正式 + 缓冲都清）。
+    ⑤ ★ **查询只进缓冲**：`load` 仍是 0 条 —— 被摆出来只是**曝光**，不是有用。
+    ⑥ `promote` 之后正式 +1、缓冲里移除该支。
+    ⑦ **不在缓冲里的支不许 promote** —— 翻到了 ≠ 用了。
 
     ⚠️ 「排序不改答案集合」那条（`W5`）需要外部语料 ⇒ 留在
        `evidence/_probe_usage_wiring.py`，不在这里假装跑过。
@@ -9098,6 +9100,23 @@ def test_usage_wiring() -> None:
         ok("★ [接入] ④ clear 之后为空，再 load 为 0 条（可回退）",
            n.get("deleted") == 1 and US.load(tmp) == [],
            f"删了 {n.get('deleted')}｜再 load {len(US.load(tmp))} 条")
+
+        # ⑤⑥⑦ 缓冲区：查到了都记，但**不算有用**
+        US.stage(tmp, qfp="q2", shown=["D1", "D2"])
+        ok("★ [接入] ⑤ 查询只进缓冲：load 仍是 0 条（曝光 ≠ 有用）",
+           US.load(tmp) == [] and len(US.stage_load(tmp)) == 1,
+           f"正式 {len(US.load(tmp))} 条｜缓冲 {len(US.stage_load(tmp))} 批")
+
+        pr = US.promote(tmp, qfp="q2", did="D1", propensity=0.5)
+        rest = US.stage_load(tmp)
+        ok("★ [接入] ⑥ promote 之后：正式 +1，缓冲里移除该支",
+           pr.get("written") is True and len(US.load(tmp)) == 1
+           and all("D1" not in r["shown"] for r in rest),
+           f"正式 {len(US.load(tmp))} 条｜缓冲剩 {pr.get('remaining')} 支")
+
+        bad = US.promote(tmp, qfp="q2", did="D9", propensity=0.5)
+        ok("★ [接入] ⑦ 不在缓冲里的支不许 promote（翻到了 ≠ 用了）",
+           bad.get("written") is False, f"{bad.get('why')}")
     finally:
         _sh.rmtree(tmp, ignore_errors=True)
 

@@ -28,6 +28,8 @@ from pathlib import Path
 from typing import Any
 
 DIRNAME = "usage"
+#: 缓冲区子目录 —— 查询先落这里，**不参与倾向**（`load` 不递归进来）
+STAGE = "_staging"
 FIELDS = ("id", "did", "outcome", "propensity", "qfp", "note")
 
 
@@ -100,25 +102,125 @@ def load(corpus_dir: Any) -> list[dict]:
     return out
 
 
-def clear(corpus_dir: Any) -> dict:
-    """显式清空 —— 返回删了几个。**这是唯一的删除路径，不做自动淘汰。**"""
-    d = _dir(corpus_dir)
+# ── 缓冲区：查询先落这里，**不算有用** ──────────────────────────────────────
+#
+# ★★ 为什么要有缓冲：如果 `query` 直接记 outcome=+1，一次查询就把 16 支全记一遍
+#    ⇒ 倾向被刷成「谁被摆出来谁有用」。而「被摆出来」只是**曝光**，不是**有用**。
+#    所以：query 写「这次摆了哪些支」（一批一条，不算分），
+#    drill 才 `promote` 成 outcome=+1（这一支真的被往下看了）。
+#
+# ⚠️ 缓冲**不参与倾向计算** —— `load()` 只 glob `usage/*.md`，不递归进 `_staging/`。
+#    这是「装上但不算有用」的兑现点：判据 `[接入] ⑤` 守它。
+
+
+def _stage_dir(corpus_dir: Any) -> Path:
+    return _dir(corpus_dir) / STAGE
+
+
+def stage(corpus_dir: Any, *, qfp: str, shown: list[str], note: str = "") -> dict:
+    """把「这次展示了哪些支」写进缓冲区 —— **一次查询一批，同 qfp 覆盖**。
+
+    ⚠️ 覆盖是**刻意**的：缓冲区存的是「这次查询摆了什么」这个**状态**，
+       不是账本。同一次查询重跑 ⇒ 展示列表一样 ⇒ 覆盖成同一份。
+    """
+    d = _stage_dir(corpus_dir)
+    d.mkdir(parents=True, exist_ok=True)
+    p = d / f"{_qfp8(qfp)}.md"
+    existed = p.exists()
+    body = (
+        "---\n"
+        f"id: {p.stem}\n"
+        f"qfp: {qfp}\n"
+        f"shown: {','.join(str(x) for x in shown)}\n"
+        f"n_shown: {len(shown)}\n"
+        f"note: {note}\n"
+        "---\n"
+        "一次查询的**展示批次**：这次摆了哪些支。\n"
+        "⚠️ 它还不是「使用记录」—— 被摆出来只是曝光，不是有用。\n"
+        "只有被下钻的那一支才 promote 成 outcome = +1。\n"
+        "⚠️ 缓冲不参与倾向计算（load 只读正式目录）。\n"
+    )
+    io.open(p, "w", encoding="utf-8", newline="\n").write(body)
+    return {"ok": True, "path": str(p), "overwrote": existed, "n_shown": len(shown)}
+
+
+def stage_load(corpus_dir: Any) -> list[dict]:
+    """读缓冲区（一次查询一条）。解析不了的跳过，不静默。"""
+    d = _stage_dir(corpus_dir)
+    out: list[dict] = []
     if not d.is_dir():
-        return {"ok": True, "deleted": 0}
-    n = 0
+        return out
     for p in sorted(d.glob("*.md")):
-        p.unlink()
-        n += 1
-    return {"ok": True, "deleted": n}
+        try:
+            t = io.open(p, encoding="utf-8", errors="replace").read()
+            head = t.split("---", 2)[1]
+            row: dict[str, str] = {}
+            for line in head.splitlines():
+                if ":" in line:
+                    k, v = line.split(":", 1)
+                    row[k.strip()] = v.strip()
+            out.append({"qfp": row.get("qfp", ""),
+                        "shown": [x for x in (row.get("shown") or "").split(",") if x],
+                        "file": p.name})
+        except Exception:                                    # noqa: BLE001
+            continue
+    return out
+
+
+def promote(corpus_dir: Any, *, qfp: str, did: str, propensity: float,
+            note: str = "drill") -> dict:
+    """缓冲 → 正式：把 `did` 标成 outcome = +1，并从这批的 `shown` 里移除。
+
+    ★★ **不在缓冲里的 did 不许 promote** —— 否则就是把「翻到了」当成「用了」。
+       这是与「不合成反馈」同一条线：信号必须来自真实动作。
+    """
+    sp = _stage_dir(corpus_dir) / f"{_qfp8(qfp)}.md"
+    if not sp.exists():
+        return {"ok": False, "written": False,
+                "why": "缓冲区里没有这次查询的展示批次（先 query 再 drill）"}
+    cur = next((r for r in stage_load(corpus_dir) if r["file"] == sp.name), None)
+    if cur is None or did not in cur["shown"]:
+        return {"ok": False, "written": False,
+                "why": "这一支不在这次查询的展示里，不记"}
+    out = append(corpus_dir, did=did, outcome=1.0, propensity=propensity,
+                 qfp=qfp, note=note)
+    rest = [x for x in cur["shown"] if x != did]
+    if rest:
+        stage(corpus_dir, qfp=qfp, shown=rest, note="（已 promote 一支，剩余）")
+    else:
+        sp.unlink()
+    return {**out, "remaining": len(rest)}
+
+
+def clear(corpus_dir: Any) -> dict:
+    """显式清空 —— 返回删了几个（**正式 + 缓冲都清**，两笔分开报）。
+
+    ★ 这是唯一的删除路径，不做自动淘汰。
+    """
+    d = _dir(corpus_dir)
+    n = s = 0
+    if d.is_dir():
+        for p in sorted(d.glob("*.md")):
+            p.unlink()
+            n += 1
+    sd = _stage_dir(corpus_dir)
+    if sd.is_dir():
+        for p in sorted(sd.glob("*.md")):
+            p.unlink()
+            s += 1
+    return {"ok": True, "deleted": n, "staged": s}
 
 
 def status(corpus_dir: Any) -> dict:
-    """只报不淘汰（沿用 `capacity_status` 的纪律）。"""
+    """只报不淘汰（沿用 `capacity_status` 的纪律）。**正式与缓冲分开报。**"""
     rows = load(corpus_dir)
+    staged = stage_load(corpus_dir)
     per: dict[str, int] = {}
     for r in rows:
         per[r["did"]] = per.get(r["did"], 0) + 1
     return {"记录数": len(rows), "覆盖方向数": len(per),
+            "缓冲批次数": len(staged),
+            "缓冲里待 promote 的支": sum(len(r["shown"]) for r in staged),
             "目录": str(_dir(corpus_dir)),
             "最多的方向": sorted(per.items(), key=lambda kv: (-kv[1], kv[0]))[:5]}
 

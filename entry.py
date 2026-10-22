@@ -215,19 +215,19 @@ class App:
     def _record_use(self, k, d) -> dict | None:
         """下钻 = 这次「这个方向有用」的**真实**信号（不是合成反馈）。
 
-        ⚠️ 只在**这一支刚被展示过**时才记 —— 否则就是把「翻到了」当成「用了」。
+        走 `usage_store.promote`：从**缓冲区**里把这一支提升成正式记录。
+        ⚠️ 不在缓冲里的支**不许 promote** —— 否则就是把「翻到了」当成「用了」。
         ⚠️ 没被下钻的方向**不记负信号**（`§K6`：没看见 ≠ 看见了不好）。
-        ⚠️ 同一次查询对同一方向只记一次（`usage_store` 用 `(qfp, did)` 去重）。
         """
-        if self._usage_dir is None or d.did not in self._last_shown:
+        if self._usage_dir is None:
             return None
         rec = k.record_usage(d, {"outcome": 1.0})
         if rec is None:
             return None
-        out = usage_store.append(self._usage_dir, did=d.did, outcome=rec.outcome,
-                                 propensity=rec.propensity, qfp=self._last_qfp,
-                                 note="drill")
-        self._last_shown = [x for x in self._last_shown if x != d.did]
+        out = usage_store.promote(self._usage_dir, qfp=self._last_qfp, did=d.did,
+                                  propensity=rec.propensity)
+        if out.get("written"):
+            self._last_shown = [x for x in self._last_shown if x != d.did]
         return out
 
     def clear_usage(self) -> dict:
@@ -466,6 +466,12 @@ class App:
         ms = (time.perf_counter() - t0) * 1000
         self.n_queries += 1
         self._last_qfp = f"{self.fingerprint()}|{'&'.join(sorted(req))}"
+        # ★ 「查到了都记录」—— 但只进**缓冲区**，**不算有用**。
+        #   被摆出来只是曝光；下钻才 promote 成 outcome = +1。
+        #   ⚠️ 缓冲不参与倾向（`usage_store.load` 不递归进 `_staging/`）。
+        if self._usage_dir is not None and self._last_shown:
+            usage_store.stage(self._usage_dir, qfp=self._last_qfp,
+                              shown=self._last_shown)
         # ⚠️ **接口不截断**：`nodes` 给全部支，`n_branches` 与 `len(nodes)` 恒等。
         #    只有界面才截显示（否则「Σ各支 == 答案」在客户端无法验证 —— 实测踩到：
         #    空需求 31 支被截成 12 支，合计 3610 ≠ 7115，看起来像切分漏了）。
@@ -550,7 +556,8 @@ class App:
                 # 记了就报，没记就报**为什么** —— 不许静默，也不许「成功与失败共用一句话」
                 "recorded": bool((used or {}).get("written")),
                 "record_note": (
-                    "已记录（下钻 = 有用）" if (used or {}).get("written")
+                    f"已记录（下钻 = 有用）；这批还剩 {used.get('remaining', 0)} 支待看"
+                    if (used or {}).get("written")
                     else (used or {}).get("why")
                     or ("未启用：内置语料不写使用记录" if self._usage_dir is None
                         else "这一支不在刚展示的候选里，不记"))}
