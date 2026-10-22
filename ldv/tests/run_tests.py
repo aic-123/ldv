@@ -9380,6 +9380,26 @@ def test_motivation() -> None:
         finally:
             _sh2.rmtree(tmpd, ignore_errors=True)
 
+    # ⑪ **循环跑到剩余 0**（同进程，模拟 `--plan-all` 的内层）——
+    #    ⚠️ 不在这里调 `plan_report(snapshot=True)`：它写 `~/.cache/ldv`，判据不该污染用户缓存。
+    if loaded3 is None:
+        ok("★ [动机] ⑪ 循环跑到剩余 0（**跳过**：内置语料加载不了）", True, "0")
+    else:
+        k6 = _mkr(loaded3[0])()
+        tried6: set[str] = set()
+        n_calls = 0
+        r6 = None
+        while n_calls < 20:
+            r6 = RF.plan(k6, rounds=3, per_round=3, tried=tried6)
+            tried6 = set(r6["试过方向"])
+            n_calls += 1
+            if r6["剩余待展开"] == 0:
+                break
+        ok("★ [动机] ⑪ **循环跑到剩余 0**（模拟 `--plan-all` 内层，上限 20 次）",
+           r6 is not None and r6["剩余待展开"] == 0 and n_calls < 20,
+           f"{n_calls} 次调用｜终态 {len(k6.all_directions())} 个方向"
+           f"｜剩余 {r6['剩余待展开'] if r6 else '?'}")
+
 
 def test_self_corpus() -> None:
     """★ 认知原型的两条自我判据（2026-10-22，§S5）。

@@ -380,8 +380,17 @@ def run_one(name: str, holdout: int, only: str | None,
     return not guards, "\n".join([head, body, tail])
 
 
+#: `--plan-all` 最多循环几次 —— **外生参数、暂定值，未经标定**。
+#:
+#: ⚠️ 20 次 × 每次 `rounds` 轮 × 每轮 `per_round` 个 = 上限约 480 次展开。
+#:    这个数是「先让功能能用」的暂定，不是测出来的。要动它得先有刻度：
+#:    「一份语料建树允许跑多久」—— 那是人的判断，不是这里能算的。
+#: ⚠️ 撞上限时**必须如实报**（`剩余待展开 > 0` + `未建完`），不许印成「建完了」。
+PLAN_MAX_CALLS = 20
+
+
 def plan_report(*, rounds: int = 8, per_round: int = 3,
-                snapshot: bool = False) -> tuple[bool, str]:
+                snapshot: bool = False, until_done: bool = False) -> tuple[bool, str]:
     """`--plan`：从「只建根」开始报**建树计划**。
 
     不带 `--snapshot` ⇒ 纯诊断：**不落盘、不改结构**。
@@ -423,34 +432,56 @@ def plan_report(*, rounds: int = 8, per_round: int = 3,
 
     # ⚠️ 「起点」必须在 `plan()` **之前**取 —— 它会把 k 展开到底，
     #    之后再取 `len(k.all_directions())` 拿到的是**终态**（实测：起点被打成 25）。
-    n_before = len(k.all_directions())
     # 续建：上次「试过但分不开」的方向要从快照带回来 ——
     # 否则每轮都重试它们、占掉每轮名额 ⇒ **剩余不收敛**（实测：4 次都停在剩余 6）。
     tried_saved = set((rep.get("extra") or {}).get("plan_tried") or ())
-    p = _plan(k, rounds=rounds, per_round=per_round, tried=tried_saved)
 
-    lines = [("建树计划（**续建**｜落盘到快照）" if snapshot
+    calls: list[dict] = []
+    while True:
+        n_before = len(k.all_directions())
+        p = _plan(k, rounds=rounds, per_round=per_round, tried=tried_saved)
+        tried_saved = set(p["试过方向"])
+        calls.append({"起点": n_before, "终态": len(k.all_directions()), **p})
+        if snapshot:
+            _snap.save(k, plug, "keyset", fp, path=p_path,
+                       extra={"plan_tried": sorted(tried_saved)})
+        if not until_done or p["剩余待展开"] == 0 or len(calls) >= PLAN_MAX_CALLS:
+            break
+
+    last = calls[-1]
+    hit_cap = until_done and last["剩余待展开"] > 0 and len(calls) >= PLAN_MAX_CALLS
+    lines = [("建树计划（**续建**·跑到完｜落盘到快照）" if until_done
+              else "建树计划（**续建**｜落盘到快照）" if snapshot
               else "建树计划（诊断｜**不落盘、不改结构**）"),
-             f"  起点 {n_before} 个方向｜每轮上限 {per_round}"
-             f"｜最多 {rounds} 轮｜材料 {len(nodes)} 项"]
+             f"  起点 {calls[0]['起点']} 个方向｜每轮上限 {per_round}"
+             f"｜每次最多 {rounds} 轮"
+             + (f"｜最多 {PLAN_MAX_CALLS} 次（暂定值）" if until_done else "")
+             + f"｜材料 {len(nodes)} 项"]
     if snapshot:
         lines.append(f"  快照：{rep.get('结果', '?')}"
                      + (f"（{rep['原因']}）" if rep.get("原因") else ""))
-    for r in p["轮次"]:
-        lines.append(f"  第 {r['第几轮']:2d} 轮 展开 {r['展开'] or ['（无可展开）']}"
-                     f"　剩余待展开 {r['剩余待展开']}")
-    lines.append(f"  总展开 {p['总展开']}｜试过分不开 {p['试过分不开']}"
-                 f"｜剩余待展开 {p['剩余待展开']}"
+    if until_done:
+        for i, c in enumerate(calls, 1):
+            lines.append(f"  第 {i:2d} 次 起点 {c['起点']:3d} → {c['终态']:3d}"
+                         f"　展开 {c['总展开']:2d}　剩余 {c['剩余待展开']}")
+    else:
+        for r in last["轮次"]:
+            lines.append(f"  第 {r['第几轮']:2d} 轮 展开 {r['展开'] or ['（无可展开）']}"
+                         f"　剩余待展开 {r['剩余待展开']}")
+    lines.append(f"  总展开 {sum(c['总展开'] for c in calls)}"
+                 f"｜本次试过分不开 {sum(c['试过分不开'] for c in calls)}"
+                 f"｜剩余待展开 {last['剩余待展开']}"
                  f"｜终态 {len(k.all_directions())} 个方向")
     lines.append("  ⚠️ 「剩余 0」有两种含义：全建完了 / 剩下的都试过且分不开"
                  "—— 看「试过分不开」那一格。")
     if snapshot:
-        saved = _snap.save(k, plug, "keyset", fp, path=p_path,
-                           extra={"plan_tried": p["试过方向"]})
-        lines.append(f"  已写快照 {saved.name}"
-                     + ("　✅ 建完了（剩余 0）" if p["剩余待展开"] == 0
-                        else f"　⏭ 还有 {p['剩余待展开']} 支待展开，再跑一次接着建"))
-    return True, "\n".join(lines)
+        lines.append(f"  已写快照 {p_path.name}"
+                     + ("　✅ 建完了（剩余 0）" if last["剩余待展开"] == 0
+                        else (f"　‼ 撞上限 {PLAN_MAX_CALLS} 次，还剩 "
+                              f"{last['剩余待展开']} 支 —— **没建完**"
+                              if hit_cap else
+                              f"　⏭ 还有 {last['剩余待展开']} 支待展开，再跑一次接着建")))
+    return (not hit_cap), "\n".join(lines)
 
 
 def main(argv: list[str]) -> int:
@@ -463,7 +494,8 @@ def main(argv: list[str]) -> int:
         _rounds = 8
         if _i + 1 < len(args) and args[_i + 1].isdigit():
             _rounds = int(args[_i + 1])
-        _ok, _text = plan_report(rounds=_rounds, snapshot="--snapshot" in args)
+        _ok, _text = plan_report(rounds=_rounds, snapshot="--snapshot" in args,
+                                 until_done="--plan-all" in args)
         print(_text)
         print(f"\n退出码 {0 if _ok else 1}")
         return 0 if _ok else 1

@@ -352,6 +352,9 @@ def plan(kernel: Any, *, rounds: int = 4, per_round: int = 3,
                 if x.get("来源") == "待展开" and x["方向"] not in tried_set]
 
     log: list[dict[str, Any]] = []
+    # 本次调用里「试过、但分不开」的方向 —— ⚠️ 不要用「试过数 − 展开数」算：
+    # 多次续建时 tried_set 含历史、展开数只是本次 ⇒ 会得出 17 这种假数（实测）。
+    failed: set[str] = set()
     # ⚠️ 变量名不能叫 `total` —— `B12` 的名字正则是
     #    `(^|_)(score|objective|utility|global|importance|total)(_|$)`，它会扫到**局部变量**。
     #    `total` 是计数不是评分，但 B12 的纪律是「扫名字、宁可误报」⇒ 改名字，不放松判据。
@@ -367,11 +370,14 @@ def plan(kernel: Any, *, rounds: int = 4, per_round: int = 3,
             tried_set.add(did)
             try:
                 d = kernel.direction(did)
-                if not kernel.is_expanded(d):
-                    kernel.expand(d)
-                    # 只有**真切出子方向**才算展开成功（分不开的进「试过」但不进 done）
-                    if kernel.children_of(d):
-                        done.append(did)
+                if kernel.is_expanded(d):
+                    continue                 # 已展开的不算「试过」，也不算失败
+                kernel.expand(d)
+                # 只有**真切出子方向**才算展开成功（分不开的进「试过」但不进 done）
+                if kernel.children_of(d):
+                    done.append(did)
+                else:
+                    failed.add(did)
             except Exception:                    # 单方向失败不拖垮整趟
                 continue
         n_expanded += len(done)
@@ -380,7 +386,8 @@ def plan(kernel: Any, *, rounds: int = 4, per_round: int = 3,
             break
     return {"轮次": log, "总展开": n_expanded, "剩余待展开": len(_todo()),
             # ⚠️ 「剩余 0」有两种含义，必须分开报：全建完了 / 剩下的都试过且分不开
-            "试过分不开": len(tried_set) - n_expanded,
+            "试过分不开": len(failed),
+            "分不开方向": sorted(failed),
             # 续建要把它存进快照 —— 否则每次重试那几支，剩余**不收敛**
             "试过方向": sorted(tried_set),
             "档内顺序": SORT_KEY, "每轮上限": per_round}
