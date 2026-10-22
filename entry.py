@@ -72,7 +72,6 @@ from urllib.parse import parse_qs, urlparse
 from ldv import protocol as PROTO
 from ldv.checks._fixtures import build_keyset, build_reach
 from ldv.core.interfaces import WeightedRecord
-from ldv.core.selfopt import tendency_by_direction
 from ldv.corpus.loader import load_edges, load_nodes
 from ldv.tools import usage_store
 
@@ -119,7 +118,7 @@ def default_corpus() -> str:
 
 
 class App:
-    def __init__(self, corpus: str | None = None) -> None:
+    def __init__(self, corpus: str | None = None, *, usage_now=None) -> None:
         import os
         if corpus:
             os.environ["LDV_CORPUS"] = corpus
@@ -185,15 +184,21 @@ class App:
         self._last_qfp = ""
         self._tendency: dict[str, float] = {}
         self.usage_loaded = 0
+        # 遗忘的「现在」——**必须可注入**：衰减依赖当前时刻，判据要能固定它，
+        # 否则同一条判据在不同时间跑出不同结果（那就是不可复现）。
+        self._usage_now = usage_now
         self._load_usage()
 
     # ── 使用记录：加载 / 记录 / 清空 ─────────────────────────────────────────
     def _load_usage(self) -> None:
-        """把历史使用记录灌进 `kernel.usage`，并算出每个方向的倾向。
+        """把历史使用记录灌进 `kernel.usage`，并算出每个方向的**衰减后**倾向。
 
         ★★ **记录不改结构**：它只进 `kernel.usage`（一个 list），
            树的项数 / 键集 / 指纹一个都不动。判据 `[接入] ②` 守这条 ——
            这也是「使用记录**不进** `nodes/`」的兑现点（`§K9`）。
+        ★★ **遗忘只降权、不删**：倾向由 `usage_store.aged_tendency` 按记录年龄
+           加权算（半衰期 `HALF_LIFE_DAYS`）；记录本身一条不少。
+           把半衰期关掉（`0`）⇒ 与加衰减之前**逐字相同**（判据 `[遗忘] ④` 的对照）。
         """
         if self._usage_dir is None:
             return
@@ -202,7 +207,9 @@ class App:
             try:
                 recs.append(WeightedRecord(did=r["did"], outcome=float(r["outcome"]),
                                            propensity=float(r["propensity"]),
-                                           note=r.get("note", "")))
+                                           note=r.get("note", ""),
+                                           # `at` 是遗忘的输入；放进 extra 不改 dataclass
+                                           extra={"at": r.get("at", "")}))
             except ValueError:
                 continue                       # 倾向越界的记录不收（§K7 / B11）
         if not recs:
@@ -210,7 +217,8 @@ class App:
         k = self.kernels["keyset"]
         k.usage.extend(recs)
         self.usage_loaded = len(recs)
-        self._tendency = tendency_by_direction(k)
+        # ★ 遗忘在这里发生：按记录年龄降权（**记录一条不删**）
+        self._tendency = usage_store.aged_tendency(self._usage_dir, now=self._usage_now)
 
     def _record_use(self, k, d) -> dict | None:
         """下钻 = 这次「这个方向有用」的**真实**信号（不是合成反馈）。

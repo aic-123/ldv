@@ -9131,6 +9131,67 @@ def test_usage_wiring() -> None:
         _sh.rmtree(tmp, ignore_errors=True)
 
 
+def test_forgetting() -> None:
+    """★ [遗忘] 两层记忆：短期显性（缓冲，容量淘汰）+ 长期隐性（正式，降权不删）。
+
+    用户 2026-10-22 定：**只降权、不删** · **稳定就是正式** · **给它们名字**。
+    ⇒ 「遗忘」只在**计算**上发生：记录永不删，算倾向时按年龄乘衰减因子。
+       删了正式记录，账本就不是账本，而且不可审计、不可回退。
+
+    ① 降权**不删**：算完衰减，记录条数不变
+    ② 老的权重更小（90 天前 < 1 天前）
+    ③ 缺时间戳 ⇒ 不衰减（w = 1.0）—— **不猜**：不知道时间既不能当很老，也不能当很新
+    ④ 半衰期关掉 ⇒ 回到等权平均（**可回退的对照**）
+    ⑤ 两层记忆各有名字（`status` 里两个键都在）
+
+    ⚠️ 全部用临时目录 + 注入 `now` ⇒ 不依赖外部语料、不随运行时刻漂。
+    """
+    import shutil as _sh
+    import tempfile as _tf
+    from datetime import datetime, timedelta
+
+    from ldv.tools import usage_store as US
+
+    tmp = Path(_tf.mkdtemp(prefix="ldv_forget_"))
+    try:
+        now = datetime(2026, 10, 22, 12, 0, 0)
+        US.append(tmp, did="D1", outcome=1.0, propensity=0.5, qfp="q-old",
+                  at=(now - timedelta(days=90)).isoformat())
+        US.append(tmp, did="D1", outcome=-1.0, propensity=0.5, qfp="q-new",
+                  at=(now - timedelta(days=1)).isoformat())
+        before = len(US.load(tmp))
+
+        _ = US.aged_tendency(tmp, now=now)
+        ok("★ [遗忘] ① 降权**不删**：算完衰减，记录条数不变",
+           len(US.load(tmp)) == before == 2,
+           f"算前 {before} 条｜算后 {len(US.load(tmp))} 条")
+
+        w_old = US.decay_weight((now - timedelta(days=90)).isoformat(), now=now)
+        w_new = US.decay_weight((now - timedelta(days=1)).isoformat(), now=now)
+        ok("★ [遗忘] ② 老的权重更小（半衰期 30 天）",
+           w_old < w_new < 1.0,
+           f"90 天前 w={w_old:.4f}｜1 天前 w={w_new:.4f}")
+
+        ok("★ [遗忘] ③ 缺时间戳 ⇒ 不衰减（w = 1.0），不猜",
+           US.decay_weight("", now=now) == 1.0,
+           f"w = {US.decay_weight('', now=now)}")
+
+        aged = US.aged_tendency(tmp, now=now)
+        flat = US.aged_tendency(tmp, now=now, half_life_days=0)
+        ok("★ [遗忘] ④ 半衰期关掉 ⇒ 回到等权平均（可回退的对照）",
+           abs(flat["D1"]) < 1e-12 and aged["D1"] < 0,
+           f"关掉 {flat['D1']:+.4f}（等权 = 0）｜开着 {aged['D1']:+.4f}"
+           f"（被**新的**那条拉向负）")
+
+        st = US.status(tmp)
+        ok("★ [遗忘] ⑤ 两层记忆各有名字（短期显性 / 长期隐性）",
+           US.SHORT_TERM in st and US.LONG_TERM in st,
+           f"{US.SHORT_TERM}：{st[US.SHORT_TERM]['遗忘方式']}｜"
+           f"{US.LONG_TERM}：{st[US.LONG_TERM]['遗忘方式']}")
+    finally:
+        _sh.rmtree(tmp, ignore_errors=True)
+
+
 def test_self_corpus() -> None:
     """★ 认知原型的两条自我判据（2026-10-22，§S5）。
 
@@ -9228,7 +9289,7 @@ def main() -> int:
                test_multilevel, test_retriever, test_cli_paths,
                test_never_judged, test_b17_cyclic_corpus,
                test_skip_evidence_table, test_self_corpus,
-               test_growth_autonomy, test_usage_wiring):
+               test_growth_autonomy, test_usage_wiring, test_forgetting):
         # ★ **兜底：外部语料不在 ⇒ 跳过该函数，不崩**（2026-10-19 修 CI）
         #
         #   外部语料在 `_data/` 下，而 `.gitignore` 规定 `_data/*` **不进仓库**

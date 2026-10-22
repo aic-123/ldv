@@ -37,6 +37,21 @@ STAGE = "_staging"
 #:    多少次查询之内还该记得住？—— 那是人的判断，不是这里能算的。
 #: ⚠️ **只淘汰缓冲，正式记录永不淘汰**（正式是账本，缓冲是状态）。
 STAGE_CAP = 50
+
+#: 长期隐性记忆的**遗忘半衰期**（天）—— **外生参数、暂定值，未经标定**。
+#:
+#: ★★ **遗忘发生在计算上，不发生在存储上**：
+#:    记录**永不删**（账本只追加），只在算倾向时乘衰减因子
+#:    `w = 0.5 ** (年龄天数 / HALF_LIFE_DAYS)`。
+#:    ⇒ 老经验影响力变小，但任何时候都能回答「它曾经学过什么」；
+#:      改这个数就能「重新记起来」（可回退）。
+#: ⚠️ `0` = 不衰减（与加衰减之前逐字相同）—— 判据用它做「回退对照」。
+HALF_LIFE_DAYS = 30.0
+
+#: 两层记忆的**名字**（用户 2026-10-22 要求「给它们名字」）。
+#: 短期 = 缓冲（显式：入口会报「还剩 N 支待看」）；长期 = 正式（隐性：不再逐条呈现）。
+SHORT_TERM = "短期显性记忆"
+LONG_TERM = "长期隐性记忆（稳定区）"
 FIELDS = ("id", "did", "outcome", "propensity", "qfp", "note")
 
 
@@ -54,7 +69,7 @@ def _safe(s: str) -> str:
 
 
 def append(corpus_dir: Any, *, did: str, outcome: float, propensity: float,
-           qfp: str, note: str = "") -> dict:
+           qfp: str, note: str = "", at: str | None = None) -> dict:
     """追加一条记录。**同 `(qfp, did)` 已存在 ⇒ 不写、不覆写、不报错。**"""
     d = _dir(corpus_dir)
     d.mkdir(parents=True, exist_ok=True)
@@ -63,6 +78,9 @@ def append(corpus_dir: Any, *, did: str, outcome: float, propensity: float,
     if p.exists():
         return {"ok": True, "written": False, "path": str(p),
                 "why": "已有同一 (qfp, did) 的记录 —— 只追加，不覆写"}
+    # `at` 是**遗忘的输入**：没有它就只能不衰减（见 decay_weight）。
+    # 判据要固定 now ⇒ 允许注入。
+    at = at or datetime.now().isoformat(timespec="microseconds")
     body = (
         "---\n"
         f"id: {p.stem}\n"
@@ -70,6 +88,7 @@ def append(corpus_dir: Any, *, did: str, outcome: float, propensity: float,
         f"outcome: {float(outcome)}\n"
         f"propensity: {float(propensity)}\n"
         f"qfp: {qfp}\n"
+        f"at: {at}\n"
         f"note: {note}\n"
         "---\n"
         f"一次使用记录：查询 {qfp} 展示了方向 {did}，随后它被下钻（outcome = 有用）。\n"
@@ -101,12 +120,69 @@ def load(corpus_dir: Any) -> list[dict]:
             out.append({"did": row["did"], "outcome": float(row["outcome"]),
                         "propensity": float(row.get("propensity") or 1.0),
                         "note": row.get("note", ""), "qfp": row.get("qfp", ""),
-                        "file": p.name})
+                        "at": row.get("at", ""), "file": p.name})
         except Exception:                                    # noqa: BLE001
             bad.append(p.name)
     if bad:
         print(f"  ⚠️ usage 里有 {len(bad)} 个文件解析不了（已跳过）：{bad[:3]}")
     return out
+
+
+# ── 遗忘：只在**计算**上发生，不在存储上 ────────────────────────────────────
+#
+# ★★ 用户 2026-10-22 定：「只降权、不删」。
+#    理由：账本只追加是这仓库的纪律 —— 删了正式记录，它就不是账本了，
+#    而且不可审计（答不出「它曾经学过什么」）、不可回退（删了就没了）。
+#    ⇒ 遗忘 = 算倾向时乘衰减因子；记录本身**永久保留**。
+
+
+def decay_weight(at: str, *, now: datetime | None = None,
+                 half_life_days: float = HALF_LIFE_DAYS) -> float:
+    """一条记录的衰减因子 `0.5 ** (年龄天数 / 半衰期)`。
+
+    ⚠️ **缺时间戳 ⇒ 1.0（不衰减），并如实报数** —— 不猜。
+       「不知道时间」既不能当「很老」（w→0，等于凭空抹掉证据），
+       也不能当「很新」；1.0 的意思是「不施加惩罚」，不是「假设它刚发生」。
+    ⚠️ `half_life_days <= 0` ⇒ 1.0（不衰减）。判据拿它做「回退对照」：
+       把半衰期关掉，倾向必须与加衰减之前**逐字相同**。
+    """
+    if not at or half_life_days <= 0:
+        return 1.0
+    try:
+        t = datetime.fromisoformat(at)
+    except ValueError:
+        return 1.0
+    now = now or datetime.now()
+    age_days = max(0.0, (now - t).total_seconds() / 86400.0)
+    return 0.5 ** (age_days / half_life_days)
+
+
+def aged_tendency(corpus_dir: Any, *, now: datetime | None = None,
+                  half_life_days: float = HALF_LIFE_DAYS) -> dict[str, float]:
+    """每个方向的**衰减后累计证据** `Σ (outcome / propensity × w)` —— 局部量。
+
+    ★★ 为什么是**和**、不是**平均**（这条是踩出来的）：
+       加权平均里 `w` 会被约掉 ⇒ **单条记录看不出衰减** ——
+       一条 300 天前的记录和一条刚写的记录，平均值都是 1.0。
+       实测（`evidence/_probe_forgetting.py` F6 第一版）就是「新 1.0000 → 旧 1.0000」。
+       ⇒ 记忆强度本来就该是**累计**的：重复证据累加（巩固），老证据衰减（遗忘）。
+         这同时符合「越用越顺手」的语义。
+
+    ⚠️ 与 `selfopt.tendency_by_direction` **不是同一个量**：那边是**平均**（`flow D` 用），
+       这边是**累计证据**（入口排序用）。两者只在「单条记录」时数值相同。
+       **不要**把这边改成平均 —— 一改，遗忘就对单条记录失效。
+    ⚠️ 只收合法倾向（`§K7` / `B11`）：`propensity` 必须在 `(0, 1]`。
+    ⚠️ 没有任何合法记录的方向**不出现**在结果里（`§K6`：没有 ≠ 0）。
+    ⚠️ 跨方向**不求和、不求平均** —— 那是全局评分（`§B12`）。
+    """
+    per: dict[str, list[tuple[float, float]]] = {}
+    for r in load(corpus_dir):
+        p = float(r.get("propensity") or 0.0)
+        if not (0.0 < p <= 1.0):
+            continue
+        w = decay_weight(r.get("at", ""), now=now, half_life_days=half_life_days)
+        per.setdefault(r["did"], []).append((float(r["outcome"]) / p, w))
+    return {did: sum(v * w for v, w in pairs) for did, pairs in sorted(per.items())}
 
 
 # ── 缓冲区：查询先落这里，**不算有用** ──────────────────────────────────────
@@ -245,16 +321,25 @@ def clear(corpus_dir: Any) -> dict:
 
 
 def status(corpus_dir: Any) -> dict:
-    """只报不淘汰（沿用 `capacity_status` 的纪律）。**正式与缓冲分开报。**"""
+    """只报不淘汰（沿用 `capacity_status` 的纪律）。**两层记忆分开报。**"""
     rows = load(corpus_dir)
     staged = stage_load(corpus_dir)
     per: dict[str, int] = {}
     for r in rows:
         per[r["did"]] = per.get(r["did"], 0) + 1
+    no_at = sum(1 for r in rows if not r.get("at"))
     return {"记录数": len(rows), "覆盖方向数": len(per),
             "缓冲批次数": len(staged),
             "缓冲上限": STAGE_CAP,
             "缓冲里待 promote 的支": sum(len(r["shown"]) for r in staged),
+            # ★ 两层记忆的名字（用户要求「给它们名字」）
+            SHORT_TERM: {"批次数": len(staged), "上限": STAGE_CAP,
+                         "待 promote 的支": sum(len(r["shown"]) for r in staged),
+                         "遗忘方式": "容量淘汰最旧（自动）"},
+            LONG_TERM: {"记录数": len(rows), "覆盖方向数": len(per),
+                        "无时间戳（不衰减）": no_at,
+                        "遗忘方式": f"半衰期 {HALF_LIFE_DAYS:g} 天**降权**，"
+                                    "记录永不删（删除只能 clear）"},
             "目录": str(_dir(corpus_dir)),
             "最多的方向": sorted(per.items(), key=lambda kv: (-kv[1], kv[0]))[:5]}
 
