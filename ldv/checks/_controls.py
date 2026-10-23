@@ -908,6 +908,49 @@ def s5_known_answer() -> list[str]:
     return fails
 
 
+def a2_known_answer() -> list[str]:
+    """`§A2` 视图稳定：对每对块，`B₁ ⊆ E⁻¹(B₂)` 或 `B₁ ∩ E⁻¹(B₂) = φ`。
+
+    坏输入：一块里**一个走得到、一个走不到**同一个目标 ⇒ 这一块跨在
+    `E⁻¹(B₂)` 内外 ⇒ 不稳定 ⇒ 红。好输入：整块都在同一侧。
+    """
+    from ..core.views import ViewSpec
+    from .abstraction import a2_stable
+
+    U = ("a", "b", "c")
+    # E: a → c（b 走不到 c）
+    spec = ViewSpec(universe=U, partition=(frozenset({"a", "b"}), frozenset({"c"})),
+                    relation=frozenset({("a", "c")}))
+    bad_q = [frozenset({"a", "b"}), frozenset({"c"})]      # {a,b} 跨内外
+    good_q = [frozenset({"a"}), frozenset({"b"}), frozenset({"c"})]
+    return _pair("A2 视图不稳定",
+                 _tri(a2_stable, "A2", spec, bad_q),
+                 _tri(a2_stable, "A2", spec, good_q))
+
+
+def a3_known_answer() -> list[str]:
+    """`§A3` 最粗：不存在更粗的稳定划分。
+
+    坏输入：`E` 对称（a↔b）时，`{a}`/`{b}` 稳定但**可合并** ⇒ 不是最粗 ⇒ 红。
+    好输入：合并成一块 ⇒ 最粗。
+    """
+    from ..core.views import ViewSpec
+    from .abstraction import a3_coarsest
+
+    U = ("a", "b")
+    # ⚠️ `P` 必须是**一个块** —— `coarser_stable_exists` 只在**同一个 P 块内部**合并
+    #    （`P` 是「初始划分」，视图只会比它更细）。第一版把 P 写成 {a},{b}，
+    #    于是「能不能合并」根本不成立 ⇒ 判据给「是」，对照反过来打了我一枪。
+    spec = ViewSpec(universe=U,
+                    partition=(frozenset({"a", "b"}),),
+                    relation=frozenset({("a", "b"), ("b", "a")}))
+    bad_q = [frozenset({"a"}), frozenset({"b"})]           # 稳定，但还能合并
+    good_q = [frozenset({"a", "b"})]                       # 最粗
+    return _pair("A3 不是最粗",
+                 _tri(a3_coarsest, "A3", spec, bad_q),
+                 _tri(a3_coarsest, "A3", spec, good_q))
+
+
 ALL = (b4_known_answer, b7_known_answer, b9_known_answer,
        b12_known_answer, b13_known_answer, b14_known_answer,
        b2_known_answer, b3_known_answer, b5_known_answer,
@@ -916,4 +959,5 @@ ALL = (b4_known_answer, b7_known_answer, b9_known_answer,
        b11_known_answer, b15_known_answer, d8_known_answer,
        d4_known_answer, d3_known_answer, d1_known_answer,
        d6_known_answer, d5_known_answer, d2_known_answer,
-       s3_known_answer, s4_known_answer, s5_known_answer)
+       s3_known_answer, s4_known_answer, s5_known_answer,
+       a2_known_answer, a3_known_answer)

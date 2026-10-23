@@ -7497,6 +7497,12 @@ def test_b_known_answers() -> None:
     fs5 = _run(C.s5_known_answer)
     ok("★ [保证] 合成对照 · §S5 自我标签一致（每个 `我=是` 都指回真实文件，删掉即回原状）",
        not fs5, "；".join(fs5[:2]) or "来源全部指得回、删掉无残留")
+    fa2 = _run(C.a2_known_answer)
+    ok("★ [保证] 合成对照 · §A2 视图稳定（一块里一个走得到一个走不到 ⇒ 必须红）",
+       not fa2, "；".join(fa2[:2]) or "不稳定被检出、稳定放行")
+    fa3 = _run(C.a3_known_answer)
+    ok("★ [保证] 合成对照 · §A3 最粗（还能合并的划分不是最粗 ⇒ 必须红）",
+       not fa3, "；".join(fa3[:2]) or "能合并被检出、最粗放行")
 
 
 def test_guarantee_matrix() -> None:
@@ -10243,7 +10249,11 @@ def test_no_unsourced_strings() -> None:
     caught = [s for s in walk_values(probe)
               if s and s not in material and s not in protocol
               and not s.startswith(fixed_prefix)]
-    ok("★ [不产内容] 判据自检：故意塞一个无出处字符串 ⇒ **抓得到**",
+    # ★ 这条**就是 §S1 的合成对照**（2026-10-23 显式标出来）：
+    #   它喂一个**已知无出处**的字符串，要求扫描器抓到 —— 抓到才证明
+    #   「3 次真查询里无出处 0 个」**不是扫描器瞎了**。
+    #   ⚠️ 以前它只在 detail 里叫「判据自检」，矩阵看不见 ⇒ 被记成「零对照」。
+    ok("★ [不产内容] §S1 合成对照：故意塞一个无出处字符串 ⇒ **抓得到**",
        caught == ["这是一句凭空生成的话"], f"抓到 {caught}")
 
 
