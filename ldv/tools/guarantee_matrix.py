@@ -102,9 +102,16 @@ def judgments() -> list[str]:
 
 
 def unresolved() -> list[str]:
-    """**抓不到的注册写法** —— 静态拿不到编号的那些 `rep.add(...)`。
+    """**抓不到的注册写法** —— 静态拿不到编号的那些。
 
     ⚠️ 不静默：它们可能正是「零判据」里的某几条。工具报出来，人去看。
+
+    目前两类：
+
+        `rep.add(code, …)`   编号是变量，静态拿不到值
+        `ok(f"…")`           标签是 **f-string** ⇒ 里面的编号静态看不见
+                             （实测：6 条合成对照第一版就是这么写的，
+                              全部没进覆盖率读数 —— 第二次栽在同一个坑）
     """
     bad: list[str] = []
     for f in sorted((REPO / "ldv" / "checks").glob("*.py")):
@@ -112,6 +119,13 @@ def unresolved() -> list[str]:
         for arg in re.findall(r"rep\.add\(\s*([^,]+),", src):
             if not re.match(r'^"[A-Z]+\d+"$', arg.strip()):
                 bad.append(f"{f.name}: rep.add({arg.strip()[:20]}, …)")
+    tree = ast.parse(io.open(REPO / "ldv" / "tests" / "run_tests.py",
+                             encoding="utf-8").read())
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                and node.func.id == "ok" and node.args
+                and isinstance(node.args[0], ast.JoinedStr)):
+            bad.append("run_tests.py: ok(f\"…\") 动态标签")
     return bad
 
 
@@ -163,6 +177,54 @@ def table(cov: dict[str, list[str]], status: dict[str, str] | None = None
     rows.append(f"合计 **{len(cov)}** 条承诺｜有判据 **{len(cov) - n_gap}**"
                 f"｜**零判据 {n_gap}**")
     return "\n".join(rows)
+
+
+def b_without_control(ctl: dict[str, list[str]] | None = None) -> list[str]:
+    """**还没有合成对照的 `B` 判据** —— 这就是「下一步该造哪条反例」的清单。
+
+    ★ 为什么只盯 `B`：`§K/§A/§D/§S` 这些承诺在实现上由 `B` 检查守
+      （断言集的「系统落点」一栏写的就是 `Bxx`）⇒ **给 B 造出对照，
+      § 那一层就跟着有了**。反过来不成立：只给 § 造，B 仍然没人验。
+
+    ★★ **判定看符号，不看标签**（2026-10-23 修）：第一版只看标签里的
+       「合成对照 / 已知答案」，于是把 **B18 误报成「没有对照」** ——
+       它的对照函数 `b18_known_answer` 明明在 `coverage.py` 里，
+       只是 `run_tests` 那一条的标签没写这几个字。
+       ⇒ 「标签没写」和「对照不存在」是**两件事**，这里必须查**函数在不在**。
+
+    ⚠️ 这不等于「剩下的都造得出」：`B8` 要 `make_kernel`、
+       `B19` 要一份**连续没变细**的 profile —— 能造，但成本不同。
+    """
+    ctl = controls() if ctl is None else ctl
+    have = {c for c, v in ctl.items() if v}
+    # 符号层证据：`def bN_known_answer(...)` 出现在任何检查文件里
+    for f in sorted((REPO / "ldv").rglob("*.py")):
+        for m in re.finditer(r"^def (b\d+)_known_answer\b",
+                             io.open(f, encoding="utf-8").read(), re.M):
+            have.add(m.group(1).upper())
+    return [f"B{i}" for i in range(1, 21) if f"B{i}" not in have]
+
+
+#: 还没对照的 `B` ⇒ **怎么造反例 / 卡在哪**（人判，2026-10-23）。
+#:
+#: ★ 结论先说：**这 10 条都造得出**，只是成本不同 —— 没有一条是「天生造不出」。
+#:   （我原以为「有些断言的反例等于改实现」，逐条看下来这个判断不成立：
+#:    它们的输入都是**可构造的假插件 / 假 profile / 假 make_kernel**。）
+#:
+#: ⚠️ 这张表是**人判**，不是读数 —— 判据只守「表里覆盖了所有缺对照的 B」，
+#:    不守「你判得对」。
+B_CONTROL_PLAN = {
+    "B2": ("可造·易", "假插件：`merge` 丢一个成员 ⇒ 合并覆盖塌"),
+    "B3": ("可造·易", "假插件：`penalty` 返回不可比的类型/量纲"),
+    "B5": ("可造·易", "假插件：`decode(encode(d))` 丢一个键"),
+    "B6": ("可造·易", "假插件：`signal` 恒返回同一个值 ⇒ 信号塌缩"),
+    "B8": ("可造·中", "假 `make_kernel`：插入时**故意**让失效扩散到锥外"),
+    "B10": ("可造·易", "假插件：只会答「是/否」⇒ 三态塌成两态"),
+    "B11": ("可造·易", "假记录：`propensity` 缺失或 > 1"),
+    "B15": ("可造·中", "假 `make_kernel`：插入顺序敏感 ⇒ 换序不同构"),
+    "B16": ("可造·易", "假 cover：少给一个成员 ⇒ 成员 ⊄ 覆盖"),
+    "B19": ("可造·易", "手造 `prof`：连续 10 次「没变细」"),
+}
 
 
 def load_baseline() -> list[str]:
@@ -274,6 +336,35 @@ def render(cov: dict[str, list[str]] | None = None) -> str:
         "",
         "⚠️ 它也**低估**：带了对照却没在标签里写的，这里看不见。",
         "和「判了但没写编号」是同一个毛病 —— **把话说进标签**。",
+        "",
+        f"⚠️ **低估的量化**：静态索引抓不到的注册写法 **{len(unresolved())}** 条",
+        "（`rep.add(code, …)` 变量编号 + `ok(f\"…\")` 动态标签）—— 这些判据的编号",
+        "在矩阵里**完全看不见**，所以上面两个数都只会**偏小**。",
+        "",
+        "### 下一步该造哪条反例",
+        "",
+        "`§K/§A/§D/§S` 这些承诺在实现上由 `B` 检查守（断言集的「系统落点」一栏写的",
+        "就是 `Bxx`）⇒ **给 `B` 造出对照，`§` 那一层就跟着有了**；反过来不成立。",
+        "",
+        "还没有对照的 `B`：",
+        "",
+    ]
+    _noctl = b_without_control(ctl)
+    head += ([f"- `{c}`" for c in _noctl] or ["（无）"])
+    head += [
+        "",
+        f"⇒ **{len(_noctl)} / 20** 条还缺。**逐条看下来这 10 条都造得出**，只是成本不同：",
+        "",
+        "| B | 能不能造 | 怎么造 / 卡在哪 |",
+        "|---|---|---|",
+    ]
+    for c in _noctl:
+        how, why = B_CONTROL_PLAN.get(c, ("未评估", "**表里没有它 —— 补上**"))
+        head.append(f"| `{c}` | {how} | {why} |")
+    head += [
+        "",
+        "⚠️ 这张表是**人判**，不是读数。判据只守「表里覆盖了所有缺对照的 `B`」，",
+        "不守「判得对」—— 真正的检验是把它造出来、看它红。",
     ]
     return "\n".join(head) + "\n"
 

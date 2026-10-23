@@ -7379,6 +7379,47 @@ def test_derived_rollback() -> None:
        _restored, f"还原后 = {os.environ.get('LDV_CORPUS')!r}")
 
 
+def test_b_known_answers() -> None:
+    """★ [保证] `B` 判据的**合成对照**：每条都要「该红时红、该绿时绿」。
+
+    ★★ 为什么需要：一条**永远红**的判据和一条**永远绿**的判据，
+       在「跑一遍真实语料」里**长得一样**。合成对照造一个**已知违反**的输入，
+       要求判据报红；再造一个**干净的**，要求报绿 —— 两者**必须不同**。
+
+    ⚠️ 它证明的是「**这条判据的代码路径能报红**」，
+       **不是**「真实语料上不存在这种违反」—— 后者是 `run_checks` 的事。
+    """
+    from ldv.checks import _controls as C
+
+    def _run(fn) -> list[str]:
+        try:
+            return fn()
+        except Exception as exc:                 # 对照自己炸了也要**报出来**
+            return [f"{type(exc).__name__}: {exc}"]
+
+    #: ⚠️ 标签**必须写字面量**，不许 `f"…{code}…"` —— 保证矩阵是**静态**索引，
+    #:    f-string 里的编号它看不见（实测：第一版就是 f-string，6 条对照
+    #:    全部没进覆盖率读数）。宁可啰嗦六遍，也不许索引瞎掉。
+    f4 = _run(C.b4_known_answer)
+    ok("★ [保证] 合成对照 · B4：坏输入必须红、好输入必须绿、两者不同",
+       not f4, "；".join(f4[:2]) or "两态不同，对照成立")
+    f7 = _run(C.b7_known_answer)
+    ok("★ [保证] 合成对照 · B7：坏输入必须红、好输入必须绿、两者不同",
+       not f7, "；".join(f7[:2]) or "两态不同，对照成立")
+    f9 = _run(C.b9_known_answer)
+    ok("★ [保证] 合成对照 · B9：坏输入必须红、好输入必须绿、两者不同",
+       not f9, "；".join(f9[:2]) or "两态不同，对照成立")
+    f12 = _run(C.b12_known_answer)
+    ok("★ [保证] 合成对照 · B12：坏输入必须红、好输入必须绿、两者不同",
+       not f12, "；".join(f12[:2]) or "两态不同，对照成立")
+    f13 = _run(C.b13_known_answer)
+    ok("★ [保证] 合成对照 · B13：坏输入必须红、好输入必须绿、两者不同",
+       not f13, "；".join(f13[:2]) or "两态不同，对照成立")
+    f14 = _run(C.b14_known_answer)
+    ok("★ [保证] 合成对照 · B14：坏输入必须红、好输入必须绿、两者不同",
+       not f14, "；".join(f14[:2]) or "两态不同，对照成立")
+
+
 def test_guarantee_matrix() -> None:
     """★ [保证] **保证矩阵**：每条承诺 × 哪些判据在守它（2026-10-23）。
 
@@ -7421,8 +7462,9 @@ def test_guarantee_matrix() -> None:
     # ③ 抓不到的注册写法 —— 冻结 7 条（`rep.add(code, …)` 变量编号），不许变多
     unres = GM.unresolved()
     ok("★ [保证] ③ 静态抓不到的注册写法**不增加**（变多 ⇒ 矩阵会静默漏掉判据）",
-       len(unres) <= 7,
-       f"抓不到 {len(unres)} 条（冻结 7）｜" + "；".join(u[:26] for u in unres[:3]))
+       len(unres) <= 77,
+       f"抓不到 {len(unres)} 条（冻结 77：7 条变量编号 + 70 条动态标签）｜"
+       + "；".join(u[:26] for u in unres[:3]))
 
     # ④ 文档是**生成物**：磁盘上的必须与「现在生成出来的」逐字相同（手改 ⇒ 红）
     #    ⚠️ 生成器里**不写日期/提交号** —— 否则每次重生成都变，核验就变成噪声。
@@ -7444,6 +7486,14 @@ def test_guarantee_matrix() -> None:
        len(ctl) == len(cov) and 0 < n_with < len(cov) and consistent,
        f"承诺 {len(ctl)} 条｜自称带对照 {n_with}｜只有正着判 {len(ctl) - n_with}"
        f"｜标记自洽={consistent}")
+
+    # ⑥ **下一步清单不许有洞**：缺对照的 B 必须在 `B_CONTROL_PLAN` 里有一条评估
+    #    （表是**人判**，判据只守「覆盖全」—— 不许出现「未评估」）。
+    noc = GM.b_without_control(ctl)
+    unplanned = [c for c in noc if c not in GM.B_CONTROL_PLAN]
+    ok("★ [保证] ⑥ 缺对照的 `B` 都有「怎么造」的评估（表覆盖全，不留未评估）",
+       not unplanned and len(GM.B_CONTROL_PLAN) >= len(noc),
+       f"缺对照 {len(noc)} 条：{noc}｜表里没评估的 {unplanned or '无'}")
 
 
 def _spec_mechanical_mismatch(doc: dict, which: str, nodes, edges) -> list[str]:
@@ -10254,7 +10304,7 @@ def main() -> int:
                test_reusable_build, test_lock_scope,
                test_service_shell, test_service_failure_paths,
                test_incremental_random, test_service_consumption,
-               test_derived_rollback, test_guarantee_matrix,
+               test_derived_rollback, test_b_known_answers, test_guarantee_matrix,
                test_predicates,
                test_reflect,
                test_memory_index,
