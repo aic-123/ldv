@@ -3479,6 +3479,67 @@ def _drift(data: dict, how: str) -> dict:
     return data
 
 
+def test_bulk_equivalence() -> None:
+    """★ **批量纳入 ≡ 逐个插入**（前提：`build()` 已装同一批）—— 三插件逐字比。
+
+    ★★ 这条判据原来**不存在**：`Kernel.bulk_insert` 的 docstring 写着
+       「判据 `test_bulk_insert` ㊖ 在两个语料 × 三个方向上逐字比」，而 ㊖ 实际是
+       「树快照版本不符」—— **引用了一条不存在的判据**。所以它一直没被接进
+       `_assemble`：README 记的「默认 36 项不等价」，实测是**前提没成立**
+       （build 只装了 6 项，却拿 30 项去批量）。
+
+    ★★ **前提是真前提**（反向对照）：build 只装一部分时，批量**确实不等价**
+       —— 那正是维护路径不能用的原因。判据把两半都钉住：
+       前提成立 ⇒ 逐字相同；前提不成立 ⇒ 必须不同（否则「前提」是装饰）。
+    """
+    from ldv.checks._fixtures import items as _items
+    from ldv.checks._fixtures import load as _load
+    from ldv.checks._fixtures import make_builder as _mkb
+
+    loaded = _load()
+    if loaded is None:
+        ok("★ [批量] 批量 ≡ 逐个（**跳过**：内置语料不在）", True, "0")
+        return
+    nodes, edges, _d = loaded
+    ids = sorted(nodes)
+    its = _items(nodes)
+
+    def _sig(k):
+        return tuple((d.did, d.parent, len(k.children_of(d)),
+                      tuple(sorted(k.members_of(d)))) for d in k.all_directions())
+
+    same: list[str] = []
+    diff: list[str] = []
+    for which in ("keyset", "reach", "sequence"):
+        # ① 前提成立：build 装全集 ⇒ 批量必须逐字相同
+        k1, _p = _mkb(which, nodes, edges)(ids)
+        for i in ids:
+            k1.insert(i, its[i])
+        k2, _p2 = _mkb(which, nodes, edges)(ids)
+        k2.bulk_insert(ids)
+        if _sig(k1) == _sig(k2):
+            same.append(which)
+        else:
+            diff.append(which)
+
+    ok("★ [批量] 批量纳入 ≡ 逐个插入（三插件逐字相同，前提 = build 已装同一批）",
+       len(same) == 3,
+       f"逐字相同 {same}｜不同 {diff or '无'}")
+
+    # ② 反向对照：**前提不成立**时批量不等价 —— 证明「前提」不是装饰
+    k3, _p3 = _mkb("keyset", nodes, edges)(ids[:6])
+    for i in ids[6:]:
+        k3.insert(i, its[i])
+    k4, _p4 = _mkb("keyset", nodes, edges)(ids[:6])
+    for i in ids[6:]:
+        k4.items[i] = its[i]
+    k4.bulk_insert(ids[6:])
+    ok("★ [批量] 前提**不成立**时确实不等价（反向对照：维护路径不许用）",
+       _sig(k3) != _sig(k4),
+       f"build 只装 6 项、再批量 {len(ids) - 6} 项 ⇒ "
+       f"方向数 {len(_sig(k3))} vs {len(_sig(k4))}（不同才对）")
+
+
 def test_fingerprint_sensitivity() -> None:
     """★ **指纹够不够**：`_fingerprint` 相同的两个内核，**答案必然相同**吗？
 
@@ -10474,7 +10535,7 @@ def main() -> int:
                test_cover_leak_baseline, test_cover_oracle_transparency,
                test_b3_reduction_premise, test_reach_cache_premise,
                test_reach_cache_transparency, test_tree_premise,
-               test_deletion_path, test_fingerprint_sensitivity,
+               test_deletion_path, test_bulk_equivalence, test_fingerprint_sensitivity,
                test_persistence, test_persist_atomic,
                test_versioning,
                test_reusable_build, test_lock_scope,

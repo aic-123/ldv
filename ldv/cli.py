@@ -139,8 +139,12 @@ def _assemble(name: str, nodes, edges, holdout: int, remove: int = 0,
         plug, root = _plugin()
         kernel = (LockedKernel if locked else Kernel)(plug, init_items)
         kernel.build(root)
-        for iid in sorted(init_items):              # 批建：把初始项纳入结构
-            kernel.insert(iid)
+        # ★ **批量纳入**（2026-10-23）：`build(root)` 装的就是 `init_items` 这一批，
+        #   正好是 `bulk_insert` 的前提（「build 已装全集」）⇒ 等价。
+        #   判据 `test_bulk_equivalence` 三插件 × 逐字比；实测 coauth 5.64 s → 1.86 s。
+        #   ⚠️ **只有这一处能用**：维护路径（后添的 holdout 项）**前提不成立**
+        #      —— 那时 build 的全集比要插的少，批量会让分裂看到完整成员集 ⇒ 不等价。
+        kernel.bulk_insert(sorted(init_items))
         return kernel, plug
 
     def _build_once() -> tuple:
