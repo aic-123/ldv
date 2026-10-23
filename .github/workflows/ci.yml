@@ -159,6 +159,10 @@ jobs:
         run: python -m ldv.tools.evidence_index check
       - name: 版本落点一致 · 六处彼此相同（新 clone 上即可跑）
         run: python -m ldv.tools.version_spots check
+      # ★ 承诺 × 判据 的覆盖表：零判据清单必须与冻结基线一致
+      #   （新增缺口红；缺口被修好却没更新基线也红 —— 两头都守）
+      - name: 保证矩阵 · 零判据清单与冻结基线一致
+        run: python -m ldv.tools.guarantee_matrix --check
       - name: 外部语料验收 · 没有数据时必须报「跳过」而不是「通过」
         shell: bash
         run: |

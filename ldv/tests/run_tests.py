@@ -7305,6 +7305,61 @@ def test_service_consumption() -> None:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_guarantee_matrix() -> None:
+    """★ [保证] **保证矩阵**：每条承诺 × 哪些判据在守它（2026-10-23）。
+
+    外部审查要的：「把这些局部保证整理成一份明确的**保证矩阵**，
+    而不是让读者从大量文档、断言编号和探针输出中自行拼接。」
+
+    本判据守三件事：
+
+        ① 矩阵算得出，且**零判据清单与冻结基线一致**（新增缺口红、修好了没更新基线也红）
+        ② **反向对照**：把某条承诺的引用全删掉 ⇒ 它必须出现在零判据里
+           （否则「全部有判据」可能只是**匹配器瞎了**）
+        ③ **抓不到的注册写法**不许变多（f-string 标题 / 变量编号 —— 实测 B4 就是 f-string，
+           第一版正则漏了它，被误报成「零判据」）
+
+    ⚠️ 矩阵的**边界**：它判的是「**有没有判据提到这条承诺**」，
+       **不是**「提到的那条判得对」。后者只有反向对照能回答。
+    """
+    from ldv.tools import guarantee_matrix as GM
+
+    import io
+    import re
+
+    cov = GM.coverage()
+    now = GM.gaps(cov)
+    base = GM.load_baseline()
+    ok("★ [保证] ① 保证矩阵：零判据清单与**冻结基线**一致（两头都守）",
+       set(now) == set(base) and len(cov) >= 50,
+       f"承诺 {len(cov)} 条｜有判据 {len(cov) - len(now)}｜零判据 {len(now)}"
+       f"（基线 {len(base)}）｜新增 {sorted(set(now) - set(base))}"
+       f"｜已修未更新 {sorted(set(base) - set(now))}")
+
+    # ② 反向对照：把 `K2` 从所有判据标签里抹掉 ⇒ 必须变成零判据
+    fake = [s for s in GM.judgments() if not re.search(r"(?<![A-Za-z0-9])§?K2(?![0-9])", s)]
+    fake_gaps = GM.gaps(GM.coverage(fake))
+    ok("★ [保证] ② 反向对照：抹掉某条承诺的全部引用 ⇒ 它**必须**出现在零判据里",
+       "K2" in fake_gaps and "K2" not in now,
+       f"抹掉后 K2 零判据={'K2' in fake_gaps}｜真实表里 K2 有判据={'K2' not in now}"
+       f"｜判据数 {len(fake)} vs {len(GM.judgments())}")
+
+    # ③ 抓不到的注册写法 —— 冻结 7 条（`rep.add(code, …)` 变量编号），不许变多
+    unres = GM.unresolved()
+    ok("★ [保证] ③ 静态抓不到的注册写法**不增加**（变多 ⇒ 矩阵会静默漏掉判据）",
+       len(unres) <= 7,
+       f"抓不到 {len(unres)} 条（冻结 7）｜" + "；".join(u[:26] for u in unres[:3]))
+
+    # ④ 文档是**生成物**：磁盘上的必须与「现在生成出来的」逐字相同（手改 ⇒ 红）
+    #    ⚠️ 生成器里**不写日期/提交号** —— 否则每次重生成都变，核验就变成噪声。
+    on_disk = io.open(GM.DOC, encoding="utf-8").read() if GM.DOC.exists() else ""
+    fresh = GM.render(cov)
+    ok("★ [保证] ④ `docs/保证矩阵.md` 是**生成物**：磁盘 == 现生成（手改会让它红）",
+       bool(on_disk) and on_disk == fresh,
+       f"文件 {'存在' if on_disk else '**缺失**'}｜逐字相同={on_disk == fresh}"
+       f"｜差异 {abs(len(on_disk) - len(fresh))} 字节")
+
+
 def _spec_mechanical_mismatch(doc: dict, which: str, nodes, edges) -> list[str]:
     """committed 的 `view_spec.json` 里**机械那几栏**与生成器算出来的差在哪。
 
@@ -10113,6 +10168,7 @@ def main() -> int:
                test_reusable_build, test_lock_scope,
                test_service_shell, test_service_failure_paths,
                test_incremental_random, test_service_consumption,
+               test_guarantee_matrix,
                test_predicates,
                test_reflect,
                test_memory_index,
