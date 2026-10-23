@@ -42,11 +42,13 @@ class StubKernel:
     def __init__(self, dirs: list[Direction],
                  children: dict[str, tuple[str, ...]] | None = None,
                  members: dict[str, frozenset[str]] | None = None,
-                 stayed: dict[str, frozenset[str]] | None = None) -> None:
+                 stayed: dict[str, frozenset[str]] | None = None,
+                 items: dict[str, Any] | None = None) -> None:
         self._dirs = dirs
         self._children = children or {}
         self._members = members or {}
         self._stayed = stayed or {}
+        self.items = items or {}
         self.ledger = Ledger()
 
     def all_directions(self) -> list[Direction]:
@@ -232,5 +234,129 @@ def b14_known_answer() -> list[str]:
                      _tri_src(b14_exogenous_boundary, "B14", [good_p]))
 
 
+# --- B2 合并覆盖 -----------------------------------------------------------
+
+class _KeyPlugin:
+    """按键集命中的**假插件** —— 只实现 B2/B3/B5 用到的那几个方法。
+
+    `broken` 决定它在哪一步出错：
+        `merge`   合并后丢键 ⇒ B2 红
+        `penalty` 代价抛异常 ⇒ B3 红
+        `decode`  解码丢键   ⇒ B5 红
+    """
+
+    def __init__(self, broken: str | None = None) -> None:
+        self.broken = broken
+
+    def hit(self, d: Any, q: Any) -> Tri:
+        keys = d.payload if isinstance(d.payload, frozenset) else frozenset()
+        return Tri.YES if (keys & frozenset(getattr(q, "ideal", ()))) else Tri.NO
+
+    def merge(self, ds: list[Direction]) -> frozenset[str]:
+        out: set[str] = set()
+        for d in ds:
+            out |= set(d.payload)
+        return frozenset() if self.broken == "merge" else frozenset(out)
+
+    def penalty(self, d: Any, item: Any) -> float:
+        if self.broken == "penalty":
+            raise ValueError("代价不可比")
+        return 0.5
+
+    def encode(self, d: Any) -> bytes:
+        return "|".join(sorted(d.payload)).encode("utf-8")
+
+    def decode(self, blob: bytes) -> frozenset[str]:
+        keys = frozenset(x for x in blob.decode("utf-8").split("|") if x)
+        return frozenset() if self.broken == "decode" else keys
+
+
+def b2_known_answer() -> list[str]:
+    """B2 的合成对照：**合并后丢键** ⇒ 粗方向拒掉细方向收下的查询 ⇒ 红。"""
+    from ..core.kernel import Query
+    from .contract import b2_merge_covers
+
+    root = _d("D0", 1, None, origin=ORIGIN_EXOGENOUS)
+    # `_d` 的 payload 是 {did} —— 这里要的是**键**，换成键集
+    c1 = Direction(did="D1", rank=2, payload=frozenset({"a"}),
+                   witness=("D0",), origin=ORIGIN_SPLIT, parent="D0")
+    c2 = Direction(did="D2", rank=2, payload=frozenset({"b"}),
+                   witness=("D0",), origin=ORIGIN_SPLIT, parent="D0")
+    k = StubKernel([root, c1, c2], {"D0": ("D1", "D2")})
+    qs = [Query(ideal=frozenset({"a"}), label="a"),
+          Query(ideal=frozenset({"b"}), label="b")]
+    return _pair("B2 合并丢键",
+                 _tri(b2_merge_covers, "B2", _KeyPlugin("merge"), k, qs),
+                 _tri(b2_merge_covers, "B2", _KeyPlugin(), k, qs))
+
+
+# --- B3 代价可比 -----------------------------------------------------------
+
+def b3_known_answer() -> list[str]:
+    """B3 的合成对照：`penalty` **抛异常** ⇒ 记成违例 ⇒ 红；正常返回 ⇒ 绿。"""
+    from .contract import b3_penalty_comparable
+
+    root = _d("D0", 1, None, origin=ORIGIN_EXOGENOUS)
+    c1, c2 = _d("D1", 2, "D0", ("D0",)), _d("D2", 2, "D0", ("D0",))
+    k = StubKernel([root, c1, c2], {"D0": ("D1", "D2")},
+                   items={"a": frozenset({"x"})})
+    return _pair("B3 代价抛异常",
+                 _tri(b3_penalty_comparable, "B3", k, _KeyPlugin("penalty")),
+                 _tri(b3_penalty_comparable, "B3", k, _KeyPlugin()))
+
+
+# --- B5 解码覆盖 -----------------------------------------------------------
+
+def b5_known_answer() -> list[str]:
+    """B5 的合成对照：**解码丢键** ⇒ `解码(编码(d))` 判否掉 d 说「是」的查询 ⇒ 红。"""
+    from ..core.kernel import Query
+    from .contract import b5_decode_covers
+
+    root = _d("D0", 1, None, origin=ORIGIN_EXOGENOUS)
+    c1 = Direction(did="D1", rank=2, payload=frozenset({"a"}),
+                   witness=("D0",), origin=ORIGIN_SPLIT, parent="D0")
+    k = StubKernel([root, c1], {"D0": ("D1",)})
+    qs = [Query(ideal=frozenset({"a"}), label="a")]
+    return _pair("B5 解码丢键",
+                 _tri(b5_decode_covers, "B5", _KeyPlugin("decode"), k, qs),
+                 _tri(b5_decode_covers, "B5", _KeyPlugin(), k, qs))
+
+
+# --- B16 成员 ⊆ 覆盖 -------------------------------------------------------
+
+def b16_known_answer() -> list[str]:
+    """B16 的合成对照：**覆盖少给一个成员** ⇒ 成员落在覆盖外 ⇒ 红。"""
+    from .coverage import b16_members_covered
+
+    root = _d("D0", 1, None, origin=ORIGIN_EXOGENOUS)
+    k = StubKernel([root], members={"D0": frozenset({"a", "b"})})
+    return _pair(
+        "B16 成员越界",
+        _tri(b16_members_covered, "B16", k, lambda payload: frozenset({"a"})),
+        _tri(b16_members_covered, "B16", k,
+             lambda payload: frozenset({"a", "b"})))
+
+
+# --- B19 变细守卫 ---------------------------------------------------------
+
+def b19_known_answer() -> list[str]:
+    """B19 的合成对照：**连续 N 次没变细** ⇒ 红；最长段 < N ⇒ 绿。
+
+    ⚠️ `prof` 是手造的 —— 这正是它的好处：真语料上「树不够深」时
+       B19 照样绿，而**绿不能证明它在守东西**（判据自己的 docstring 就这么写）。
+    """
+    from .coverage import b19_progress_guard
+
+    base = {"已展开方向数": 20, "N": 10, "没变细的": ["D1→D2"],
+            "没变细展开": 10, "切得不匀展开": 3}
+    bad = {**base, "最长没变细连续段": 10}
+    good = {**base, "最长没变细连续段": 9}
+    return _pair("B19 连续没变细",
+                 _tri(b19_progress_guard, "B19", bad),
+                 _tri(b19_progress_guard, "B19", good))
+
+
 ALL = (b4_known_answer, b7_known_answer, b9_known_answer,
-       b12_known_answer, b13_known_answer, b14_known_answer)
+       b12_known_answer, b13_known_answer, b14_known_answer,
+       b2_known_answer, b3_known_answer, b5_known_answer,
+       b16_known_answer, b19_known_answer)

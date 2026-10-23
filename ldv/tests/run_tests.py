@@ -7418,6 +7418,21 @@ def test_b_known_answers() -> None:
     f14 = _run(C.b14_known_answer)
     ok("★ [保证] 合成对照 · B14：坏输入必须红、好输入必须绿、两者不同",
        not f14, "；".join(f14[:2]) or "两态不同，对照成立")
+    f2 = _run(C.b2_known_answer)
+    ok("★ [保证] 合成对照 · B2：坏输入必须红、好输入必须绿、两者不同",
+       not f2, "；".join(f2[:2]) or "两态不同，对照成立")
+    f3 = _run(C.b3_known_answer)
+    ok("★ [保证] 合成对照 · B3：坏输入必须红、好输入必须绿、两者不同",
+       not f3, "；".join(f3[:2]) or "两态不同，对照成立")
+    f5 = _run(C.b5_known_answer)
+    ok("★ [保证] 合成对照 · B5：坏输入必须红、好输入必须绿、两者不同",
+       not f5, "；".join(f5[:2]) or "两态不同，对照成立")
+    f16 = _run(C.b16_known_answer)
+    ok("★ [保证] 合成对照 · B16：坏输入必须红、好输入必须绿、两者不同",
+       not f16, "；".join(f16[:2]) or "两态不同，对照成立")
+    f19 = _run(C.b19_known_answer)
+    ok("★ [保证] 合成对照 · B19：坏输入必须红、好输入必须绿、两者不同",
+       not f19, "；".join(f19[:2]) or "两态不同，对照成立")
 
 
 def test_guarantee_matrix() -> None:
