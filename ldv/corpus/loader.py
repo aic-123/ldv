@@ -86,6 +86,7 @@ def _parse_block(block: str, where: str) -> dict[str, Any]:
         key, rest = key.strip(), rest.strip()
 
         if rest:
+            _seen(out, key, where, i + 1)          # 重复键 ⇒ 当场抛，不静默覆盖
             out[key] = _parse_scalar_or_inline_list(rest, where, i + 1)[0]
             i += 1
             continue
@@ -97,9 +98,11 @@ def _parse_block(block: str, where: str) -> dict[str, Any]:
             children.append(lines[i][2:])
             i += 1
         if not children:
+            _seen(out, key, where, i)
             out[key] = None
             continue
         if all(c.lstrip().startswith("- ") for c in children):
+            _seen(out, key, where, i)
             out[key] = [_parse_scalar_or_inline_list(c.lstrip()[2:].strip(), where, i)[0]
                         for c in children]
         elif any(c.lstrip().startswith("- ") for c in children):
@@ -110,9 +113,28 @@ def _parse_block(block: str, where: str) -> dict[str, Any]:
                 k2, s2, v2 = c.partition(":")
                 if not s2:
                     raise CorpusError(f"{where}: `{key}` 的嵌套行不是 `键: 值`：{c!r}")
-                nested[k2.strip()] = _parse_scalar_or_inline_list(v2.strip(), where, i)[0]
+                k2 = k2.strip()
+                _seen(nested, k2, where, i)
+                nested[k2] = _parse_scalar_or_inline_list(v2.strip(), where, i)[0]
             out[key] = nested
     return out
+
+
+def _seen(out: dict, key: str, where: str, lineno: int) -> None:
+    """**重复键 ⇒ 当场抛**（2026-10-23 外部审计复现的 P0）。
+
+    旧行为是「后者覆盖前者」—— 于是 `id: original` + `id: overwritten`
+    静默变成 `{'id': 'overwritten'}`，**前者整个消失且没有任何信号**。
+    在「不静默接受错误语料」的项目里，这与宣称的边界不一致：
+    解析失败与「解析成了另一份数据」必须分得开。
+
+    ⚠️ 报错而不是「取第一个」：静默取一个与「文件本来只写了一次」在读到的
+       字典上**长得一模一样** —— 正是「空转与通过长得一模一样」在入口的形态。
+    """
+    if key in out:
+        raise CorpusError(
+            f"{where}: 第 {lineno} 行附近键 `{key}` 出现了两次 —— "
+            "重复键一律拒收（不猜你要哪个）")
 
 
 def _parse_scalar_or_inline_list(raw: str, where: str, lineno: int) -> tuple[Any, bool]:
@@ -122,13 +144,75 @@ def _parse_scalar_or_inline_list(raw: str, where: str, lineno: int) -> tuple[Any
         inner = raw[1:-1].strip()
         if not inner:
             return [], True
-        return [_unquote(p.strip()) for p in inner.split(",")], True
+        return [_unquote(p) for p in _split_inline(inner, where, lineno)], True
     return _unquote(raw), False
+
+
+def _split_inline(inner: str, where: str, lineno: int) -> list[str]:
+    """按**引号外**的逗号切行内列表 —— 引号里的逗号**不是分隔符**。
+
+    为什么必须自己切（外部审计 2026-10-23 复现的 P0）：按裸逗号切，
+    `["a,b", "c"]` 会变成 `['"a', 'b"', 'c']` —— 一个元素被切成两个，
+    **没有任何报错**。那正是「静默误读」：比崩掉坏得多。
+
+    ⚠️ 本子集**不解释转义**：反斜杠连同下一字符一起进缓冲区（避免引号被
+       提前闭合），但 `_unquote` 不还原它 —— 语料用不到转义；
+       真需要转义那天，就该换真 YAML 解析器，而不是给这个函数加分支。
+    """
+    parts: list[str] = []
+    buf: list[str] = []
+    quote: str | None = None
+    i = 0
+    while i < len(inner):
+        ch = inner[i]
+        if quote is not None:
+            if ch == "\\" and i + 1 < len(inner):
+                buf.append(ch)
+                buf.append(inner[i + 1])
+                i += 2
+                continue
+            if ch == quote:
+                quote = None
+            buf.append(ch)
+        elif ch in "\"'":
+            quote = ch
+            buf.append(ch)
+        elif ch == ",":
+            parts.append("".join(buf))
+            buf = []
+        else:
+            buf.append(ch)
+        i += 1
+    if quote is not None:
+        raise CorpusError(f"{where}: 第 {lineno} 行引号没闭合：{inner!r}")
+    parts.append("".join(buf))
+    return [p.strip() for p in parts]
+
+
+#: YAML 会读成**非字符串**的裸标量（布尔 / 空）。本格式的字段契约是**字符串**
+#: （键集、谓词、枚举全都按字符串比）⇒ 这些值**必须加引号**。
+#:
+#: ★ 为什么不「顺手转类型」：转成 `True`/`None` 会改变键集与谓词的行为
+#:   （`flag=True` 与 `flag="true"` 在字典里不是同一个值）；
+#:   继续当字符串则与「YAML 作者写了布尔」的意图相反 —— **两种读法都错**。
+#:   所以只有一条路：**当场拒收**，让写语料的人显式选择。
+#: ⚠️ 大小写都列上：YAML 1.1 认 `True`/`NULL`，YAML 1.2 只认小写 ——
+#:   本格式两种都不认，避免「换个写法就从拒收变成静默通过」。
+_AMBIGUOUS_SCALARS = frozenset({
+    "true", "false", "null", "yes", "no", "on", "off", "~",
+    "True", "False", "Null", "None", "Yes", "No", "On", "Off",
+    "TRUE", "FALSE", "NULL",
+})
 
 
 def _unquote(raw: str) -> Any:
     if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in "\"'":
         return raw[1:-1]
+    if raw in _AMBIGUOUS_SCALARS:
+        raise CorpusError(
+            f"裸标量 {raw!r} 有类型歧义（YAML 会读成布尔/空）—— 本格式的字段契约"
+            "只支持字符串，要字符串请写成带引号的 \"true\"；"
+            "「解析失败」与「解析成另一份数据」必须分得开")
     return raw
 
 

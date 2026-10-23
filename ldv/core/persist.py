@@ -113,11 +113,51 @@ class PersistenceError(RuntimeError):
 #   —— 「编不进去」与「编进去了但读回来不一样」必须分得开。
 #
 # ⚠️ **冻结数据类按 `模块.类名` 重建**（`Node` 走的就是这条）。
-#   ⇒ **存档是可信输入**：它能让读回过程 import 一个模块并构造一个类。
-#   格式号（`FORMAT`）是那道门，但它**不是沙箱**。不可信来源的存档要走别的路，
-#   本模块不声称能处理那种输入。
+#   ⇒ 存档字符串**能决定**读回过程 import 哪个模块、构造哪个类 ——
+#   所以**必须**有白名单（见 `ALLOWED_DATACLASSES`），不能「导入得了就算」。
+#   格式号（`FORMAT`）是那道门，但它**不是沙箱**：不可信来源的存档要走别的路，
+#   本模块不声称能处理那种输入 —— 但现在这条边界**是机制，不只是文档**。
+
+#: 解码允许的**资源上限**（外部审计 2026-10-23 点名的缺口）：不可信存档哪怕
+#: 不执行任何代码，也能用「无限嵌套 / 海量小容器」把解释器拖死。
+#: ⇒ 深度与容器数各设一道门，**超了当场抛**，不静默截断。
+#:
+#: ⚠️ 两个数都是**暂定未标定**（与 `STAGE_CAP` 同一条纪律）：真实存档最深约 8 层
+#:    （Node → fields → 列表 → 字符串），容器数上界由语料规模定。
+#:    取值刻意留头 —— 它们是**防拖死**的门，不是精度边界。
+MAX_DECODE_DEPTH = 64
+MAX_DECODE_NODES = 2_000_000
+
+#: 允许按 `模块.类名` 重建的数据类**白名单**。
+#:
+#: ★ 为什么必须是白名单（而不是「能 import 就重建」）：那等于让**存档字符串**
+#:   决定 import 哪个模块、构造哪个类、传什么 kwargs。docstring 一直写着
+#:   「存档是可信输入」，但**边界不能只是文档** —— 调用边界一扩大
+#:   （服务接口、租户交换、上传恢复），这就是一个代码执行形状的原语。
+#: ⇒ 显式列名：目前只有 `Node`（语料项经 `as_item()` 进 `items`）；
+#:   方向 payload / 账本 detail / 使用记录 extra 走的都是内置容器与标量。
+#:   要加新类型 ⇒ 显式加进来，并配往返判据 —— 不许靠「导入得了」。
+ALLOWED_DATACLASSES = frozenset({
+    "ldv.corpus.loader.Node",
+})
 
 _SCALARS = (bool, int, float, str)
+
+
+class _Budget:
+    """解码的**资源账** —— 容器个数上限（`_dec` 递归时一路带着）。"""
+
+    __slots__ = ("left",)
+
+    def __init__(self, cap: int = MAX_DECODE_NODES) -> None:
+        self.left = cap
+
+    def spend(self) -> None:
+        self.left -= 1
+        if self.left < 0:
+            raise PersistenceError(
+                f"存档里的容器超过 {MAX_DECODE_NODES} 个 —— 拒收（资源上限，"
+                "「读得慢」与「读得死」必须分得开）")
 
 
 def canon(v: Any) -> str:
@@ -157,14 +197,24 @@ def _dc_name(cls: type) -> str:
 
 
 def _dc_lookup(name: str) -> type:
+    """按名字取数据类 —— **先过白名单，再 import**。
+
+    ⚠️ 顺序不能反：先 import 再判断，等于已经执行了存档选中的模块。
+    """
+    if name not in ALLOWED_DATACLASSES:
+        raise PersistenceError(
+            f"存档要重建数据类 {name!r} —— 不在白名单里"
+            f"（当前允许：{sorted(ALLOWED_DATACLASSES)}）。"
+            "「不可信存档不许决定 import 哪个模块」：要支持新类型，"
+            "请显式加进 `ALLOWED_DATACLASSES` 并配往返判据")
     import importlib
     mod, _, qual = name.rpartition(".")
     try:
         return getattr(importlib.import_module(mod), qual)
     except (ImportError, AttributeError) as e:
         raise PersistenceError(
-            f"存档里的数据类 {name!r} 重建不了：{e} —— "
-            "编解码器的覆盖范围见 persist 模块 docstring 的「尺度」段"
+            f"白名单里的数据类 {name!r} 居然导入不了：{e} —— "
+            "白名单条目与实现不同步，改代码改白名单，两处一起改"
         ) from e
 
 
@@ -191,21 +241,33 @@ def _enc(v: Any) -> Any:
     )
 
 
-def _dec(v: Any) -> Any:
+def _dec(v: Any, depth: int = 0, budget: "_Budget | None" = None) -> Any:
+    if budget is None:
+        budget = _Budget()
+    if depth > MAX_DECODE_DEPTH:
+        raise PersistenceError(
+            f"存档嵌套深于 {MAX_DECODE_DEPTH} 层 —— 拒收（资源上限）")
     if isinstance(v, list):
-        return [_dec(x) for x in v]
+        budget.spend()
+        return [_dec(x, depth + 1, budget) for x in v]
     if not isinstance(v, dict):
         return v
+    budget.spend()
     if "$dc" in v:
-        return _dc_lookup(v["$dc"])(**{k: _dec(x) for k, x in v["$f"].items()})
+        cls = _dc_lookup(v["$dc"])
+        if not dataclasses.is_dataclass(cls):
+            raise PersistenceError(
+                f"白名单条目 {v['$dc']!r} 不是数据类 —— 白名单写错了")
+        return cls(**{k: _dec(x, depth + 1, budget) for k, x in v["$f"].items()})
     if "$t" in v:
-        return tuple(_dec(x) for x in v["$t"])
+        return tuple(_dec(x, depth + 1, budget) for x in v["$t"])
     if "$fs" in v:
-        return frozenset(_dec(x) for x in v["$fs"])
+        return frozenset(_dec(x, depth + 1, budget) for x in v["$fs"])
     if "$s" in v:
-        return set(_dec(x) for x in v["$s"])
+        return set(_dec(x, depth + 1, budget) for x in v["$s"])
     if "$d" in v:
-        return {_dec(k): _dec(x) for k, x in v["$d"]}
+        return {_dec(k, depth + 1, budget): _dec(x, depth + 1, budget)
+                for k, x in v["$d"]}
     raise ValueError(f"存档里出现未标记的字典 {sorted(v)[:3]} —— 不是本格式写出来的")
 
 
@@ -287,6 +349,7 @@ def from_dict(data: dict, plugin: Any) -> Kernel:
     root_did = data["根"]
     children = {p: tuple(kids) for p, kids in data["子"].items()}
     parent_of = derive_parents(children, root_did)          # ★ 派生边在这里现算
+    budget = _Budget()          # 一整份存档共用一份资源账（深度 + 容器数）
 
     k = Kernel(plugin, {})
     k._counter = data["计数"]                                 # noqa: SLF001
@@ -305,7 +368,7 @@ def from_dict(data: dict, plugin: Any) -> Kernel:
             raise PersistenceError(f"内生方向 {did} 没有父 —— 权威边不是树")
         # ★ 这两行就是「从 `_children` 重算」：`witness` 由 `parent` 定（§6.1）。
         k._dirs[did] = Direction(                            # noqa: SLF001
-            did=did, rank=row["rank"], payload=_dec(row["payload"]),
+            did=did, rank=row["rank"], payload=_dec(row["payload"], 0, budget),
             witness=() if p is None else (p,), origin=row["origin"], parent=p)
 
     k._children = children                                   # noqa: SLF001
@@ -314,18 +377,19 @@ def from_dict(data: dict, plugin: Any) -> Kernel:
     k._expanded = set(data["已展开"])                         # noqa: SLF001
     k._tried = {d: frozenset(m) for d, m in data["判过"].items()}   # noqa: SLF001
     k._path = {i: tuple(p) for i, p in data["锥"].items()}     # noqa: SLF001
-    k.items = {iid: _dec(v) for iid, v in data["项"].items()}
+    k.items = {iid: _dec(v, 0, budget) for iid, v in data["项"].items()}
 
     # 账本**逐条**重放 —— `seq` 由 `Ledger.append` 按序发，所以顺序就是 seq。
     k.ledger = Ledger()
     for i, row in enumerate(data["账本"]):
         if row["seq"] != i:
             raise PersistenceError(f"账本第 {i} 条的 seq 是 {row['seq']} —— 不是按序的")
-        k.ledger.append(row["kind"], row["did"], **_dec(row["detail"]))
+        k.ledger.append(row["kind"], row["did"], **_dec(row["detail"], 0, budget))
 
     k.usage = [WeightedRecord(did=r["did"], outcome=r["outcome"],
                               propensity=r["propensity"], note=r["note"],
-                              extra=_dec(r["extra"])) for r in data["使用"]]
+                              extra=_dec(r["extra"], 0, budget))
+                   for r in data["使用"]]
     # ⚠️ `_shown` / `_last_frontier` **不恢复** —— 它们是会话态（见模块 docstring）。
     return k
 

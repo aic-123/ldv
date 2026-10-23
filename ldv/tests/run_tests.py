@@ -176,6 +176,30 @@ def test_loader() -> None:
     raises("行内列表没闭合 ⇒ 报错", lambda: parse_front_matter("---\na: [1, 2\n---\n"))
     raises("意外缩进 ⇒ 报错", lambda: parse_front_matter("---\na: 1\n   b: 2\n---\n"))
 
+    # ── ★★ P0 修法（2026-10-23 外部审计**实测复现**）：不许**静默误读** ────
+    #   旧行为把三个合法形状解析成了**另一份有效数据**，比崩掉坏得多 ——
+    #   这与本项目「不静默接受错误语料」的纪律直接矛盾。
+    #   反向对照（逐条回退真源码 ⇒ 各自变绿）在
+    #   `evidence/_probe_loader_contract_reverse.py`。
+    f2, _b2 = parse_front_matter('---\nid: x\naliases: ["a,b", "c"]\n---\n')
+    ok("★ 行内列表按**引号外**的逗号切（引号内的逗号不是分隔符）",
+       f2["aliases"] == ["a,b", "c"], f"得到 {f2['aliases']}")
+    f2b, _b2b = parse_front_matter("---\nid: x\nt: ['a,b', \"c\"]\n---\n")
+    ok("★ 单双引号可以混用（同一个列表里）",
+       f2b["t"] == ["a,b", "c"], f"得到 {f2b['t']}")
+    raises("★★ 重复键 ⇒ 拒收（旧行为：后者覆盖前者，**前者整个消失**）",
+           lambda: parse_front_matter("---\nid: a\nid: b\n---\n"))
+    raises("★★ 嵌套映射里重复键 ⇒ 同样拒收",
+           lambda: parse_front_matter("---\ns:\n  k: 1\n  k: 2\n---\n"))
+    for _amb in ("true", "false", "null", "NULL", "yes", "no", "~", "None"):
+        raises(f"裸标量 {_amb!r} ⇒ 拒收（YAML 会读成布尔/空，本格式只支持字符串）",
+               lambda a=_amb: parse_front_matter(f"---\nid: x\nv: {a}\n---\n"))
+    f3, _b3 = parse_front_matter('---\nid: x\nv: "true"\n---\n')
+    ok("加引号的 \"true\" ⇒ 字符串（要字符串就显式写，不猜）",
+       f3["v"] == "true", f"得到 {f3['v']!r}")
+    raises("行内列表引号没闭合 ⇒ 拒收（分词器自己的边界）",
+           lambda: parse_front_matter('---\nid: x\nt: ["a, b]\n---\n'))
+
     # 真语料：形状之外的一律报错 ⇒ 能整份读完说明形状覆盖住了
     loaded = load()
     if loaded is None:
@@ -3818,6 +3842,78 @@ def _reader_blocks_replace() -> tuple[bool, str]:
         _sh.rmtree(d, ignore_errors=True)
 
 
+def test_persist_untrusted() -> None:
+    """★ 持久化的**不可信输入**边界（2026-10-23 外部审计点名的缺口）。
+
+    旧实现：`_dc_lookup` 是「存档里写哪个模块就 import 哪个」，`_dec` 再
+    `cls(**kwargs)` —— **存档字符串决定 import 哪个模块、构造哪个类、传什么参数**，
+    解码侧还不校验是不是数据类。docstring 一直写着「存档是可信输入」，
+    但**边界不能只是文档**：调用边界一扩大（服务接口、租户交换、上传恢复），
+    这就是一个代码执行形状的原语。
+
+    ① 白名单外 ⇒ 拒收（`$dc: "os.system"` 这种形状进不来）
+    ② 白名单内 ⇒ 照常重建（`Node` 仍往返 —— 白名单不是把功能关掉）
+    ③ 嵌套过深 ⇒ 拒收（资源上限：**读得慢**与**读得死**必须分得开）
+    ④ 容器数超限 ⇒ 拒收（用小 cap 的账本unit-level 验，不用真造 200 万个）
+    ⑤ 反向对照（拔掉白名单 ⇒ ① 变绿）在
+       `evidence/_probe_persist_untrusted_reverse.py`
+    """
+    from ldv.checks._fixtures import load, make_builder
+    from ldv.core import persist as P
+
+    got = load()
+    if got is None:
+        ok("★ [持久化] 不可信输入边界（**跳过**：内置语料不在）", True, "0")
+        return
+    nodes, edges, _ = got
+    k, plug = make_builder("keyset", nodes, edges)(sorted(nodes)[:8])
+
+    good = P.to_dict(k)
+    # ② 白名单内的类型照常重建（Node 经 `as_item()` 进 `items`）
+    back = P.from_dict(good, plug)
+    some = next(iter(back.items.values()))
+    ok("★ [持久化] ② 白名单内的 `Node` 照常重建（白名单不关功能）",
+       isinstance(some.get("node"), object) and "node" in some,
+       f"项形状 {sorted(some)[:4]}｜往返指纹相同 {P._fingerprint(back) == P._fingerprint(k)}")
+
+    # ① 白名单外 ⇒ 拒收（走**真路径**：毒化一份真存档的 `项`）
+    bad = P.to_dict(k)
+    iid = sorted(bad["项"])[0]
+    bad["项"][iid] = {"$dc": "os.system", "$f": {"command": "echo pwned"}}
+    try:
+        P.from_dict(bad, plug)
+        ok("★ [持久化] ① 白名单外的 `$dc` ⇒ 拒收", False,
+           f"居然建起来了：{type(bad['项'][iid])}")
+    except P.PersistenceError as e:
+        ok("★ [持久化] ① 白名单外的 `$dc` ⇒ 拒收（存档不许决定 import 谁）",
+           "白名单" in str(e), f"{str(e)[:90]}")
+    except Exception as e:  # noqa: BLE001
+        ok("★ [持久化] ① 白名单外的 `$dc` ⇒ 拒收", False,
+           f"抛了别的：{type(e).__name__}: {e}")
+
+    # ③ 嵌套过深 ⇒ 拒收
+    deep: object = "底"
+    for _ in range(P.MAX_DECODE_DEPTH + 8):
+        deep = [deep]
+    try:
+        P._dec(deep)
+        ok("★ [持久化] ③ 嵌套过深 ⇒ 拒收", False, "居然解完了")
+    except P.PersistenceError as e:
+        ok("★ [持久化] ③ 嵌套过深 ⇒ 拒收（资源上限）",
+           str(P.MAX_DECODE_DEPTH) in str(e), f"{str(e)[:70]}")
+    except RecursionError:
+        ok("★ [持久化] ③ 嵌套过深 ⇒ 拒收", False,
+           "抛的是 RecursionError —— 深度门设得太高，解释器先撑不住")
+
+    # ④ 容器数超限 ⇒ 拒收（unit-level：小 cap 的账本）
+    try:
+        P._dec([[1], [2], [3], [4], [5]], 0, P._Budget(3))
+        ok("★ [持久化] ④ 容器数超限 ⇒ 拒收", False, "居然解完了")
+    except P.PersistenceError as e:
+        ok("★ [持久化] ④ 容器数超限 ⇒ 拒收（读得慢与读得死分得开）",
+           "容器" in str(e), f"{str(e)[:70]}")
+
+
 def test_persist_atomic() -> None:
     """★★ **阶段 2**：跨进程落盘 —— **不撕裂**。
 
@@ -4039,13 +4135,42 @@ print("@@R" + json.dumps({"reads": n, "n_err": len(bad), "kinds": bad[:3]}))
     for line in (o_r or b"").decode("utf-8", "replace").splitlines():
         if line.startswith("@@R"):
             rrep = json.loads(line[3:])
+    # ── ③ 写者循环替换时，读者一次都不许抛 ────────────────────────────
+    # ★ 2026-10-23 外部审计抓到：旧条件是 `rerr.strip() == "" and …` ——
+    #   子进程 stderr **任何**输出都判红，即使结构化报告说「2057 次读取、
+    #   0 次异常」。审计者机器上 Python 启动打了句
+    #   `Spreadsheet runtime warmup failed during python startup` ⇒ 整条红。
+    #   **那是环境噪声，不是被测行为的错误。**
+    # ⇒ 判据只认**被测行为**（结构化报告：异常数、读取次数）；
+    #   stderr 降为诊断信息印在 detail 里 —— 除非它长得像**真崩了**
+    #   （Python 崩溃必打 `Traceback`），那种仍然红。
+    #   「被测行为错」与「环境在吵」必须分得开（本项目自己的纪律）。
+
+    def _reader_ok(rerr: str, rep: dict) -> bool:
+        """读者侧判据的**判别式**（抽出来才能对「判别本身」下判）。"""
+        return ("Traceback (most recent call last)" not in rerr
+                and rep.get("n_err") == 0 and rep.get("reads", 0) >= 200)
+
+    _clean = {"reads": 2057, "n_err": 0}
+    ok("★ [阶段2] ③′ 环境噪声不算失败（stderr 有非 Traceback 输出、报告干净 ⇒ 过）",
+       _reader_ok("Spreadsheet runtime warmup failed during python startup", _clean),
+       "2057 次读取 / 0 异常 / stderr 一行启动噪声")
+    ok("★ [阶段2] ③′ 真崩仍然抓得到（stderr 里有 Traceback ⇒ 红）",
+       not _reader_ok("Traceback (most recent call last):" + chr(10) + "ValueError: x",
+                      _clean),
+       "报告同样干净，但子进程崩过 —— 这一侧不许放")
+
+    crashed = "Traceback (most recent call last)" in rerr
     ok("★★ [阶段2] ③ 写者循环替换时，读者 `read()` **一次都不许抛**",
-       rerr.strip() == "" and rrep.get("n_err") == 0 and rrep.get("reads", 0) >= 200,
+       _reader_ok(rerr, rrep),
        f"读了 {rrep.get('reads', 0)} 次｜异常 {rrep.get('n_err', '?')} 次"
        f"{rrep.get('kinds') or ''}"
        + ("—— **读者侧没补**" if rrep.get("n_err") else "")
        + ("—— **读得太少，这条判据空转**" if rrep.get("reads", 0) < 200 else "")
-       + (f"｜stderr {rerr.strip()[:60]}" if rerr.strip() else ""))
+       + (f"｜**子进程崩了**（stderr 有 Traceback）：{rerr.strip()[-160:]}"
+          if crashed
+          else (f"｜stderr（仅诊断，不算失败）：{rerr.strip()[:60]}"
+                if rerr.strip() else "")))
 
     # ── ④ 重试的**边界**（**确定性**，手推已知答案）─────────────────────────
     #    ⚠️ 这条钉的是「**只重试该重试的**」：POSIX 上一律不重试（那里没有
@@ -10638,7 +10763,7 @@ def main() -> int:
                test_b3_reduction_premise, test_reach_cache_premise,
                test_reach_cache_transparency, test_tree_premise,
                test_deletion_path, test_bulk_equivalence, test_fingerprint_sensitivity,
-               test_persistence, test_persist_atomic,
+               test_persistence, test_persist_untrusted, test_persist_atomic,
                test_versioning,
                test_reusable_build, test_lock_scope,
                test_service_shell, test_service_failure_paths,

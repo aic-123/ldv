@@ -2,7 +2,7 @@
 
 > 仓库里每一处「实测 / 留档」的引用都指向这里的文件。**不是宣称，是实体。**
 
-共 **163** 个文件。下表按文件名排；「被谁引用」是仓库内引用它的文档。
+共 **165** 个文件。下表按文件名排；「被谁引用」是仓库内引用它的文档。
 
 | 文件 | 大小 | 被谁引用 |
 |---|---|---|
@@ -90,6 +90,7 @@
 | `_probe_k3_invariant_injection.py` | 2 KB | ldv/MEASUREMENTS.md |
 | `_probe_leak_vs_stay.py` | 7 KB | docs/分层方向视图-设计文档.md、docs/它是怎么长出来的.md、ldv/MEASUREMENTS.md |
 | `_probe_level_ledger.py` | 2 KB | ldv/MEASUREMENTS.md |
+| `_probe_loader_contract_reverse.py` | 5 KB | **（无）** |
 | `_probe_lock_wiring_reverse.py` | 3 KB | docs/分层方向视图-设计文档.md、docs/它是怎么长出来的.md、docs/并发接口设计.md |
 | `_probe_locks.py` | 6 KB | docs/分层方向视图-设计文档.md、docs/它是怎么长出来的.md、ldv/MEASUREMENTS.md |
 | `_probe_maint_dirs.txt` | 0 KB | ldv/MEASUREMENTS.md |
@@ -108,6 +109,7 @@
 | `_probe_persist.py` | 7 KB | docs/它是怎么长出来的.md、ldv/MEASUREMENTS.md |
 | `_probe_persist_atomic_reverse.py` | 8 KB | docs/分层方向视图-设计文档.md、docs/它是怎么长出来的.md、docs/并发接口设计.md |
 | `_probe_persist_reader_side.py` | 4 KB | docs/分层方向视图-设计文档.md、docs/它是怎么长出来的.md、docs/并发接口设计.md |
+| `_probe_persist_untrusted_reverse.py` | 3 KB | **（无）** |
 | `_probe_prune_reverse.py` | 9 KB | docs/分层方向视图-检索器层.md、docs/分层方向视图-设计文档.md、docs/它是怎么长出来的.md |
 | `_probe_prune_scale.out.txt` | 6 KB | docs/分层方向视图-检索器层.md、docs/外生声明标准.md、docs/它是怎么长出来的.md、docs/评估报告.md、ldv/MEASUREMENTS.md |
 | `_probe_prune_scale.py` | 9 KB | docs/评估报告.md |
@@ -167,6 +169,13 @@
 | `ldv-成熟答案印证.md` | 67 KB | docs/分层方向视图-设计文档.md |
 | `ldv-跨领域-增量报告.md` | 16 KB | docs/外生声明标准.md |
 | `requests_g6.json` | 4 KB | docs/认知原型.md |
+
+## 没被正文引用、但同趟产出的伴生件
+
+主脚本被引用了，这些是它跑出来的输出，跟着一起进仓库：
+
+- `_probe_loader_contract_reverse.py`
+- `_probe_persist_untrusted_reverse.py`
 
 ## 怎么重跑
 
