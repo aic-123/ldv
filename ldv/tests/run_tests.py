@@ -7471,6 +7471,18 @@ def test_b_known_answers() -> None:
     fd3 = _run(C.d3_known_answer)
     ok("★ [保证] 合成对照 · §D3 预算共享（组合赢了就顶掉单谓词，总数恒 ≤ budget）",
        not fd3, "；".join(fd3[:2]) or "总数不超预算，组合确实赢过", )
+    fd1 = _run(C.d1_known_answer)
+    ok("★ [保证] 合成对照 · §D1 外生准入（只有写了「维度」的条目才算）",
+       not fd1, "；".join(fd1[:2]) or "三态分明，对照成立")
+    fd6 = _run(C.d6_known_answer)
+    ok("★ [保证] 合成对照 · §D6 解析范围 = 候选全集（预算=1 不许截人的 5 条声明）",
+       not fd6, "；".join(fd6[:2]) or "预算没越界管声明")
+    fd5 = _run(C.d5_known_answer)
+    ok("★ [保证] 合成对照 · §D5 改名不改划分（同扩展换键名 ⇒ 分组逐字相同）",
+       not fd5, "；".join(fd5[:2]) or "改名前后的命中集合相同")
+    fd2 = _run(C.d2_known_answer)
+    ok("★ [保证] 合成对照 · §D2 真二分（空/全谓词零贡献，真二分才进划分）",
+       not fd2, "；".join(fd2[:2]) or "空/全被拒、真二分入选")
 
 
 def test_guarantee_matrix() -> None:

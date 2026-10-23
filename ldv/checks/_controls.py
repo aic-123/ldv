@@ -637,10 +637,154 @@ def d3_known_answer() -> list[str]:
     return fails
 
 
+def d1_known_answer() -> list[str]:
+    """`§D1` 外生准入：**只有人写了「维度」的条目才算**。
+
+        没有 `directions.json`        ⇒ 0 条（不猜）
+        有文件但条目没写 `维度`        ⇒ 0 条（可能只是「同意这个诊断」）
+        写了 `维度`                   ⇒ 1 条
+    """
+    import json as _json
+    import tempfile
+
+    from ..core.request import approved_dimensions
+
+    fails: list[str] = []
+    with tempfile.TemporaryDirectory(prefix="ldv-d1-") as td:
+        root = Path(td)
+        if approved_dimensions(root) != []:
+            fails.append("没有 directions.json 时却读出了条目")
+        (root / "directions.json").write_text(
+            _json.dumps({"已批准": [{"信号": "B19：…"}]}, ensure_ascii=False),
+            encoding="utf-8")
+        if approved_dimensions(root) != []:
+            fails.append("条目没写「维度」却被采纳（那只是同意诊断，不是声明维度）")
+        (root / "directions.json").write_text(
+            _json.dumps({"已批准": [{"信号": "B19：…", "维度": "scope"}]},
+                        ensure_ascii=False), encoding="utf-8")
+        got = approved_dimensions(root)
+        if len(got) != 1 or got[0].get("维度") != "scope":
+            fails.append(f"写了「维度」却没采纳：{got!r}")
+    return fails
+
+
+def d6_known_answer() -> list[str]:
+    """`§D6` 解析范围 = **候选全集**：预算管「自动选谁」，**不管人能声明什么**。
+
+    坏法（这一条要防的）：预算=1 时把人的 5 条声明**截成 1 条**。
+    """
+    import json as _json
+    import tempfile
+
+    from ..core.request import approved_predicates
+
+    fails: list[str] = []
+    with tempfile.TemporaryDirectory(prefix="ldv-d6-") as td:
+        root = Path(td)
+        rows = [{"信号": f"B19：{i}", "谓词": {"名": f"p{i}", "定义": ["出度档>2"]}}
+                for i in range(5)]
+        (root / "directions.json").write_text(
+            _json.dumps({"已批准": rows}, ensure_ascii=False), encoding="utf-8")
+        # 预算故意设成 1 —— 它**不该**影响人能声明多少条
+        (root / "predicates.json").write_text(
+            _json.dumps({"预算": 1}, ensure_ascii=False), encoding="utf-8")
+        got = approved_predicates(root)
+        if len(got) != 5:
+            fails.append(f"预算=1 时人的 5 条声明被截成 {len(got)} 条 ⇒ 预算越界管了声明")
+    return fails
+
+
+def d5_known_answer() -> list[str]:
+    """`§D5` 改名不改划分：**同一个扩展**换个键名 ⇒ 分组必须逐字相同。
+
+    做法：两个谓词只差 `谓词`（键名）一个字段，`量` / `阈值` 全同 ⇒
+    落到同一批节点上。断言：
+
+        ① **被命中的节点集合相同**（划分由扩展集定，不由名字定）
+        ② 键名**确实不同**（否则这个对照只是在验同一个对象两遍）
+    """
+    from ..corpus.predicates import Predicate, apply_to_nodes
+
+    class _Node:
+        def __init__(self) -> None:
+            self.keys: frozenset[str] = frozenset()
+
+    ids = [f"n{i}" for i in range(6)]
+    edges = {ids[0]: frozenset({ids[1], ids[2], ids[3]}),
+             ids[1]: frozenset({ids[2]}),
+             ids[2]: frozenset()}
+    base = dict(量="out_degree", 阈值=1.0, 规则="出度档")
+
+    def _run(name: str) -> set[str]:
+        nodes = {i: _Node() for i in ids}
+        apply_to_nodes(nodes, edges,
+                       [Predicate(谓词=name, 满足数=0, 区分度=0.0, **base)])
+        return {i for i, n in nodes.items() if n.keys}
+
+    hit_a, hit_b = _run("出度档>1"), _run("改过名的键")
+    fails: list[str] = []
+    if not hit_a:
+        fails.append("谓词一个节点都没命中 ⇒ 对照无内容")
+    if hit_a != hit_b:
+        fails.append(f"改名后划分变了：{sorted(hit_a)} vs {sorted(hit_b)}")
+    if hit_a == set(ids):
+        fails.append("谓词命中了全部节点 ⇒ 分不开，对照无内容")
+    return fails
+
+
+def d2_known_answer() -> list[str]:
+    """`§D2` 真二分：**空谓词 / 全谓词零贡献**，只有真二分才进划分。
+
+        全真（6/6 满足）的组合   ⇒ **拒收**
+        全空（0/6 满足）的组合   ⇒ **拒收**
+        真二分（3/6 满足）的组合 ⇒ **进候选**
+
+    ⚠️ 拒收的**理由**可以是「精确蕴含」也可以是「切不开」—— 两条都对，
+       本条只判「有没有被拒收」，不判理由文案（那是 §D4 的事）。
+    """
+    from ..corpus.predicates import Predicate, combine
+
+    class _Node:
+        def __init__(self) -> None:
+            self.keys: frozenset[str] = frozenset()
+
+    ids = [f"n{i}" for i in range(6)]
+    nodes = {i: _Node() for i in ids}
+    # 出度：n0=3、n1=1、其余 0；入度全 0
+    edges = {ids[0]: frozenset({ids[1], ids[2], ids[3]}),
+             ids[1]: frozenset({ids[2]})}
+    for i in ids:
+        edges.setdefault(i, frozenset())
+
+    def _p(name: str, which: str, th: float) -> Any:
+        return Predicate(谓词=name, 规则="r", 量=which, 阈值=th,
+                         满足数=0, 区分度=0.0)
+
+    def _run(used: list[Any]) -> tuple[list[Any], list[Any]]:
+        _n, cand, rej = combine(nodes, edges, used, k=3)
+        return cand, rej
+
+    fails: list[str] = []
+    # ① 全真：两条不同量的「全真」谓词 ⇒ 合取仍全真 ⇒ 零贡献
+    _c, rej = _run([_p("全真A", "out_degree", -1.0), _p("全真B", "in_degree", -1.0)])
+    if not rej:
+        fails.append("全真组合没被拒收 ⇒ 零贡献的谓词进了划分")
+    # ② 全空
+    _c, rej = _run([_p("全空A", "out_degree", 99.0), _p("全空B", "in_degree", 99.0)])
+    if not rej:
+        fails.append("全空组合没被拒收")
+    # ③ 真二分：出度>0.5 ⇒ 3/6 满足；入度>0.5 ⇒ 3/6 满足
+    cand, rej = _run([_p("出度>0", "out_degree", 0.5), _p("入度>0", "in_degree", 0.5)])
+    if not cand:
+        fails.append(f"真二分的组合被拒收了（{rej[:1]}）⇒ 判据太严")
+    return fails
+
+
 ALL = (b4_known_answer, b7_known_answer, b9_known_answer,
        b12_known_answer, b13_known_answer, b14_known_answer,
        b2_known_answer, b3_known_answer, b5_known_answer,
        b16_known_answer, b19_known_answer,
        b6_known_answer, b8_known_answer, b10_known_answer,
        b11_known_answer, b15_known_answer, d8_known_answer,
-       d4_known_answer, d3_known_answer)
+       d4_known_answer, d3_known_answer, d1_known_answer,
+       d6_known_answer, d5_known_answer, d2_known_answer)
