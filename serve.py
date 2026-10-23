@@ -53,6 +53,16 @@ REQUIRED = ("nodes", "view_spec.json")
 #: 每租户同时最多几个进行中任务（§1：限流与排队是**同一个计数**）
 MAX_PER_TENANT = 1
 
+#: **队列容量** —— `排队 + 进行中` 的上限，超了 ⇒ **429**（不是无限堆内存）。
+#: ⚠️ **暂定值、未经标定**（2026-10-23 由实现方裁决；要改先定刻度：
+#:    「一个租户允许积压多少」取决于调用方的重试策略与语料规模）。
+QUEUE_CAP_PER_TENANT = 8
+QUEUE_CAP_GLOBAL = 64
+
+
+class QueueFull(Exception):
+    """队列已满 ⇒ 调用方应返回 **429**（可重试，不是客户端写错了）。"""
+
 #: `plugin` 的合法值（与 `ldv.cli.DIRECTIONS` 同一个集合）
 PLUGIN_OK = ("keyset", "reach", "sequence")
 #: `only` 的合法值（与 `cli.run_one` 的分段一致；`None` = 全跑）
@@ -138,17 +148,40 @@ class TaskTable:
     否则排队。完成时唤醒等这个租户的下一个（按提交顺序）。
     """
 
-    def __init__(self, max_per_tenant: int = MAX_PER_TENANT):
+    def __init__(self, max_per_tenant: int = MAX_PER_TENANT,
+                 cap_per_tenant: int = QUEUE_CAP_PER_TENANT,
+                 cap_global: int = QUEUE_CAP_GLOBAL):
         self.max = max_per_tenant
+        self.cap_tenant = cap_per_tenant
+        self.cap_global = cap_global
         self.cond = threading.Condition()
         self.tasks: dict[str, dict] = {}
         self.running: dict[str, int] = {}     # 租户 → 进行中数
         self.queues: dict[str, list[str]] = {}  # 租户 → 排队的 task_id（FIFO）
 
+    def load_of(self, tenant: str) -> tuple[int, int]:
+        """`(该租户的排队+进行中, 全局的排队+进行中)` —— 容量判定只看这两个数。"""
+        with self.cond:
+            mine = len(self.queues.get(tenant, [])) + self.running.get(tenant, 0)
+            allq = sum(len(q) for q in self.queues.values()) + sum(self.running.values())
+            return mine, allq
+
     def submit(self, tenant: str, fn) -> str:
-        """提交一个任务；返回 task_id。**立即返回**（不等执行）。"""
+        """提交一个任务；返回 task_id。**立即返回**（不等执行）。
+
+        ⚠️ **撞容量上限 ⇒ 抛 `QueueFull`**（调用方返回 429）——
+           原来是**无上限**地往内存里堆，`tasks` 与 `queues` 只增不减。
+        """
         tid = uuid.uuid4().hex[:12]
         with self.cond:
+            mine = len(self.queues.get(tenant, [])) + self.running.get(tenant, 0)
+            allq = sum(len(q) for q in self.queues.values()) + sum(self.running.values())
+            if mine >= self.cap_tenant:
+                raise QueueFull(f"租户 {tenant!r} 已有 {mine} 个排队/进行中任务"
+                                f"（上限 {self.cap_tenant}）")
+            if allq >= self.cap_global:
+                raise QueueFull(f"全局已有 {allq} 个排队/进行中任务"
+                                f"（上限 {self.cap_global}）")
             # ⚠️ `_fn` 必须在**持锁时**存进去 —— `_pump` 可能立刻启动 worker，
             #    而 worker 要取 `t["_fn"]`；晚一步就是竞态（KeyError）。
             self.tasks[tid] = {"id": tid, "tenant": tenant, "status": "queued",
@@ -293,8 +326,13 @@ class Handler(BaseHTTPRequestHandler):
                             f"（需要 nodes/ + view_spec.json）")
             return
 
-        tid = TABLE.submit(tenant, lambda: _execute(
-            tenant, args["plugin"], args["only"], args["holdout"], root=self.root))
+        try:
+            tid = TABLE.submit(tenant, lambda: _execute(
+                tenant, args["plugin"], args["only"], args["holdout"], root=self.root))
+        except QueueFull as exc:
+            # ★ **429**：可重试的拒绝，不是客户端写错了（400），也不是服务坏了（500）
+            self._send(429, f"429：队列已满 —— {exc}")
+            return
         self._json(202, {"task_id": tid, "tenant": tenant, "status": "queued"})
 
     def _task_status(self, tid: str) -> None:

@@ -7068,6 +7068,243 @@ def test_service_failure_paths() -> None:
        f"裸脚本路径 {bad_cmds or '无'}｜`import ci_run_tests` RC={rc}")
 
 
+def test_incremental_random() -> None:
+    """★ [增量] **随机操作序列**下，增量维护与全量重建的**语义**一致（2026-10-23）。
+
+    外部审查点名要的：「随机生成插入、删除和重复操作序列，逐步比较最终语义」。
+    仓库原来只有**固定构造**的对照（B15 / `divergence.py`）——固定构造只能证明
+    「这几个点对」，证不了「这条性质对」。
+
+    ★★ **比什么**（这一条最容易比错）：
+        ✗ 比结构（划分集合）—— **实测增量 ≠ 全量**，那是**已知的历史相关性**
+          （文档：维护的历史相关性是当前实现的性质），比它会得出一条**永远红**的判据
+        ✓ 比**查询答案**（`status` + `hit_items`，同项集上）—— 实测相同
+
+    ⚠️ 种子**写死**（可复现）：12 个种子 × 14 步，插入/删除混合，项数不许低于 6。
+    """
+    import random
+
+    from ldv.checks._fixtures import items as _items
+    from ldv.checks._fixtures import keyset_queries as _queries
+    from ldv.checks._fixtures import load as _load
+    from ldv.checks._fixtures import make_builder as _mkb
+
+    loaded = _load()
+    if loaded is None:
+        ok("★ [增量] ① 随机序列（**跳过**：内置语料加载不了）", True, "0")
+        return
+    nodes, edges, _d = loaded
+    ids = sorted(nodes)
+    its = _items(nodes)
+    build = _mkb("keyset", nodes, edges)
+
+    def _answers(k, qs):
+        return [(str(r.status), tuple(sorted(r.hit_items)))
+                for r in (k.query(q) for q in qs)]
+
+    def _part(k):
+        return sorted(tuple(sorted(k.members_of(d))) for d in k.all_directions())
+
+    def _sig(k):
+        return tuple((d.did, d.parent, len(k.children_of(d)),
+                      tuple(sorted(k.members_of(d)))) for d in k.all_directions())
+
+    bad: list[str] = []
+    n_ops = 0
+    for seed in range(12):
+        rnd = random.Random(seed)
+        present = set(rnd.sample(ids, 14))
+        k, _p = build(sorted(present))
+        for step in range(14):
+            out = [i for i in ids if i not in present]
+            if out and (rnd.random() < 0.6 or len(present) <= 6):
+                x = rnd.choice(sorted(out))
+                k.insert(x, its[x])
+                present.add(x)
+            else:
+                x = rnd.choice(sorted(present))
+                k.remove(x)
+                present.discard(x)
+            n_ops += 1
+            st = k.stats()
+            # 不变量①：认识 = 纳入 + 根覆盖之外
+            if st["认识"] != st["纳入"] + st["根覆盖之外"]:
+                bad.append(f"种子{seed}步{step}:认识≠纳入+越界")
+            # 不变量②：没有幽灵成员（成员必须是当前项）
+            if any(not set(k.members_of(d)) <= set(k.items) for d in k.all_directions()):
+                bad.append(f"种子{seed}步{step}:幽灵成员")
+        # ★ 终态语义：与**同项集**的全量重建比查询答案
+        k_full, _p2 = build(sorted(present))
+        qs = _queries({i: nodes[i] for i in present})
+        if _answers(k, qs) != _answers(k_full, qs):
+            bad.append(f"种子{seed}:答案与全量不同")
+
+    ok("★ [增量] ① **随机插入/删除序列**：不变量成立，且终态查询答案 == 全量重建",
+       not bad, f"12 个种子 × 14 步 = {n_ops} 次操作｜异常 {len(bad)}"
+                + (f"：{bad[:3]}" if bad else ""))
+
+    # ①′ **合成对照**：故意造一个幽灵成员（`items` 里没有、成员里还有）
+    #    ⇒ 那条不变量**必须**抓到。否则「12 个种子全绿」可能只是**判据瞎了**。
+    k_bad, _pb = build(ids[:12])
+    k_bad.items.pop(ids[0])
+    ghost = any(not set(k_bad.members_of(d)) <= set(k_bad.items)
+                for d in k_bad.all_directions())
+    ok("★ [增量] ①′ 合成对照：幽灵成员会被「成员 ⊆ 当前项」抓到",
+       ghost, f"人造幽灵被检出={ghost}")
+
+    # ② **确定性**：同种子两遍 ⇒ 结构签名逐字相同（否则「随机」就不可复现）
+    def _replay(seed: int):
+        rnd = random.Random(seed)
+        present = set(rnd.sample(ids, 14))
+        k, _p = build(sorted(present))
+        for _ in range(14):
+            out = [i for i in ids if i not in present]
+            if out and (rnd.random() < 0.6 or len(present) <= 6):
+                x = rnd.choice(sorted(out))
+                k.insert(x, its[x])
+                present.add(x)
+            else:
+                x = rnd.choice(sorted(present))
+                k.remove(x)
+                present.discard(x)
+        return _sig(k), sorted(present)
+
+    s_a, p_a = _replay(7)
+    s_b, p_b = _replay(7)
+    ok("★ [增量] ② **确定性**：同种子重放两遍，结构签名逐字相同",
+       s_a == s_b and p_a == p_b,
+       f"项集相同={p_a == p_b}｜签名相同={s_a == s_b}｜方向 {len(s_a)}")
+
+    # ③ **往返**：插入 x 再删除 x ⇒ 结构回到插入前（摘得干净，不留幽灵方向）
+    #    ⚠️ 「插入生效」不能用**方向数变化**判 —— 实测这一项插进去方向数没变
+    #       （只是某个方向多了一个成员）⇒ 会得出一条**永远红**的判据。用签名。
+    k3, _p3 = build(ids[:12])
+    before3 = _sig(k3)
+    k3.insert(ids[12], its[ids[12]])
+    changed = _sig(k3) != before3
+    k3.remove(ids[12])
+    after3 = _sig(k3)
+    ok("★ [增量] ③ **往返**：插入 x 再删除 x ⇒ 结构签名回到插入前",
+       changed and after3 == before3,
+       f"插入真的改了结构={changed}｜删回后签名相同={after3 == before3}")
+
+
+def test_service_consumption() -> None:
+    """★ [服务壳] **真实消费场景**（2026-10-23）：一个租户从「起服务」到「拿到结果」。
+
+    前面的 ⑧–⑫ 判的是**单点性质**（等价 / 排队 / FIFO），这一条判的是
+    **一条完整的消费路径**，而且用的是**临时租户**（内置 36 项复制过去）——
+    不依赖 `_data/`，**新 clone 上也能跑**。
+
+        同步 GET  ⇒ 200 + 文本
+        异步 POST ×2 ⇒ 1 running + 1 queued（每租户并发 1）
+        撞容量上限  ⇒ **429**（可重试的拒绝，不是 400/500）
+        轮询到 done ⇒ 结果与同步响应**逐字相同**
+    """
+    import json
+    import shutil
+    import tempfile
+    import threading
+    import time
+    import urllib.error
+    import urllib.request
+    from http.server import ThreadingHTTPServer
+    from pathlib import Path
+
+    import serve
+    from ldv.checks._fixtures import find_corpus
+
+    def _get(url: str, method: str = "GET") -> tuple[int, str]:
+        req = urllib.request.Request(url, method=method)
+        try:
+            with urllib.request.urlopen(req, timeout=60) as r:
+                return r.status, r.read().decode("utf-8")
+        except urllib.error.HTTPError as e:
+            return e.code, e.read().decode("utf-8")
+
+    corpus = find_corpus()
+    if corpus is None:
+        ok("★ [服务壳] ㉓ 真实消费场景（**跳过**：内置语料找不到）", True, "0")
+        ok("★ [服务壳] ㉔ 队列容量 ⇒ 429（**跳过**：内置语料找不到）", True, "0")
+        return
+
+    tmp = Path(tempfile.mkdtemp(prefix="ldv-consume-"))
+    orig_root, orig_table = serve.Handler.root, serve.TABLE
+    srv = None
+    try:
+        tenant = "shop"
+        (tmp / tenant / "nodes").mkdir(parents=True)
+        # ⚠️ `find_corpus()` 返回的**就是 `nodes/` 目录本身**（不是语料根）
+        for f in sorted(corpus.glob("*.md")):
+            shutil.copy2(f, tmp / tenant / "nodes" / f.name)
+        (tmp / tenant / "view_spec.json").write_text("{}", encoding="utf-8")
+
+        serve.Handler.root = tmp
+        # ⚠️ 消费闭环这一段**故意不设容量上限**（cap=64）：36 项的活几百毫秒就完，
+        #    容量判定会和「跑完了没有」抢时间 ⇒ 测不出确定的结果。
+        #    容量单独在下一段用**闸门任务**测（确定性）。
+        serve.TABLE = serve.TaskTable(max_per_tenant=1, cap_per_tenant=64,
+                                      cap_global=64)
+        srv = ThreadingHTTPServer(("127.0.0.1", 0), serve.Handler)
+        port = srv.server_address[1]
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        base = f"http://127.0.0.1:{port}"
+
+        # ① 同步：拿到基线文本
+        st_sync, body_sync = _get(f"{base}/{tenant}/run?plugin=keyset")
+        # ② 异步：两个任务（第二个必然排队）
+        st_a, body_a = _get(f"{base}/{tenant}/run?plugin=keyset", method="POST")
+        st_b, body_b = _get(f"{base}/{tenant}/run?plugin=keyset", method="POST")
+        # ⚠️ 状态不是 202 时**不许**直接 `json.loads` —— 那会让判据**崩掉**
+        #    （反向对照实测：接线断了 ⇒ 404 文本 ⇒ JSONDecodeError 把整条测试带走）。
+        #    「判据崩了」与「判据红了」长得不一样，而且更糟：它会吞掉后面的判据。
+        tid_a = json.loads(body_a).get("task_id", "") if st_a == 202 else ""
+        tid_b = json.loads(body_b).get("task_id", "") if st_b == 202 else ""
+
+        def _wait(tid: str, limit: float = 90.0) -> dict:
+            end = time.time() + limit
+            while time.time() < end:
+                if not tid:
+                    return {"status": "无 task_id"}
+                _s, b = _get(f"{base}/tasks/{tid}")
+                try:
+                    obj = json.loads(b)
+                except ValueError:
+                    return {"status": f"非 JSON（{_s}）"}
+                if obj.get("status") in ("done", "error"):
+                    return obj
+                time.sleep(0.05)
+            return {"status": "超时"}
+
+        oa, ob = _wait(tid_a), _wait(tid_b)
+        ok("★ [服务壳] ㉔ **真实消费闭环**：同步 == 异步结果（逐字），且排队那个也完成了",
+           st_sync == 200 and st_a == 202 and st_b == 202
+           and oa.get("status") == "done" and ob.get("status") == "done"
+           and oa.get("result") == body_sync and ob.get("result") == body_sync,
+           f"同步 {st_sync}／提交 {st_a},{st_b}｜A {oa.get('status')} B {ob.get('status')}"
+           f"｜结果逐字相同={oa.get('result') == body_sync}")
+
+        # ③ 容量 ⇒ 429：用**闸门任务**占满名额（确定性，不抢时间）
+        gate = threading.Event()
+        serve.TABLE = serve.TaskTable(max_per_tenant=1, cap_per_tenant=1,
+                                      cap_global=64)
+        serve.TABLE.submit(tenant, lambda: (gate.wait(10), (200, "held"))[1])
+        try:
+            st_c, body_c = _get(f"{base}/{tenant}/run?plugin=keyset", method="POST")
+        finally:
+            gate.set()
+        ok("★ [服务壳] ㉓ **队列容量 ⇒ 429**（撞上限不静默堆内存）",
+           st_c == 429 and "429" in body_c,
+           f"名额被占满时提交 ⇒ {st_c}｜{body_c[:60]}")
+    finally:
+        serve.Handler.root = orig_root
+        serve.TABLE = orig_table
+        if srv is not None:
+            srv.shutdown()
+            srv.server_close()
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def _spec_mechanical_mismatch(doc: dict, which: str, nodes, edges) -> list[str]:
     """committed 的 `view_spec.json` 里**机械那几栏**与生成器算出来的差在哪。
 
@@ -9875,6 +10112,7 @@ def main() -> int:
                test_versioning,
                test_reusable_build, test_lock_scope,
                test_service_shell, test_service_failure_paths,
+               test_incremental_random, test_service_consumption,
                test_predicates,
                test_reflect,
                test_memory_index,
