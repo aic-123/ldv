@@ -3479,6 +3479,80 @@ def _drift(data: dict, how: str) -> dict:
     return data
 
 
+def test_fingerprint_sensitivity() -> None:
+    """★ **指纹够不够**：`_fingerprint` 相同的两个内核，**答案必然相同**吗？
+
+    ★★ 为什么**不比语义**（2026-10-23，用户裁定）：答案是**结构的函数**
+       （`query` 只读 `dirs/children/members/_expanded/items` + 插件代码），
+       结构逐字相同 ⇒ 答案逐字相同。**再比一遍答案是同义反复**
+       （`docs/评估标准.md` R4：读数不许与别的读数互为函数）。
+
+    ⇒ 真正该判的不是「比语义」，而是**「指纹有没有覆盖 query 读的那些字段」**。
+       做法：**逐类扰动**，指纹**必须变** —— 某类扰动指纹不变，就说明那一类
+       没进指纹，于是「指纹相同 ⇒ 答案相同」不成立。
+
+    ⚠️ 覆盖不到的那一类，外部审查点过名：「运行时状态、缓存、使用记录、派生状态」。
+       本判据把它们逐条摆上来试，而不是靠读代码断言。
+    """
+    from ldv.checks._fixtures import load, make_builder
+    from ldv.core import persist as P
+
+    loaded = load()
+    if loaded is None:
+        ok("★ [持久化] 指纹对 query 的输入敏感（**跳过**：内置语料不在）", True, "0")
+        return
+    nodes, edges, _d = loaded
+    ids = sorted(nodes)
+
+    def _fresh():
+        return make_builder("keyset", nodes, edges)(ids[:12])[0]
+
+    base_fp = P._fingerprint(_fresh())                    # noqa: SLF001
+    cases: list[tuple[str, Any]] = []
+
+    def _members(k):
+        d = k.all_directions()[1]
+        k._members[d.did].discard(sorted(k._members[d.did])[0])  # noqa: SLF001
+
+    def _expanded(k):
+        d = k.all_directions()[0]
+        k._expanded.discard(d.did) if d.did in k._expanded else k._expanded.add(d.did)  # noqa: SLF001
+
+    def _usage(k):
+        from ldv.core.interfaces import WeightedRecord
+        d = k.all_directions()[0]
+        k.usage.append(WeightedRecord(did=d.did, outcome=1.0, propensity=1.0))
+
+    def _payload(k):
+        import dataclasses
+        d = k.all_directions()[1]
+        k._dirs[d.did] = dataclasses.replace(  # noqa: SLF001
+            d, payload=frozenset(set(d.payload) | {"注入=指纹敏感"}))
+        # ⚠️ **必须手动丢缓存**：`all_directions()` 按 `(len(_dirs), _counter)` 失效，
+        #    而「替换一个**已存在**的 Direction」这两个数都不变 ⇒ 缓存里还是旧对象。
+        #    正常路径不会替换（`Direction` 是 frozen，`_new` 只新增），
+        #    所以这是**扰动本身**绕过了约定，不是内核的缺陷。
+        k._all_cache = None                    # noqa: SLF001
+
+    cases = [("成员集", _members), ("已展开", _expanded),
+             ("使用记录", _usage), ("方向 payload", _payload)]
+
+    unchanged: list[str] = []
+    for name, fn in cases:
+        k = _fresh()
+        try:
+            fn(k)
+        except Exception as exc:                     # 扰动本身做不了也要报出来
+            unchanged.append(f"{name}（扰动失败：{type(exc).__name__}）")
+            continue
+        if P._fingerprint(k) == base_fp:             # noqa: SLF001
+            unchanged.append(name)
+
+    ok("★ [持久化] 指纹对 query 的**每一类**输入都敏感（不敏感的那类就是漏掉的字段）",
+       not unchanged,
+       f"{len(cases)} 类扰动｜指纹没变（= 没进指纹）的：{unchanged or '无'}")
+
+
 def test_persistence() -> None:
     """★ `§10.2 D` 的 **P6**：落盘只认权威边，派生边**读回时现算**。
 
@@ -10400,7 +10474,8 @@ def main() -> int:
                test_cover_leak_baseline, test_cover_oracle_transparency,
                test_b3_reduction_premise, test_reach_cache_premise,
                test_reach_cache_transparency, test_tree_premise,
-               test_deletion_path, test_persistence, test_persist_atomic,
+               test_deletion_path, test_fingerprint_sensitivity,
+               test_persistence, test_persist_atomic,
                test_versioning,
                test_reusable_build, test_lock_scope,
                test_service_shell, test_service_failure_paths,

@@ -354,6 +354,23 @@ def _fingerprint(kernel: Kernel) -> tuple:
     刻意**不用** `to_dict`：拿存档跟自己比会漏掉「两边一起错」的形状。
     这里把**能观察到的结构**摊平成一串可比的元组。
 
+    ## ★ 为什么**不需要**再比「语义」（2026-10-23）
+
+    答案是**结构的函数** —— `kernel.query` 只读下面这些，加上插件代码：
+
+        dirs（did / rank / payload / witness / origin / parent）· children
+        members · `_expanded` · `items`
+
+    而指纹**全部覆盖了**（还多出 `_tried` / `_path` / `ledger` / `usage` / `_counter`）
+    ⇒ **指纹逐字相同 ⇒ 同查询的答案逐字相同**。这是构造性的，不是取舍。
+
+    ⇒ 再跑一遍 `query` 去比答案，是**同义反复**
+      （`docs/评估标准.md` R4：读数不许与别的读数互为函数）。
+
+    ⚠️ 真正该判的是「**指纹有没有覆盖 query 读的那些字段**」——
+       判据 `test_fingerprint_sensitivity` 逐类扰动（成员集 / 已展开 / 使用记录 /
+       方向 payload），指纹**必须变**；某一类不变，就说明那一类漏了。
+
     ⚠️ 每一格都走 `canon`，**不走 `repr`** —— 理由见 `canon` 的 docstring
     （`repr(frozenset)` 依赖插入历史 ⇒ 假红，还会让存档字节不稳）。
     """
