@@ -4535,18 +4535,29 @@ def test_reflect() -> None:
     ok("★ [反思] ㉓ 顺序确定：同结构两次 `expand_order` 逐字相同",
        order1 == order2, f"{order1[:3]} vs {order2[:3]}")
 
-    # ㉔ 结构不变：预展开后最终方向树与不预展开逐字相同
-    def _sig(k):
-        return tuple((d.did, d.parent, len(k.children_of(d)), len(k.members_of(d)))
-                     for d in k.all_directions())
+    # ㉔ **预展开不改终态**（2026-10-23 重写）
+    #    ⚠️ 旧版在**完整树**上比 `before == after`：完整树的待展开**恒为 0**
+    #       （判空不再被误报成「待展开」之后），`apply()` 请求数 0
+    #       ⇒ 断言**恒真、空转** —— 正是本仓库最忌的「空转与通过长得一模一样」。
+    #    ⇒ 改成在**半成品树**上验真性质：预展开之后继续建完，
+    #       终态与「直接建完」的**划分集合逐字相同**（比 `did` 会假警报，见 ⑦）。
+    from ldv.checks._fixtures import build_keyset as _bk_full
+    from ldv.checks._fixtures import make_keyset_root as _mk_root
 
-    k2, _q2, *_ = _assemble("keyset", nodes, edges, 12)
-    before = _sig(k2)
-    applied = RF.apply(k2)
-    after = _sig(k2)
-    ok("★ [反思] ㉔ 结构不变：按报告预展开后，方向树逐字相同（只调顺序）",
-       before == after,
-       f"预展开 {len(applied['预展开'])} 个｜方向数 {len(before)} → {len(after)}")
+    def _partition_of(kk):
+        return sorted(tuple(sorted(kk.members_of(d))) for d in kk.all_directions())
+
+    k_lazy = _mk_root(nodes)()
+    applied = RF.apply(k_lazy)
+    for _i in sorted(nodes):
+        k_lazy.insert(_i)
+    k_full, _ = _bk_full(nodes)
+    _same = _partition_of(k_lazy) == _partition_of(k_full)
+    ok("★ [反思] ㉔ **预展开不改终态**：半成品树预展开后建完，划分集合与直接建完逐字相同",
+       len(applied["预展开"]) > 0 and _same,
+       f"预展开 {len(applied['预展开'])} 个（**必须 > 0**，否则这条空转）"
+       f"｜划分集合相同={_same}｜方向数 {len(k_lazy.all_directions())} vs "
+       f"{len(k_full.all_directions())}")
 
     # ㉕ 无标量分：字段白名单
     # ⚠️ 白名单要**跟着报告一起改**：2026-10-17 加了 `矛盾`（结构层矛盾清单）。
@@ -9450,6 +9461,37 @@ def test_motivation() -> None:
         ok("★ [动机] ⑫′ 未分档来源**当场炸**，不静默降成「可忽略」（反向对照）",
            raised and RF.significance({"成员数": 1, "子方向数": 0}) == "可忽略",
            f"未知来源 raise={raised}｜「m≤1」形状仍判可忽略=True")
+
+    # ⑬ **判空不许报成「待展开」**（2026-10-23）
+    #    根因：判空**不写** `_expanded`（叶不是终态，成员集变了要能重试）
+    #    ⇒ `is_expanded` 对它们是 False ⇒ 只看标志就把「**试过分不开**」
+    #      当成「**还没试**」。实测内置 36 项 keyset：账本 7 条 `unsplittable`，
+    #      旧实现把这 7 个方向**全部**报成待展开（两个集合**逐字相同**）。
+    #    ★ 反向对照（同一句里）：`make_keyset_root` 上的 D0 **必须**仍是待展开 ——
+    #      否则「一条都不报」也能让这条绿（「抓不到」比「算错」更危险）。
+    if loaded3 is None:
+        ok("★ [动机] ⑬ 判空不报成待展开（**跳过**：内置语料加载不了）", True, "0")
+    else:
+        from ldv.checks._fixtures import build_keyset as _bk13
+        from ldv.checks._fixtures import make_keyset_root as _mk13
+
+        _n13, _e13, _ = loaded3
+        k13, _p13 = _bk13(_n13)
+        uns13 = set(RF.unsplittable(k13))
+        g13 = RF.graded(k13)
+        pend13 = {r["方向"] for r in g13["可延后"] if r.get("来源") == "待展开"}
+        fail13 = {r["方向"] for r in g13["可延后"] if r.get("来源") == "展开失败"}
+        rep13 = RF.report(k13)
+        # 反向对照：真的没试过的方向**必须**还在「待展开」里
+        k_root13 = _mk13(_n13)()
+        pend_root = {r["方向"] for r in RF.graded(k_root13)["可延后"]
+                     if r.get("来源") == "待展开"}
+        ok("★ [动机] ⑬ **判空不许报成「待展开」**（以账本为准，不看 `is_expanded`）",
+           len(uns13) > 0 and not (pend13 & uns13) and uns13 <= fail13
+           and rep13["待展开数"] == 0 and "D0" in pend_root,
+           f"账本判空 {len(uns13)} 条｜报成待展开 {len(pend13 & uns13)}（必须 0）"
+           f"｜报成展开失败 {len(uns13 & fail13)}｜report 待展开数 {rep13['待展开数']}"
+           f"｜反向对照：只建根时 D0 仍待展开={'D0' in pend_root}")
 
 
 def test_no_unsourced_strings() -> None:

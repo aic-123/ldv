@@ -69,6 +69,29 @@ MUST_TYPES = ("边打架", "子覆盖越出父", "孤立方向")
 LEDGER_SOURCES = {"越界": "必须", "滞留": "可延后"}
 
 
+def unsplittable(kernel: Any) -> dict[str, str]:
+    """**判空的方向** ⇒ `{did: by}`（`by` = `plugin` 声明 / `kernel` 切不动）。
+
+    ★★ 为什么要单独有这个函数（2026-10-23）：判空**不写** `_expanded`
+       （叶不是终态，成员集变了要能重试）⇒ `is_expanded` 对它们是 `False`
+       ⇒ 只看那个标志就会把「**试过分不开**」当成「**还没试**」。
+
+       实测（内置 36 项 `keyset`）：账本里 7 条 `unsplittable`，
+       而 `graded()` 把这 7 个方向**全部**报成「待展开」——
+       方向集合**逐字相同**（`D5/D9/D11/D13/D14/D19/D21`），一个不多一个不少。
+
+    ⚠️ 账本里**只有** `unsplittable` 能回答「试过没有」：
+       `born` / `witness_updated` 是记账，不是待办；`stayed` / `out_of_scope` 是代价。
+    """
+    from .direction import EVENT_UNSPLITTABLE
+    out: dict[str, str] = {}
+    for e in getattr(kernel, "ledger", ()):
+        if e.kind == EVENT_UNSPLITTABLE:
+            out[e.did] = str((e.detail or {}).get("by") or "?")
+    return out
+
+
+
 def significance(item: dict) -> str:
     """**显著性函数** —— 一条待办 ⇒ 档位（`必须` / `可延后` / `可忽略`）。
 
@@ -139,13 +162,17 @@ def graded(kernel: Any, cap: int | None = None) -> dict[str, list[dict]]:
         m = len(kernel.members_of(d)) if d is not None else 0
         rows.append({**row, "来源": "矛盾", "成员数": m})
     # ② 待展开（还有东西可分但没分）/ 展开失败（试过分不开）
+    #    ★★ 「试过没有」**以账本为准**（`unsplittable`），不看 `is_expanded`：
+    #       判空**不写** `_expanded`（可重试）⇒ 只看标志会把判空报成「待展开」。
+    uns = unsplittable(kernel)
     for d in kernel.all_directions():
         m = len(kernel.members_of(d))
         c = len(kernel.children_of(d))
         if m > 1 and c == 0:
-            if kernel.is_expanded(d):
-                # ⚠️ `is_expanded` 为真但没子方向 ⇒ **表达力不足**，不是「还没试」
+            if d.did in uns or kernel.is_expanded(d):
+                # 账本有判空事件，或已展开却没子方向 ⇒ **表达力不足**，不是「还没试」
                 rows.append({"来源": "展开失败", "方向": d.did, "成员数": m,
+                             "判空来源": uns.get(d.did, "已展开但无子方向"),
                              "说明": "试过展开，但分不开 —— 需要新维度（§D1 人的动作）"})
             else:
                 rows.append({"来源": "待展开", "方向": d.did, "成员数": m,
@@ -474,12 +501,20 @@ def report(kernel: Any) -> dict[str, Any]:
     ⚠️ 报告里**没有**「分数」「健康度」「优先级分」这类字段 —— 有意为之。
     """
     rows: list[dict[str, Any]] = []
+    # ★★ 这里是「待展开」的**第二处实现**（`graded()` 里还有一处）——
+    #    2026-10-23 修的是**同一件事**：判空不写 `_expanded` ⇒ 只看它会把判空报成待展开。
+    #    ⚠️ 两处必须同口径：`apply()` 消费的是这一处的 `展开序`，
+    #       口径不一致会让 `apply()` 反复去展开「已经判过空」的方向（纯空转）。
+    uns = unsplittable(kernel)
     for d in kernel.all_directions():
         m = len(kernel.members_of(d))
         c = len(kernel.children_of(d))
         rows.append({"did": d.did, "成员数": m, "子方向数": c,
                      # 「待展开」= 还有东西可分但没分 —— **结构性**判据
-                     "待展开": m > 1 and c == 0})
+                     # ⚠️ 「试过没有」以账本为准，不看 `is_expanded`
+                     "待展开": m > 1 and c == 0 and d.did not in uns
+                              and not kernel.is_expanded(d),
+                     "判空": uns.get(d.did)})
     rows.sort(key=lambda r: (-r["成员数"], r["did"]))     # 外生排序规则
     return {
         "方向数": len(rows),
