@@ -150,18 +150,70 @@ CONTROL_MARKS = ("反向对照", "合成对照", "已知答案")
 
 
 def controls(cov: dict[str, list[str]] | None = None) -> dict[str, list[str]]:
-    """承诺 ⇒ **自称带对照**的判据标签（**读数，不进退出码**）。
+    """承诺 ⇒ **直接**带对照的判据（**读数，不进退出码**）。
 
     ★★ 为什么只是读数：它读的是**标签里有没有写「对照」**，
        **不是**「那条对照真的会红」。后者只有真去回退源码才知道。
-       ⇒ 它可以指出「哪 40 条只有正着判」，**不能**证明「这 11 条反着判就对了」。
+       ⇒ 它可以指出「哪几条只有正着判」，**不能**证明「有对照的那几条就对了」。
 
     ⚠️ 它**低估**：一条判据带了对照却没在标签里写，这里看不见 ——
        和「判了但没写编号」是同一个毛病，修法也一样（把话说进标签）。
+
+    ★ **B 编码额外看符号**（2026-10-23）：`bN_known_answer` 函数存在 ⇒ 也算有对照。
+      理由：B18 的对照函数明明在，只是 `run_tests` 那条标签没写「对照」两个字 ——
+      「标签没写」与「对照不存在」是**两件事**，不能混。
     """
     cov = coverage() if cov is None else cov
-    return {cid: [s for s in hits if any(m in s for m in CONTROL_MARKS)]
-            for cid, hits in cov.items()}
+    out = {cid: [s for s in hits if any(m in s for m in CONTROL_MARKS)]
+           for cid, hits in cov.items()}
+    for f in sorted((REPO / "ldv").rglob("*.py")):
+        for m in re.finditer(r"^def (b\d+)_known_answer\b",
+                             io.open(f, encoding="utf-8").read(), re.M):
+            cid = m.group(1).upper()
+            if cid in out and not out[cid]:
+                out[cid] = [f"[{cid}] 合成对照（符号：{m.group(1)}_known_answer）"]
+    return out
+
+
+def landings() -> dict[str, list[str]]:
+    r"""承诺 ⇒ 断言集「**系统落点**」一栏里提到的检查编号。
+
+    ★ 为什么用这一栏：`§K/§A/§D/§S` 大多是**承诺**而不是独立代码路径 ——
+      它们落在某个检查上（`§K5` 落在 `B13`、`§K8` 落在 `B1`）。
+      所以「给 § 造一条对照」在多数情况下**等于给那个检查造**，
+      而那个检查可能已经有了 ⇒ 记成「**间接**有对照」，别重复造。
+
+    ⚠️ 只认 `B\d+ / A\d+ / T\d+` 三种编号（`§I` 是接口契约，不在 B 体系里）。
+    """
+    doc = io.open(_SPEC_DOC, encoding="utf-8").read()
+    parts = re.split(r"^### §?([KATDS]\d+)\b", doc, flags=re.M)
+    out: dict[str, list[str]] = {}
+    for i in range(1, len(parts), 2):
+        cid, body = parts[i], parts[i + 1]
+        m = re.search(r"系统落点\**：(.*)", body)
+        out[cid] = sorted(set(re.findall(r"(?<![A-Za-z])([BAT]\d+)(?![0-9])",
+                                         m.group(1) if m else "")))
+    return out
+
+
+def control_status(cov: dict[str, list[str]] | None = None
+                   ) -> dict[str, tuple[str, str]]:
+    """承诺 ⇒ `(状态, 经谁)`。**三态**：`直接` / `间接` / `缺`。
+
+    ★ 「间接」不是「有」—— 它靠的是**另一个**检查的对照。文档里必须分开数，
+      否则读者会把「间接」读成「自己反着判过」。
+    """
+    cov = coverage() if cov is None else cov
+    ctl = controls(cov)
+    land = landings()
+    out: dict[str, tuple[str, str]] = {}
+    for cid in cov:
+        if ctl.get(cid):
+            out[cid] = ("直接", "；".join(ctl[cid][:1]))
+            continue
+        via = [c for c in land.get(cid, []) if ctl.get(c)]
+        out[cid] = ("间接", "、".join(via)) if via else ("缺", "")
+    return out
 
 
 def table(cov: dict[str, list[str]], status: dict[str, str] | None = None
@@ -230,6 +282,32 @@ B_CONTROL_PLAN = {
     "B15": ("已造", "`_LeakyKernel`：失效落点依赖插入顺序"),
     "B16": ("已造", "覆盖少给一个成员"),
     "B19": ("已造", "手造 `prof`：连续 10 次没变细"),
+}
+
+
+#: 还没对照的承诺 ⇒ **怎么造 / 卡在哪**（人判，2026-10-23）。
+#:
+#: ★ 分两类：
+#:   「映射缺」  已经有检查覆盖它，只是「系统落点」那栏没写编号 ⇒ **补映射，不另造**
+#:   「要造」    真的没有任何对照碰过它
+S_CONTROL_PLAN = {
+    "K2": ("要造·中", "假插件 `split` 返回两个**相同**子方向 ⇒ 展开没产出新东西"),
+    "K7": ("映射缺", "`B11` 已经查 `0 < propensity <= 1` ⇒ 在落点里补 `B11`"),
+    "A2": ("要造·中", "假 spec：让视图不稳定（B₁ ⊄ E⁻¹(B₂)）"),
+    "A3": ("要造·中", "假 spec：让它**不是最粗**的稳定细化"),
+    "D1": ("要造·易", "提议一个**没声明为外生**的字段当维度 ⇒ 必须拒"),
+    "D2": ("要造·易", "空谓词 / 全谓词 ⇒ 零贡献（B4 的同一形状）"),
+    "D3": ("要造·易", "预算共享：单谓词 + 组合一起排序，总数超 N ⇒ 红"),
+    "D4": ("要造·易", "独立性两档：构造 `inter == base`（精确蕴含）的反例"),
+    "D5": ("要造·易", "改名不改划分：换一个**同扩展**的键名，划分必须逐字相同"),
+    "D6": ("要造·易", "解析范围：`used + dropped` 才算全集，漏掉 dropped ⇒ 红"),
+    "D7": ("映射缺", "`[D7]` 判据本身就是对照（加了必须变 / 删了必须回）⇒ 落点补它"),
+    "D8": ("要造·易", "候选维度四类：造一个 98% 同值的字段 ⇒ 必须判「几乎唯一」"),
+    "S1": ("要造·中", "不产内容：塞一个模型生成的字符串进输出 ⇒ 逐字符串找出处必须红"),
+    "S2": ("映射缺", "`[协议] 65` 禁词判据已守 ⇒ 落点补 `[协议] 65`"),
+    "S3": ("要造·难", "反思显性：**定位承诺**，能验的只是它的形状（见 §S3 的「只判到半」）"),
+    "S4": ("要造·难", "重构显性：同上，只判到「重构有记录」这一半"),
+    "S5": ("要造·难", "自我标签一致：同上"),
 }
 
 
@@ -380,6 +458,35 @@ def render(cov: dict[str, list[str]] | None = None) -> str:
             "⇒ **`B1`–`B20` 全部有合成对照**（2026-10-23 补齐）。",
             "⚠️ 但 `§K/§A/§D/§S` 那 25 条仍只算「间接覆盖」——",
             "它们靠 B 的对照**间接**有，不是自己有一条。**间接 ≠ 直接**，别读成「全部反着判过」。",
+        ]
+
+    st = control_status(cov)
+    from collections import Counter
+    n_st = Counter(v[0] for v in st.values())
+    head += [
+        "",
+        "## 三态：直接 / 间接 / 缺",
+        "",
+        "    **直接**  这条承诺自己的判据里有对照（标签写了「对照」，或 `bN_known_answer` 存在）",
+        "    **间接**  它落在**另一个**检查上（断言集的「系统落点」写的 `Bxx`），而那个检查有对照",
+        "    **缺**    没有任何对照碰过它 —— 见下面的「怎么造」",
+        "",
+        f"合计 直接 **{n_st['直接']}**｜间接 **{n_st['间接']}**｜缺 **{n_st['缺']}**",
+        "",
+        "⚠️ **间接 ≠ 直接**：间接只说明「守它的那条检查反着判过」，",
+        "不说明这条承诺**自己的措辞**被反着判过。别把两个数加成一个。",
+        "",
+    ]
+    _miss = [c for c, (k, _v) in st.items() if k == "缺"]
+    if _miss:
+        head += ["| 缺的承诺 | 怎么造 / 卡在哪 |", "|---|---|"]
+        for c in _miss:
+            how, why = S_CONTROL_PLAN.get(c, ("未评估", "**表里没有它 —— 补上**"))
+            head.append(f"| `{c}` | {how}：{why} |")
+        head += [
+            "",
+            "⚠️ 这张表是**人判**，不是读数。判据 `[保证]` ⑦ 只守「每条承诺都在三态之一、",
+            "且缺的都在表里」，不守「判得对」。",
         ]
     return "\n".join(head) + "\n"
 

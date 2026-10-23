@@ -542,9 +542,52 @@ def b15_known_answer() -> list[str] | None:
     return _pair("B15 换序不同构", bad, good)
 
 
+def d8_known_answer() -> list[str]:
+    """`§D8` 的**已知答案**对照：四类离散判定（不是分数）。
+
+    ⚠️ 与 `B*` 的对照**形状不同**：`§D8` 的「判据」本身就是一次**计算**
+       （`candidate_dimensions` 分类），没有「它会不会红」这回事 ——
+       所以这里的对照是**已知答案**：造三种字段，断言分类落在该落的那一类。
+
+        恒定        100 项同值            ⇒ 恒定 ⇒ 分不开
+        几乎唯一    100 项各不同          ⇒ 几乎唯一（分出来等于没分）
+        可以当维度  4 种取值              ⇒ 可以当维度
+    """
+    from ..core.request import candidate_dimensions
+
+    class _N:
+        def __init__(self, **fields: Any) -> None:
+            self.fields = fields
+
+    n = 100
+    nodes = {
+        f"i{k}": _N(const="same", uniq=f"v{k}",
+                    four=["a", "b", "c", "d"][k % 4])
+        for k in range(n)
+    }
+    out = candidate_dimensions(nodes)
+    # ⚠️ 行里的键是 `读数`（不是 `判定`）—— 四类的文字就在那一栏
+    verdict = {r.get("字段"): r.get("读数", "") for r in out.get("候选维度", [])}
+
+    def _has(field: str, word: str) -> bool:
+        return word in str(verdict.get(field, ""))
+
+    fails: list[str] = []
+    if not _has("const", "恒定"):
+        fails.append(f"恒定字段被判成 {verdict.get('const')!r}")
+    if not _has("uniq", "唯一"):
+        fails.append(f"唯一字段被判成 {verdict.get('uniq')!r}")
+    if not _has("four", "可以当维度"):
+        fails.append(f"4 值字段被判成 {verdict.get('four')!r}")
+    # 反向：三类**必须两两不同**（都落同一类 = 这个对照什么都没证明）
+    if len({verdict.get("const"), verdict.get("uniq"), verdict.get("four")}) < 3:
+        fails.append(f"三类落在同一判定：{verdict}")
+    return fails
+
+
 ALL = (b4_known_answer, b7_known_answer, b9_known_answer,
        b12_known_answer, b13_known_answer, b14_known_answer,
        b2_known_answer, b3_known_answer, b5_known_answer,
        b16_known_answer, b19_known_answer,
        b6_known_answer, b8_known_answer, b10_known_answer,
-       b11_known_answer, b15_known_answer)
+       b11_known_answer, b15_known_answer, d8_known_answer)

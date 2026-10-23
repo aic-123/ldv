@@ -7460,6 +7460,11 @@ def test_b_known_answers() -> None:
        f15 is not None and not f15,
        "**跳过**：内置语料不在" if f15 is None
        else ("；".join(f15[:2]) or "两态不同，对照成立"))
+    # §D8 的对照是**已知答案**（它的「判据」本身就是一次分类计算，
+    # 没有「会不会红」这回事）⇒ 造三种字段，断言分类落在该落的那一类。
+    fd8 = _run(C.d8_known_answer)
+    ok("★ [保证] 合成对照 · §D8 四类离散判定（已知答案：恒定 / 几乎唯一 / 可以当维度）",
+       not fd8, "；".join(fd8[:2]) or "三类两两不同，对照成立")
 
 
 def test_guarantee_matrix() -> None:
@@ -7536,6 +7541,18 @@ def test_guarantee_matrix() -> None:
     ok("★ [保证] ⑥ 缺对照的 `B` 都有「怎么造」的评估（表覆盖全，不留未评估）",
        not unplanned and len(GM.B_CONTROL_PLAN) >= len(noc),
        f"缺对照 {len(noc)} 条：{noc}｜表里没评估的 {unplanned or '无'}")
+
+    # ⑦ **三态不许有第四态**：每条承诺必须是 直接 / 间接 / 缺 之一，
+    #    且「缺」的都要在 `S_CONTROL_PLAN` 里有「怎么造」—— 不许静默漏掉。
+    st = GM.control_status(cov)
+    kinds = {k for k, _v in st.values()}
+    miss_s = sorted(c for c, (k, _v) in st.items() if k == "缺")
+    unplanned_s = [c for c in miss_s if c not in GM.S_CONTROL_PLAN]
+    ok("★ [保证] ⑦ 三态完备：直接 / 间接 / 缺，且缺的都有「怎么造」",
+       kinds <= {"直接", "间接", "缺"} and len(st) == len(cov) and not unplanned_s,
+       f"直接 {sum(1 for v in st.values() if v[0] == '直接')}"
+       f"｜间接 {sum(1 for v in st.values() if v[0] == '间接')}"
+       f"｜缺 {len(miss_s)}｜表里没评估的 {unplanned_s or '无'}")
 
 
 def _spec_mechanical_mismatch(doc: dict, which: str, nodes, edges) -> list[str]:
