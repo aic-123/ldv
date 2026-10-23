@@ -172,7 +172,10 @@ class TaskTable:
         ⚠️ **撞容量上限 ⇒ 抛 `QueueFull`**（调用方返回 429）——
            原来是**无上限**地往内存里堆，`tasks` 与 `queues` 只增不减。
         """
-        tid = uuid.uuid4().hex[:12]
+        # ★ **完整 uuid**（2026-10-23）：原来取 `hex[:12]`（48 bit），碰撞概率不高
+        #   但**不是严格的唯一性保证**，而任务 id 是轮询的唯一句柄 ——
+        #   「大概率不撞」与「不会撞」在**撞了以后**才分得开。代价是 URL 长 20 字符。
+        tid = uuid.uuid4().hex
         with self.cond:
             mine = len(self.queues.get(tenant, [])) + self.running.get(tenant, 0)
             allq = sum(len(q) for q in self.queues.values()) + sum(self.running.values())
