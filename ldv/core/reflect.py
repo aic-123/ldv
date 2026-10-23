@@ -59,14 +59,16 @@ MUST_TYPES = ("边打架", "子覆盖越出父", "孤立方向")
 #: ★★ 这两类之前**根本没进过清单**（`graded()` 只收 矛盾/展开失败/待展开）——
 #:    这就是「漏」：内核账本里明明记着，反思层从来不看。
 #:
-#:     越界（`out_of_scope` / 根覆盖之外）  项**不在任何方向**里 ⇒ 查它永远查不到
-#:                                        ⇒ **假阴** ⇒ 结论**错** ⇒ 「必须」
-#:     滞留（`stayed`）                    项**仍在父的覆盖里**、查得到，只是没被切细
-#:                                        ⇒ 结论**对但不全** ⇒ 「可延后」
+#:     滞留（`stayed`）   项**仍在父的覆盖里**、查得到，只是没被切细
+#:                       ⇒ 结论**对但不全** ⇒ 「可延后」
+#:
+#: ⚠️ **越界不在本表里** —— 它要按「缺口形状」再拆一刀（见 `significance`）：
+#:     整类缺失（该类型**一条都没进**）  ⇒ 这类问题**完全答不了** ⇒ 「必须」
+#:     部分缺失（该类型**有进有没进**）  ⇒ 这类问题**还能答一部分** ⇒ 「可延后」
 #:
 #: ⚠️ 滞留判「可延后」与 §10.2 出路 (4) 的既有裁定同向：「覆盖不漏」不是硬要求，
 #:    代价落在**划分**上。把它判成「必须」等于把已接受的代价重新判成错。
-LEDGER_SOURCES = {"越界": "必须", "滞留": "可延后"}
+LEDGER_SOURCES = {"滞留": "可延后"}
 
 
 def unsplittable(kernel: Any) -> dict[str, str]:
@@ -118,7 +120,14 @@ def significance(item: dict) -> str:
         return "必须"
     if t == "切不开":
         return "可延后"
-    # ★ 账本来源（越界 / 滞留）—— 必须在「展开失败」之前判，别让来源被吞掉
+    # ★ **越界按缺口形状再拆一刀**（2026-10-23，用户定）：
+    #     整类缺失 ⇒ 这类问题**一条都答不了** ⇒ 必须
+    #     部分缺失 ⇒ 还能答一部分           ⇒ 可延后
+    #   ⚠️ 没给类型（`缺口` 为空）⇒ **取重的那一档**：不知道是不是整类时，
+    #      不许默认成「可延后」—— 那正是「兜底静默降档」的老坑。
+    if src == "越界":
+        return "可延后" if item.get("缺口") == "部分" else "必须"
+    # ★ 账本来源（滞留）—— 必须在「展开失败」之前判，别让来源被吞掉
     if src in LEDGER_SOURCES:
         return LEDGER_SOURCES[src]
     # 「展开失败」= 试过展开、但分不出子方向 ⇒ 表达力不足（要人加维度）。
@@ -139,7 +148,8 @@ def significance(item: dict) -> str:
         f"新来源必须显式分档（见 LEDGER_SOURCES），不许兜成「可忽略」")
 
 
-def graded(kernel: Any, cap: int | None = None) -> dict[str, list[dict]]:
+def graded(kernel: Any, cap: int | None = None,
+           type_of: Any = None) -> dict[str, list[dict]]:
     """把「待办」按显著性分档 —— **档内**按成员数降序（影响面定序）。
 
     ⚠️ 档内排序沿用 `SORT_KEY`（成员数降序 · did 升序）：
@@ -154,6 +164,16 @@ def graded(kernel: Any, cap: int | None = None) -> dict[str, list[dict]]:
 
     ⚠️ 账本行的 `成员数` 是**受影响的项数**，不是方向的成员总数：
        它们量的是**代价规模**（多少项受影响），不是方向多大。
+
+    ★★ **越界按「缺口形状」拆**（2026-10-23，用户定）：给了 `type_of` 就按
+       **材料的类型**拆成「整类缺失」（该类型一条都没进 ⇒ 完全答不了 ⇒ 必须）与
+       「部分缺失」（有进有没进 ⇒ 还能答一部分 ⇒ 可延后）。不给 ⇒ 退化成
+       「按方向一行」并**写明未按类型拆**（不静默）。
+
+       ⚠️ 为什么是类型、不是「离根远近」：实测（`reach` 先建 2，30 条越界）
+       整图 36 项是**一个弱连通分量**、且按插件语义全部「走不到根」
+       ⇒ 「连通却没纳入」这一支**逻辑上不可能**（`hit` 就是同一个谓词），
+       拆了也只有一支。类型能拆成 15 / 15，两支都活。
     """
     rows: list[dict] = []
     # ① 结构矛盾（三类）+ 切不开（给了 cap 才查）
@@ -179,20 +199,50 @@ def graded(kernel: Any, cap: int | None = None) -> dict[str, list[dict]]:
                              "子方向数": c, "待展开": True,
                              "说明": "还有东西可分但没分"})
     # ③ 账本里的两类**代价**（2026-10-23）—— 之前根本没进过清单
-    #    ⚠️ 按 `(来源, 方向)` 聚合，**不逐项列**：reach 先建 2 就有 30 条越界。
+    #    ⚠️ 滞留按 `(来源, 方向)` 聚合，**不逐项列**：reach 先建 2 就有 30 条越界。
     from .direction import EVENT_OUT_OF_SCOPE, EVENT_STAYED
-    n_oos: dict[str, int] = {}
+    oos_items: dict[str, list[str]] = {}
     n_stayed: dict[str, int] = {}
     for e in getattr(kernel, "ledger", ()):
         if e.kind == EVENT_OUT_OF_SCOPE:
-            n_oos[e.did] = n_oos.get(e.did, 0) + 1
+            oos_items.setdefault(e.did, []).append(str(e.detail.get("item", "")))
         elif e.kind == EVENT_STAYED:
             n_stayed[e.did] = n_stayed.get(e.did, 0) + 1
-    for did, n in sorted(n_oos.items()):        # sorted ⇒ 同结构两次同一顺序
-        rows.append({"来源": "越界", "类型": "根覆盖之外", "方向": did,
-                     "项数": n, "成员数": n,
-                     "说明": "这些项按证明落在根覆盖之外 ⇒ 不在任何方向里 "
-                             "⇒ 查它永远查不到（范围损失，§10.2 出路 (1)）"})
+    if type_of is None:
+        # ⚠️ 没给 `type_of` ⇒ 退化成「按方向一行」，并**写明没按类型拆**。
+        #    判档取「必须」（见 `significance`）—— 不知道是不是整类时不许降档。
+        for did, xs in sorted(oos_items.items()):
+            rows.append({"来源": "越界", "类型": "根覆盖之外", "方向": did,
+                         "项数": len(xs), "成员数": len(xs), "缺口": None,
+                         "说明": "这些项按证明落在根覆盖之外 ⇒ 不在任何方向里 "
+                                 "⇒ 查它永远查不到（范围损失，§10.2 出路 (1)）。"
+                                 "⚠️ **未按类型拆**：调用方没给 `type_of`"})
+    else:
+        # ★ 按**材料的类型**拆（2026-10-23，用户定）：
+        #     整类缺失 = 该类型**一条都没进** ⇒ 这类问题完全答不了
+        #     部分缺失 = 该类型**有进有没进** ⇒ 这类问题还能答一部分
+        #   ⚠️ 跨方向聚合：问的是「哪一类材料没进来」，不是「哪个方向漏了」。
+        n_out_type: dict[str, int] = {}
+        for xs in oos_items.values():
+            for i in xs:
+                tp = type_of(i) or "未知"
+                n_out_type[tp] = n_out_type.get(tp, 0) + 1
+        n_all_type: dict[str, int] = {}
+        for i in getattr(kernel, "items", {}):
+            tp = type_of(i) or "未知"
+            n_all_type[tp] = n_all_type.get(tp, 0) + 1
+        for tp in sorted(n_out_type):
+            n_out = n_out_type[tp]
+            n_all = n_all_type.get(tp, n_out)
+            gap = "整类" if n_out >= n_all else "部分"
+            rows.append({"来源": "越界", "类型": "根覆盖之外", "类别": tp,
+                         "缺口": gap, "项数": n_out, "该类总数": n_all,
+                         "成员数": n_out,
+                         "说明": (f"「{tp}」这一类的 {n_out} 项按证明落在根覆盖之外 "
+                                  f"（该类共 {n_all} 项）⇒ "
+                                  + ("**整类都没进结构** ⇒ 这类问题一条都答不了"
+                                     if gap == "整类" else
+                                     "还有一部分进来了 ⇒ 这类问题能答一部分"))})
     for did, n in sorted(n_stayed.items()):
         rows.append({"来源": "滞留", "方向": did, "项数": n, "成员数": n,
                      "说明": "这些项留在这一层：每个子方向都证明不收它 "
@@ -389,7 +439,7 @@ def contradiction_requests(kernel: Any, contra: dict[str, Any] | None = None
     }
 
 
-def _graded_report(kernel: Any) -> dict[str, Any]:
+def _graded_report(kernel: Any, type_of: Any = None) -> dict[str, Any]:
     """报告里的「分级」段 —— 三档清单 + 档内顺序。
 
     ⚠️ `可忽略` **只报数量不列清单**（免得噪声撑满真正的待办）。
@@ -398,9 +448,11 @@ def _graded_report(kernel: Any) -> dict[str, Any]:
        「`m≤1` / 已展开」那些**不被枚举** —— 它们本来就不必列。
        ⇒ 所以这里**如实报「本趟无该档」**，不印一个会被读成「查过了、没有」
          的 0 就算完（「空转与通过长得一模一样」）。
+
+    ⚠️ `type_of` 不给 ⇒ 越界那一段**没按类型拆**，报告里会明说（`越界拆分`）。
     """
     from .request import LEAF_CAP          # 局部导入：避免 core 内部循环
-    g = graded(kernel, LEAF_CAP)
+    g = graded(kernel, LEAF_CAP, type_of=type_of)
     n_ignore = len(g["可忽略"])
     return {
         "档位说明": SIGNIFICANCE,
@@ -410,6 +462,8 @@ def _graded_report(kernel: Any) -> dict[str, Any]:
         "可忽略说明": ("本趟无该档 —— 可忽略只由「m≤1 / 已展开」产生，"
                        "而 `graded()` 不枚举它们（没有变化的事不列）"
                        if n_ignore == 0 else "有该档行（调用方显式塞进来的）"),
+        "越界拆分": ("按材料类型拆（整类缺失 / 部分缺失）" if type_of is not None
+                     else "**未按类型拆** —— 调用方没给 `type_of`"),
         "档内顺序": SORT_KEY,
     }
 
@@ -489,7 +543,7 @@ def plan(kernel: Any, *, rounds: int = 4, per_round: int = 3,
             "档内顺序": SORT_KEY, "每轮上限": per_round}
 
 
-def report(kernel: Any) -> dict[str, Any]:
+def report(kernel: Any, type_of: Any = None) -> dict[str, Any]:
     """生成反思报告（**全是内生量**，每个数都能从结构重算）。
 
     字段：
@@ -526,7 +580,7 @@ def report(kernel: Any) -> dict[str, Any]:
         "矛盾": contradictions(kernel),
         # ★ **显著性分档**（2026-10-22）—— 三档由**后果**定，档内按成员数定序。
         #   ⚠️ 它不是分数：`必须` / `可延后` / `可忽略` 是**有序等级**（E-1「不作分」）。
-        "分级": _graded_report(kernel),
+        "分级": _graded_report(kernel, type_of=type_of),
     }
 
 

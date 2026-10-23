@@ -190,6 +190,19 @@ class App:
         self._load_usage()
 
     # ── 使用记录：加载 / 记录 / 清空 ─────────────────────────────────────────
+    def type_of(self, nid: str) -> str:
+        """项的 `type` —— 给 `reflect.report(type_of=...)` 用。
+
+        ★ 「没被收录进系统的数据」按类型拆，靠的就是这个：材料自带的
+          `type` 是**人写在 front matter 里的字段**，不是系统猜的语义。
+        ⚠️ 缺 `type` 的项返回 `"未知"` —— **不许**当成「没有这一类」
+           （那会让「没写」和「确实没有」长得一样）。
+        """
+        n = self.nodes.get(nid)
+        if n is None:
+            return "未知"
+        return str(n.fields.get("type") or "未知")
+
     def _load_usage(self) -> None:
         """把历史使用记录灌进 `kernel.usage`，并算出每个方向的**衰减后**倾向。
 

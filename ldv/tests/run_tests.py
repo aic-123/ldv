@@ -9493,6 +9493,49 @@ def test_motivation() -> None:
            f"｜报成展开失败 {len(uns13 & fail13)}｜report 待展开数 {rep13['待展开数']}"
            f"｜反向对照：只建根时 D0 仍待展开={'D0' in pend_root}")
 
+    # ⑭ **「没被收录进系统的数据」按类型拆**（2026-10-23，用户定）
+    #    整类缺失（该类型**一条都没进**）⇒ 这类问题完全答不了 ⇒ 必须
+    #    部分缺失（**有进有没进**）        ⇒ 还能答一部分       ⇒ 可延后
+    #    ⚠️ 为什么不用「离根远近」：实测整图 36 项是**一个弱连通分量**，
+    #       且按插件语义 30 条全部「走不到根」⇒「连通却没纳入」**逻辑上不可能**
+    #       （`hit` 就是同一个谓词）⇒ 拆了也只有一支 = 空转。
+    #    ★ 反向对照：不给 `type_of` ⇒ 退化成一方向一行、判「必须」并**明说未拆**。
+    if loaded3 is None:
+        ok("★ [动机] ⑭ 越界按类型拆（**跳过**：内置语料加载不了）", True, "0")
+    else:
+        from ldv.checks._fixtures import make_builder as _mkb14
+        from ldv.checks._fixtures import build_incremental as _binc14
+
+        _n14, _e14, _ = loaded3
+        _ids14 = sorted(_n14)
+        k14 = _binc14(_mkb14("reach", _n14, _e14), _n14, _ids14[:2], _ids14[2:])
+
+        def _type14(i: str) -> str:
+            return str(_n14[i].fields.get("type") or "未知")
+
+        g14 = RF.graded(k14, type_of=_type14)
+        g14_raw = RF.graded(k14)
+        must14 = [r for r in g14["必须"] if r.get("来源") == "越界"]
+        later14 = [r for r in g14["可延后"] if r.get("来源") == "越界"]
+        n_all14 = sum(r["项数"] for r in must14)
+        n_part14 = sum(r["项数"] for r in later14)
+        n_oos14 = k14.stats()["根覆盖之外"]
+        # 每一行内部也要自洽：整类 ⇒ 项数 == 该类总数；部分 ⇒ 严格小于
+        selfok = all(r["项数"] == r["该类总数"] for r in must14) and \
+            all(r["项数"] < r["该类总数"] for r in later14)
+        raw14 = [r for r in g14_raw["必须"] if r.get("来源") == "越界"]
+        ok("★ [动机] ⑭ **越界按类型拆**：整类缺失⇒必须 / 部分缺失⇒可延后（两支都必须非空）",
+           bool(must14) and bool(later14) and selfok
+           and n_all14 + n_part14 == n_oos14
+           and all(r["缺口"] == "整类" for r in must14)
+           and all(r["缺口"] == "部分" for r in later14)
+           # 反向对照：不给 type_of ⇒ 退化成一行、缺口为空、落在「必须」
+           and len(raw14) == 1 and raw14[0].get("缺口") is None
+           and raw14[0]["项数"] == n_oos14,
+           f"整类 {len(must14)} 类 {n_all14} 项（必须）｜部分 {len(later14)} 类 "
+           f"{n_part14} 项（可延后）｜合计 {n_all14 + n_part14} == 越界 {n_oos14}"
+           f"｜不给 type_of ⇒ {len(raw14)} 行、缺口={raw14[0].get('缺口') if raw14 else '?'}")
+
 
 def test_no_unsourced_strings() -> None:
     """★ [不产内容] 查询输出里**每个字符串都能指回材料**（§S1）。
