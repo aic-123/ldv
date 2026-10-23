@@ -585,9 +585,62 @@ def d8_known_answer() -> list[str]:
     return fails
 
 
+# --- §D 创建层：已知答案对照（2026-10-23）--------------------------------
+#
+# ⚠️ 这几条与 `B*` 的对照**形状不同**：`§D` 的「判据」多数是**纯函数**
+#    （`combination_verdict` / `choose_partition`），没有「它会不会红」这回事
+#    ⇒ 用**已知答案**：造已知输入，断言输出落在该落的那一类，且**各类两两不同**。
+
+def d4_known_answer() -> list[str]:
+    """`§D4` 独立性两档：精确蕴含（定理）/ 近似蕴含（外生取舍）/ 独立。
+
+    ⚠️ 两档**性质不同**，理由文案也必须不同 —— 否则「定理」与「取舍」在输出里
+       长得一样，读者会以为近似档也是定理。
+    """
+    from ..corpus.predicates import combination_verdict
+
+    base = 100
+    exact = combination_verdict(base, base)           # 交集 == 最小项
+    near = combination_verdict(int(base * 0.95), base)  # 0.95 ≥ 阈值
+    free = combination_verdict(base // 2, base)       # 0.5 < 阈值
+    fails: list[str] = []
+    if not exact or "精确蕴含" not in exact:
+        fails.append(f"精确蕴含被判成 {exact!r}")
+    if not near or "强相关" not in near:
+        fails.append(f"近似蕴含被判成 {near!r}")
+    if free is not None:
+        fails.append(f"独立组合被拒收了：{free!r}")
+    if exact == near:
+        fails.append("两档理由文案相同 ⇒ 定理与取舍分不开")
+    return fails
+
+
+def d3_known_answer() -> list[str]:
+    """`§D3` 预算共享：单谓词与组合**抢同一份预算**，进划分的总数恒 ≤ budget。"""
+    from ..corpus.predicates import Combination, Predicate, choose_partition
+
+    def _p(name: str, d: float) -> Any:
+        return Predicate(谓词=name, 规则="r", 量="m", 阈值=1.0, 满足数=10, 区分度=d)
+
+    used = [_p(f"p{i}", 0.1 * (i + 1)) for i in range(6)]        # 区分度 0.1..0.6
+    combos = [Combination(项=(f"p{i}", f"p{i + 1}"), 满足数=10, 区分度=0.9)
+              for i in range(3)]                                # 组合更高 ⇒ 会赢
+    budget = 4
+    singles, picked, dropped = choose_partition(used, combos, budget=budget)
+    fails: list[str] = []
+    if len(singles) + len(picked) > budget:
+        fails.append(f"总数 {len(singles) + len(picked)} > budget {budget}")
+    if not picked:
+        fails.append("组合区分度更高却没赢 ⇒ 预算没共用（各给一份）")
+    if len(singles) + len(picked) + len(dropped) != len(used) + len(combos):
+        fails.append("被丢掉的那些没报全 ⇒ 说不清谁没进划分")
+    return fails
+
+
 ALL = (b4_known_answer, b7_known_answer, b9_known_answer,
        b12_known_answer, b13_known_answer, b14_known_answer,
        b2_known_answer, b3_known_answer, b5_known_answer,
        b16_known_answer, b19_known_answer,
        b6_known_answer, b8_known_answer, b10_known_answer,
-       b11_known_answer, b15_known_answer, d8_known_answer)
+       b11_known_answer, b15_known_answer, d8_known_answer,
+       d4_known_answer, d3_known_answer)

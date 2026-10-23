@@ -212,6 +212,9 @@ def control_status(cov: dict[str, list[str]] | None = None
             out[cid] = ("直接", "；".join(ctl[cid][:1]))
             continue
         via = [c for c in land.get(cid, []) if ctl.get(c)]
+        if not via and cid in MANUAL_VIA:
+            out[cid] = ("间接", MANUAL_VIA[cid][0] + "（手工映射）")
+            continue
         out[cid] = ("间接", "、".join(via)) if via else ("缺", "")
     return out
 
@@ -308,6 +311,18 @@ S_CONTROL_PLAN = {
     "S3": ("要造·难", "反思显性：**定位承诺**，能验的只是它的形状（见 §S3 的「只判到半」）"),
     "S4": ("要造·难", "重构显性：同上，只判到「重构有记录」这一半"),
     "S5": ("要造·难", "自我标签一致：同上"),
+}
+
+
+#: **手工补的映射**（人判，2026-10-23）—— 用于「落点那一栏写不成 `Bxx` 编号」的情形。
+#:
+#: ★ 只补**已经核实过**的：那条判据真的在守这条承诺，且它自己带对照。
+#: ⚠️ 这不是「把缺的写成有」——每一条都写了**为什么**，人可以逐条复核；
+#:    判据 `[保证]` ⑦ 守「缺的都在 `S_CONTROL_PLAN` 里」，本表只影响 间接 的计数。
+MANUAL_VIA = {
+    "K7": ("B11", "`B11` 查「倾向完备：0 < propensity <= 1」＋位次敏感 = §K7 的两半"),
+    "D7": ("`[D7]` 判据", "`test_derived_rollback` 是**双向**断言：加了必须变、删了必须回"),
+    "S2": ("`[协议] 65`", "禁词判据：`score/weight/priority/rating` 一律拒收"),
 }
 
 

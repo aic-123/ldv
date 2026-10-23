@@ -7465,6 +7465,12 @@ def test_b_known_answers() -> None:
     fd8 = _run(C.d8_known_answer)
     ok("★ [保证] 合成对照 · §D8 四类离散判定（已知答案：恒定 / 几乎唯一 / 可以当维度）",
        not fd8, "；".join(fd8[:2]) or "三类两两不同，对照成立")
+    fd4 = _run(C.d4_known_answer)
+    ok("★ [保证] 合成对照 · §D4 独立性两档（精确蕴含 / 近似蕴含 / 独立，且两档文案不同）",
+       not fd4, "；".join(fd4[:2]) or "三档两两不同，对照成立")
+    fd3 = _run(C.d3_known_answer)
+    ok("★ [保证] 合成对照 · §D3 预算共享（组合赢了就顶掉单谓词，总数恒 ≤ budget）",
+       not fd3, "；".join(fd3[:2]) or "总数不超预算，组合确实赢过", )
 
 
 def test_guarantee_matrix() -> None:
