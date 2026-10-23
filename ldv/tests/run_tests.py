@@ -7391,7 +7391,7 @@ def test_b_known_answers() -> None:
     """
     from ldv.checks import _controls as C
 
-    def _run(fn) -> list[str]:
+    def _run(fn) -> list[str] | None:
         try:
             return fn()
         except Exception as exc:                 # 对照自己炸了也要**报出来**
@@ -7433,6 +7433,33 @@ def test_b_known_answers() -> None:
     f19 = _run(C.b19_known_answer)
     ok("★ [保证] 合成对照 · B19：坏输入必须红、好输入必须绿、两者不同",
        not f19, "；".join(f19[:2]) or "两态不同，对照成立")
+
+    # 下面 5 条要**真内核**（语料不在 ⇒ 对照返回 `None` ⇒ 如实报跳过，不许当通过）
+    f6 = _run(C.b6_known_answer)
+    ok("★ [保证] 合成对照 · B6：坏输入必须红、好输入必须绿、两者不同",
+       f6 is not None and not f6,
+       "**跳过**：内置语料不在" if f6 is None
+       else ("；".join(f6[:2]) or "两态不同，对照成立"))
+    f8 = _run(C.b8_known_answer)
+    ok("★ [保证] 合成对照 · B8：坏输入必须红、好输入必须绿、两者不同",
+       f8 is not None and not f8,
+       "**跳过**：内置语料不在" if f8 is None
+       else ("；".join(f8[:2]) or "两态不同，对照成立"))
+    f10 = _run(C.b10_known_answer)
+    ok("★ [保证] 合成对照 · B10：坏输入必须红、好输入必须绿、两者不同",
+       f10 is not None and not f10,
+       "**跳过**：内置语料不在" if f10 is None
+       else ("；".join(f10[:2]) or "两态不同，对照成立"))
+    f11 = _run(C.b11_known_answer)
+    ok("★ [保证] 合成对照 · B11：坏输入必须红、好输入必须绿、两者不同",
+       f11 is not None and not f11,
+       "**跳过**：内置语料不在" if f11 is None
+       else ("；".join(f11[:2]) or "两态不同，对照成立"))
+    f15 = _run(C.b15_known_answer)
+    ok("★ [保证] 合成对照 · B15：坏输入必须红、好输入必须绿、两者不同",
+       f15 is not None and not f15,
+       "**跳过**：内置语料不在" if f15 is None
+       else ("；".join(f15[:2]) or "两态不同，对照成立"))
 
 
 def test_guarantee_matrix() -> None:

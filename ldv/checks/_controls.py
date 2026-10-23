@@ -356,7 +356,195 @@ def b19_known_answer() -> list[str]:
                  _tri(b19_progress_guard, "B19", good))
 
 
+# --- 需要**真内核**的四条（B6 / B8 / B10 / B11）---------------------------
+#
+# ⚠️ 为什么这几条必须用真内核：它们探的是**内核自己**的行为
+#    （`record_usage` 会不会把 None 折成记录、`query` 会不会把未展开并进否、
+#     `show` 的位次、插入时的失效范围）—— 假内核只能证明「假内核错了」。
+#
+# ⚠️ 代价：这几条**依赖内置语料**（毫秒级，12 项）。语料不在 ⇒ 返回 `None`
+#    （= **跳过**），由调用方如实报「跳过」，不许当通过。
+
+def _real_kernel(n: int = 12) -> Any:
+    """返回 `(kernel, plugin)`；语料不在 ⇒ `None`。"""
+    from ._fixtures import load, make_builder
+    loaded = load()
+    if loaded is None:
+        return None
+    nodes, edges, _d = loaded
+    ids = sorted(nodes)
+    k, plug = make_builder("keyset", nodes, edges)(ids[:n])
+    return k, plug
+
+
+def _leaky_kernel_class() -> Any:
+    """B8 的**坏输入**：插入之后顺手动一个路径外的方向（失效扩散到锥外）。
+
+    与 `test_injections._LeakyKernel` 同形 —— 这里另存一份是为了不让
+    `checks/` 反向依赖 `tests/`（那是分层倒挂）。
+    """
+    from ..core.kernel import Kernel
+
+    class Leaky(Kernel):
+        def insert(self, item_id: str, item: Any = None):  # type: ignore[override]
+            path = super().insert(item_id, item)
+            pathset = set(path)
+            for d in self.all_directions():
+                if d.did not in pathset and (d.parent is None or d.parent not in pathset):
+                    self._members.setdefault(d.did, set()).add(item_id)  # noqa: SLF001
+                    break
+            return path
+
+    return Leaky
+
+
+def b6_known_answer() -> list[str] | None:
+    """B6：`record_usage(d, {"outcome": None})` **不许**返回记录（那是「没有观测」）。
+
+    坏输入：把 `record_usage` 换成「把 None 折成 0 分记录」⇒ B6 必须红。
+    """
+    from ..core.interfaces import WeightedRecord
+    from .contract import b6_signal_not_collapsed
+
+    got = _real_kernel()
+    if got is None:
+        return None
+    k, plug = got
+
+    def _folding(d: Any, rec: dict) -> Any:
+        # 坏法：**把「没观测到使用」折成一条 0 分记录** —— 这正是 arena 那条
+        # 「0 和没有分不开」的形态。
+        return WeightedRecord(did=d.did,
+                              outcome=0.0 if rec.get("outcome") is None
+                              else float(rec["outcome"]),
+                              propensity=1.0)
+
+    k.record_usage = _folding                        # type: ignore[assignment]
+    bad = _tri(b6_signal_not_collapsed, "B6", k, plug)
+
+    got2 = _real_kernel()
+    assert got2 is not None
+    k2, plug2 = got2
+    good = _tri(b6_signal_not_collapsed, "B6", k2, plug2)
+    return _pair("B6 None 被折成记录", bad, good)
+
+
+def b8_known_answer() -> list[str] | None:
+    """B8：插入 x 的失效范围 ⊆ `Cone(x)`。
+
+    坏输入：`_LeakyKernel`（插入后顺手动一个路径外方向）⇒ B8 必须红。
+    """
+    from ..core.kernel import Kernel
+    from ..plugins.keyset import KeysetPlugin
+    from .structure import b8_invalidation_local
+
+    got = _real_kernel()
+    if got is None:
+        return None
+    from ._fixtures import items as _items
+    loaded = __import__("ldv.checks._fixtures", fromlist=["load"]).load()
+    assert loaded is not None
+    nodes_d, _edges, _d = loaded
+    ids = sorted(nodes_d)
+    its = _items(nodes_d)
+    leaky = _leaky_kernel_class()
+
+    def _make(cls: Any):
+        def build() -> Any:
+            plug = KeysetPlugin()
+            k = cls(plug, dict(its))
+            k.build(plug.merge([]))
+            return k
+        return build
+
+    bad = _tri(b8_invalidation_local, "B8", _make(leaky), ids)
+    good = _tri(b8_invalidation_local, "B8", _make(Kernel), ids)
+    return _pair("B8 失效越界", bad, good)
+
+
+def b10_known_answer() -> list[str] | None:
+    """B10：`未展开` 与 `否` 在输出里必须长得不一样。
+
+    坏输入：`query` 返回「状态=否，但 unexpanded 非空」—— 两种去向被并掉了。
+    """
+    from ..core.kernel import QueryResult
+    from ..core.tri import Tri as _Tri
+    from .semantics import b10_three_states_separable
+
+    got = _real_kernel()
+    if got is None:
+        return None
+    k, plug = got
+    k.query = lambda q: QueryResult(status=_Tri.NO, unexpanded=("D1", "D2"))  # type: ignore[assignment]
+    bad = _tri(b10_three_states_separable, "B10", k, plug)
+
+    got2 = _real_kernel()
+    assert got2 is not None
+    k2, plug2 = got2
+    good = _tri(b10_three_states_separable, "B10", k2, plug2)
+    return _pair("B10 未展开被并进否", bad, good)
+
+
+def b11_known_answer() -> list[str] | None:
+    """B11：展示位次要能让倾向不同。
+
+    坏输入：`show` 只回 1 个方向 ⇒ 位次敏感**判不出来** ⇒ 必须红
+    （不是「跳过」—— 有 ≥2 个方向却说展示只有 1 个，那是坏的）。
+    """
+    from .semantics import b11_propensity_complete
+
+    got = _real_kernel()
+    if got is None:
+        return None
+    k, plug = got
+    k.show = lambda yes: tuple(yes)[:1]              # type: ignore[assignment]
+    bad = _tri(b11_propensity_complete, "B11", k, plug)
+
+    got2 = _real_kernel()
+    assert got2 is not None
+    k2, plug2 = got2
+    good = _tri(b11_propensity_complete, "B11", k2, plug2)
+    return _pair("B11 位次塌成 1", bad, good)
+
+
+def b15_known_answer() -> list[str] | None:
+    """B15：换插入顺序 ⇒ 树同构。
+
+    坏输入：`_LeakyKernel` —— 它的失效落点**依赖插入顺序** ⇒ 换序不同构 ⇒ 红。
+    （顺带说明：同一条坏内核同时让 B8 与 B15 红，这**不是**重复 ——
+      两条判的是两件事：失效范围、顺序无关性。）
+    """
+    from ..core.kernel import Kernel
+    from ..plugins.keyset import KeysetPlugin
+    from ._fixtures import items as _items
+    from .structure import b15_reproducible
+
+    got = _real_kernel()
+    if got is None:
+        return None
+    loaded = __import__("ldv.checks._fixtures", fromlist=["load"]).load()
+    assert loaded is not None
+    nodes_d, _edges, _d = loaded
+    ids = sorted(nodes_d)[:12]
+    its = _items(nodes_d)
+    leaky = _leaky_kernel_class()
+
+    def _make(cls: Any):
+        def build() -> Any:
+            plug = KeysetPlugin()
+            k = cls(plug, dict(its))
+            k.build(plug.merge([]))
+            return k
+        return build
+
+    bad = _tri(b15_reproducible, "B15", _make(leaky), ids)
+    good = _tri(b15_reproducible, "B15", _make(Kernel), ids)
+    return _pair("B15 换序不同构", bad, good)
+
+
 ALL = (b4_known_answer, b7_known_answer, b9_known_answer,
        b12_known_answer, b13_known_answer, b14_known_answer,
        b2_known_answer, b3_known_answer, b5_known_answer,
-       b16_known_answer, b19_known_answer)
+       b16_known_answer, b19_known_answer,
+       b6_known_answer, b8_known_answer, b10_known_answer,
+       b11_known_answer, b15_known_answer)
