@@ -113,7 +113,7 @@ def b11_propensity_complete(kernel: Any, plugin: Any, rep: Report) -> None:
         #       所以它**不会**改那份基线；它只在「一个方向」的边界语料上生效
         #       （实测 `edge-single`：1 个方向 ⇒ 原来报红）。
         if len(kernel.all_directions()) < 2:
-            rep.add("B11", "倾向完备 + 位置敏感", Tri.UNEXPANDED,
+            rep.add("B11", "倾向完备 + 位置敏感（§K7：记录必须带倾向权重）", Tri.UNEXPANDED,
                     f"`kernel` 只有 {len(kernel.all_directions())} 个方向 ⇒ "
                     f"展示列表最多 1 项 ⇒ 位次敏感**判不了**"
                     f"（判不了 ≠ 红：红是说实现坏了）"
@@ -144,7 +144,7 @@ def b11_propensity_complete(kernel: Any, plugin: Any, rep: Report) -> None:
         rep.add("B11", "倾向完备", Tri.UNEXPANDED, "这一轮没有产生任何使用记录")
         return
     total = len(kernel.usage)
-    rep.add("B11", "倾向完备 + 位置敏感",
+    rep.add("B11", "倾向完备 + 位置敏感（§K7：记录必须带倾向权重）",
             Tri.NO if bad else Tri.YES,
             "；".join(bad[:2]) if bad
             else f"{total}/{total} 条带倾向；位次 1→{_p(kernel, shown, 0)}，"

@@ -258,7 +258,7 @@ def test_kernel() -> None:
     ok("根是外生的", k.root.origin == ORIGIN_EXOGENOUS)
     ok("根没有父", k.root.parent is None)
     ok("根秩为 1", k.root.rank == 1)
-    ok("秩越大越细（子比父大 1）",
+    ok("秩越大越细（子比父大 1，§K5）",
        all(c.rank == k.direction(d).rank + 1
            for d in [x.did for x in k.all_directions()]
            for c in k.children_of(k.direction(d))))
@@ -280,7 +280,7 @@ def test_kernel() -> None:
     ok("§K3 支撑锥 == 持有它的方向集合（不是「插入时走过的路径」）",
        _cone_invariant_bad(k) == [],
        f"违约 {len(_cone_invariant_bad(k))} 项，例 {_cone_invariant_bad(k)[:1]}")
-    ok("账本只增不改", k.ledger.verify_append_only() == [])
+    ok("账本只增不改（§K4：失效只追加状态，不改历史）", k.ledger.verify_append_only() == [])
     ok("方向 id 按数值排（D3 在 D12 前）",
        sorted(["D3", "D12", "D100"], key=_did_order) == ["D3", "D12", "D100"])
 
@@ -4687,7 +4687,7 @@ def test_candidate_dimensions() -> None:
             for k, n in nodes.items()}
     rf = RQ.candidate_dimensions(fake)
     row_c = {x["字段"]: x for x in rf["候选维度"]}.get("恒定测试")
-    ok("★ [候选维度] ㊡ 恒定字段（只有 1 种取值）⇒ 标「分不开」",
+    ok("★ [候选维度] ㊡ 恒定字段（只有 1 种取值）⇒ 标「分不开」（§D8 四类之一）",
        row_c is not None and "恒定" in row_c["读数"] and row_c["取值数"] == 1,
        f"{row_c['读数'] if row_c else '（没列出来）'}｜取值数 {row_c['取值数'] if row_c else '-'}")
 
@@ -4762,7 +4762,7 @@ def test_protocol() -> None:
                          "nodes": [{"did": "D1", "rating": 0.9}]},
                         frm="A", fp="f" * 16)
     okk, why = PRT.check_envelope(nasty)
-    ok("★ [协议] 65 嵌套禁词字段 ⇒ 拒收（两个系统之间也不排序 / 不打分）",
+    ok("★ [协议] 65 嵌套禁词字段 ⇒ 拒收（两个系统之间也不排序 / 不打分，§S2）",
        okk is False and "weight" in why and "rating" in why,
        f"拒收理由：{why[:70]}")
 
@@ -7303,6 +7303,80 @@ def test_service_consumption() -> None:
             srv.shutdown()
             srv.server_close()
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_derived_rollback() -> None:
+    """★ [D7] 派生维度**可完全回退**：删掉 sidecar ⇒ 与「从无此文件」逐字相同。
+
+    §D7 的判据原来只有**探针**（`outputs/_probe_d7_rollback.py`，不进退出码）——
+    保证矩阵 2026-10-23 把它点成「零判据」，这里补成判据。
+
+    ★★ 三段都要：
+        ① 从无 derived            ⇒ 基线签名
+        ② 加一份 sidecar 再建      ⇒ **必须变**（否则「删了没变」可能只是「加了也没变」= 空转）
+        ③ 删掉 sidecar 再建        ⇒ **必须与 ① 逐字相同**
+
+    ⚠️ 它同时压着「缓存不串味」那条：同进程三次建树，若 `loader` 命中返回同一个
+       可变 Node，② 的键会**留在** ③ 里 ⇒ ③ 红（`_probe_d7_rollback.py` 第一遍就栽在这）。
+    """
+    import json as _json
+    import os
+    import shutil
+    import tempfile
+    from pathlib import Path
+
+    import entry as E
+    from ldv.checks._fixtures import find_corpus
+
+    src = find_corpus()
+    if src is None:
+        ok("★ [D7] 派生维度可完全回退（**跳过**：找不到语料）", True, "0")
+        return
+
+    def _sig(k) -> tuple:
+        return tuple((d.did, d.parent, d.rank, tuple(sorted(k.members_of(d))))
+                     for d in k.all_directions())
+
+    tmp = Path(tempfile.mkdtemp(prefix="ldv-d7-"))
+    saved = os.environ.get("LDV_CORPUS")
+    try:
+        corpus = tmp / "corpus"
+        (corpus / "nodes").mkdir(parents=True)
+        for f in src.glob("*.md"):
+            shutil.copy2(f, corpus / "nodes" / f.name)
+        os.environ["LDV_CORPUS"] = str(corpus)      # ⚠️ 下面 finally 里还原
+
+        a0 = E.App(None)
+        s0 = _sig(a0.kernels["keyset"])
+        (corpus / "derived").mkdir()
+        ids = sorted(a0.nodes)[:8]
+        (corpus / "derived" / "probe.json").write_text(
+            _json.dumps({"_meta": {"field": "probe"},
+                         "values": {i: "v" for i in ids}}, ensure_ascii=False),
+            encoding="utf-8")
+        a1 = E.App(None)
+        s1 = _sig(a1.kernels["keyset"])
+        (corpus / "derived" / "probe.json").unlink()
+        a2 = E.App(None)
+        s2 = _sig(a2.kernels["keyset"])
+    finally:
+        if saved is None:
+            os.environ.pop("LDV_CORPUS", None)
+        else:
+            os.environ["LDV_CORPUS"] = saved
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    ok("★ [D7] 派生维度**可完全回退**：删 sidecar ⇒ 与「从无此文件」逐字相同",
+       s1 != s0 and s2 == s0,
+       f"加 sidecar 后结构变了={s1 != s0}（**必须为真**，否则空转）"
+       f"｜删回后逐字相同={s2 == s0}｜方向数 {len(s0)}/{len(s1)}/{len(s2)}")
+
+    # ⚠️ **判据自己不许留全局状态**：`LDV_CORPUS` 没还原 ⇒ 之后所有判据读到
+    #    另一个语料（实测过 748 → 660 的事故）⇒ 这条自己验一次。
+    _restored = (os.environ.get("LDV_CORPUS") == saved) if saved is not None \
+        else ("LDV_CORPUS" not in os.environ)
+    ok("★ [D7] 判据不留全局状态：`LDV_CORPUS` 已还原",
+       _restored, f"还原后 = {os.environ.get('LDV_CORPUS')!r}")
 
 
 def test_guarantee_matrix() -> None:
@@ -10168,7 +10242,7 @@ def main() -> int:
                test_reusable_build, test_lock_scope,
                test_service_shell, test_service_failure_paths,
                test_incremental_random, test_service_consumption,
-               test_guarantee_matrix,
+               test_derived_rollback, test_guarantee_matrix,
                test_predicates,
                test_reflect,
                test_memory_index,

@@ -132,11 +132,15 @@ class App:
         _n = root.parent.name if root.name == "nodes" else root.name
         self.corpus_name = "内置语料（ldv/corpus）" if _n == "corpus" else _n
 
-        # ★ 派生维度：`_data/<corpus>/derived/*.json`（`{"_meta":…, "values":{id: 值}}`）
+        # ★ 派生维度：`<语料>/derived/*.json`（`{"_meta":…, "values":{id: 值}}`）
         #   ⚠️ **不写回材料**：`_data/*` 是所有语料基线的输入，往节点里加字段会让
         #      键集变 ⇒ 树变 ⇒ 所有基线一起漂。派生量只在这一层叠加，删文件即回到原状。
         self.derived: dict[str, str] = {}
-        ddir = Path(root).parent / "derived"
+        # ⚠️ `find_corpus()` 对**内置语料**返回 `nodes/`，对**外部语料**返回语料根
+        #    ⇒ 不能一律 `.parent`（2026-10-23 实测：外部语料的 sidecar 会去
+        #    `_data/derived` 找，**永远找不到且静默跳过** ⇒ 派生维度对外部语料全失效）。
+        _croot = Path(root).parent if Path(root).name == "nodes" else Path(root)
+        ddir = _croot / "derived"
         if ddir.is_dir():
             for f in sorted(ddir.glob("*.json")):
                 try:

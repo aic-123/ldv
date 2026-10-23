@@ -270,7 +270,7 @@ def b13_rank_well_founded(kernel: Any, rep: Report) -> None:
                        "（§6.1：子.witness = (父,)）")
 
     mx_fan = max(fanout.values()) if fanout else 0
-    rep.add("B13", "良基树：方向图无环、无自环、每方向恰好一个父",
+    rep.add("B13", "良基树（§K5）：方向图无环、无自环、每方向恰好一个父",
             Tri.NO if bad else Tri.YES,
             f"{len(bad)} 处违例：{bad[:2]}" if bad
             else f"{len(dirs)} 个方向全部良基；扇出 max {mx_fan}"
