@@ -9410,6 +9410,47 @@ def test_motivation() -> None:
            f"{n_calls} 次调用｜终态 {len(k6.all_directions())} 个方向"
            f"｜剩余 {r6['剩余待展开'] if r6 else '?'}")
 
+    # ⑫ **账本两类进清单**（2026-10-23）—— `滞留` / `根覆盖之外` 原来**根本没被读过**
+    #    （`graded()` 只收 矛盾/展开失败/待展开）⇒ 内核账本记着，反思层不看 = 漏。
+    #    ⚠️ 内置语料上两类都是 **0**（三个方向实测全 0）⇒ 拿完整树测会**空转**
+    #       （「空转与通过长得一模一样」）。能确定性造出来的是**维护路径**：
+    #       `sequence` 先建 6 ⇒ 滞留 16；`reach` 先建 2 ⇒ 根覆盖之外 30。
+    if loaded3 is None:
+        ok("★ [动机] ⑫ 账本两类进清单（**跳过**：内置语料加载不了）", True, "0")
+        ok("★ [动机] ⑫′ 未分档来源必须炸（**跳过**：内置语料加载不了）", True, "0")
+    else:
+        from ldv.checks._fixtures import build_incremental as _binc
+        from ldv.checks._fixtures import make_builder as _mkb
+
+        _n3, _e3, _ = loaded3
+        _ids = sorted(_n3)
+        k_stay = _binc(_mkb("sequence", _n3, _e3), _n3, _ids[:6], _ids[6:])
+        k_oos = _binc(_mkb("reach", _n3, _e3), _n3, _ids[:2], _ids[2:])
+        g_stay, g_oos = RF.graded(k_stay), RF.graded(k_oos)
+        stay_later = [r for r in g_stay["可延后"] if r.get("来源") == "滞留"]
+        oos_must = [r for r in g_oos["必须"] if r.get("来源") == "越界"]
+        n_stay = sum(r["项数"] for r in stay_later)
+        n_oos = sum(r["项数"] for r in oos_must)
+        ok("★ [动机] ⑫ 账本两类**进清单且分档正确**（滞留⇒可延后 / 越界⇒必须）",
+           n_stay == k_stay.stats()["滞留"] and n_oos == k_oos.stats()["根覆盖之外"]
+           and n_stay > 0 and n_oos > 0
+           and not [r for r in g_stay["必须"] if r.get("来源") == "滞留"]
+           and not [r for r in g_oos["可延后"] if r.get("来源") == "越界"]
+           # 聚合：**不逐项列**（滞留 16 项 ⇒ 2 行；越界 30 项 ⇒ 1 行）
+           and len(stay_later) < n_stay and len(oos_must) < n_oos,
+           f"滞留 {n_stay} 项 ⇒ {len(stay_later)} 行（可延后）｜"
+           f"越界 {n_oos} 项 ⇒ {len(oos_must)} 行（必须）")
+
+        # ★ 反向对照：**未知来源不许兜成「可忽略」**——那正是「漏」的产生方式
+        try:
+            RF.significance({"来源": "某个还没分档的新来源"})
+            raised = False
+        except ValueError:
+            raised = True
+        ok("★ [动机] ⑫′ 未分档来源**当场炸**，不静默降成「可忽略」（反向对照）",
+           raised and RF.significance({"成员数": 1, "子方向数": 0}) == "可忽略",
+           f"未知来源 raise={raised}｜「m≤1」形状仍判可忽略=True")
+
 
 def test_no_unsourced_strings() -> None:
     """★ [不产内容] 查询输出里**每个字符串都能指回材料**（§S1）。
