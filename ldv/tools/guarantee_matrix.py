@@ -130,6 +130,26 @@ def gaps(cov: dict[str, list[str]] | None = None) -> list[str]:
     return [c for c, hits in cov.items() if not hits]
 
 
+#: 「这条判据**自称**带对照」的标记 —— 只认这三种写法
+#: （「对照」单独太宽：56 条里有一半是「对照实现」「对照读」这类别的意思）
+CONTROL_MARKS = ("反向对照", "合成对照", "已知答案")
+
+
+def controls(cov: dict[str, list[str]] | None = None) -> dict[str, list[str]]:
+    """承诺 ⇒ **自称带对照**的判据标签（**读数，不进退出码**）。
+
+    ★★ 为什么只是读数：它读的是**标签里有没有写「对照」**，
+       **不是**「那条对照真的会红」。后者只有真去回退源码才知道。
+       ⇒ 它可以指出「哪 40 条只有正着判」，**不能**证明「这 11 条反着判就对了」。
+
+    ⚠️ 它**低估**：一条判据带了对照却没在标签里写，这里看不见 ——
+       和「判了但没写编号」是同一个毛病，修法也一样（把话说进标签）。
+    """
+    cov = coverage() if cov is None else cov
+    return {cid: [s for s in hits if any(m in s for m in CONTROL_MARKS)]
+            for cid, hits in cov.items()}
+
+
 def table(cov: dict[str, list[str]], status: dict[str, str] | None = None
           ) -> str:
     status = status or {}
@@ -227,6 +247,34 @@ def render(cov: dict[str, list[str]] | None = None) -> str:
                  "两种情况都要人看一遍：前者要补判据，后者要补标签 —— **两种都不许留在暗处**。"]
     else:
         head.append("（无）")
+
+    ctl = controls(cov)
+    n_with = sum(1 for v in ctl.values() if v)
+    head += [
+        "",
+        "## 反向对照覆盖（**读数**，不进退出码）",
+        "",
+        "「有判据」只说明**正着判过**。要说明判据**会红**，得有一条**反着判**的对照",
+        "（回退真源码 / 塞一个已知答案 / 人造一个坏输入）。",
+        "",
+        f"合计 **{len(cov)}** 条承诺｜**至少一条判据自称带对照 {n_with}**"
+        f"｜**只有正着判 {len(cov) - n_with}**",
+        "",
+        "| 承诺 | 自称带对照的判据 |",
+        "|---|---|",
+    ]
+    for cid, hits in ctl.items():
+        head.append(f"| `{cid}` | "
+                    f"{'；'.join(h[:30] for h in hits[:2]) if hits else '—'} |")
+    head += [
+        "",
+        "⚠️ **这是声明层的读数**：它读的是「标签里写没写『对照』」，",
+        "**不是**「那条对照真的会红」。后者只有真去回退源码才知道 ——",
+        "本仓库做过这件事的有 `[动机]` ⑫′/⑬、`[反思]` ㉔、服务壳 ⑯–⑲、`[增量]` ①′、`[D7]`。",
+        "",
+        "⚠️ 它也**低估**：带了对照却没在标签里写的，这里看不见。",
+        "和「判了但没写编号」是同一个毛病 —— **把话说进标签**。",
+    ]
     return "\n".join(head) + "\n"
 
 

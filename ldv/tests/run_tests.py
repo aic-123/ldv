@@ -7433,6 +7433,18 @@ def test_guarantee_matrix() -> None:
        f"文件 {'存在' if on_disk else '**缺失**'}｜逐字相同={on_disk == fresh}"
        f"｜差异 {abs(len(on_disk) - len(fresh))} 字节")
 
+    # ⑤ **读数**的形状守卫（不守数值 —— 读数不进退出码）
+    #    「有判据」只说明正着判过；要说明判据会红，得有一条反着判的。
+    #    这里只守三件事：每条承诺都有条目 / 两端都不极端 / 条目里的标签确实含标记。
+    ctl = GM.controls(cov)
+    n_with = sum(1 for v in ctl.values() if v)
+    consistent = all(all(any(m in s for m in GM.CONTROL_MARKS) for s in hits)
+                     for hits in ctl.values())
+    ok("★ [保证] ⑤ 反向对照覆盖是**读数**（守形状：条目齐、两端不极端、标记自洽）",
+       len(ctl) == len(cov) and 0 < n_with < len(cov) and consistent,
+       f"承诺 {len(ctl)} 条｜自称带对照 {n_with}｜只有正着判 {len(ctl) - n_with}"
+       f"｜标记自洽={consistent}")
+
 
 def _spec_mechanical_mismatch(doc: dict, which: str, nodes, edges) -> list[str]:
     """committed 的 `view_spec.json` 里**机械那几栏**与生成器算出来的差在哪。
