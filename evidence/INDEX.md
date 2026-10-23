@@ -2,7 +2,7 @@
 
 > 仓库里每一处「实测 / 留档」的引用都指向这里的文件。**不是宣称，是实体。**
 
-共 **161** 个文件。下表按文件名排；「被谁引用」是仓库内引用它的文档。
+共 **163** 个文件。下表按文件名排；「被谁引用」是仓库内引用它的文档。
 
 | 文件 | 大小 | 被谁引用 |
 |---|---|---|
@@ -130,6 +130,7 @@
 | `_probe_service_shell.py` | 7 KB | docs/服务化设计.md |
 | `_probe_skip_solvable.out.txt` | 3 KB | docs/分层方向视图-抽象层.md |
 | `_probe_t1_falsifiability.py` | 2 KB | docs/形式化断言集.md |
+| `_probe_usage_snapshot_reverse.py` | 7 KB | docs/插件契约.md |
 | `_probe_usage_wiring.py` | 6 KB | README.md |
 | `_probe_view_growth.py` | 2 KB | docs/分层方向视图-多层抽象-前作核验.md、ldv/MEASUREMENTS.md |
 | `_probe_view_size.out.txt` | 1 KB | ldv/MEASUREMENTS.md |
@@ -161,6 +162,7 @@
 | `_四条跳过能不能解.md` | 8 KB | docs/它是怎么长出来的.md |
 | `_总结-四条跳过与外生声明方向.md` | 31 KB | docs/它是怎么长出来的.md |
 | `_恒定的过有多少条.md` | 5 KB | docs/分层方向视图-抽象层.md、docs/它是怎么长出来的.md |
+| `guarantee_gaps.json` | 0 KB | docs/保证矩阵.md |
 | `ldv-待裁定清单.md` | 25 KB | docs/分层方向视图-设计文档.md |
 | `ldv-成熟答案印证.md` | 67 KB | docs/分层方向视图-设计文档.md |
 | `ldv-跨领域-增量报告.md` | 16 KB | docs/外生声明标准.md |

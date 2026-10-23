@@ -243,14 +243,22 @@ class App:
         走 `usage_store.promote`：从**缓冲区**里把这一支提升成正式记录。
         ⚠️ 不在缓冲里的支**不许 promote** —— 否则就是把「翻到了」当成「用了」。
         ⚠️ 没被下钻的方向**不记负信号**（`§K6`：没看见 ≠ 看见了不好）。
+
+        ★ **§I7 在这里被消费**：下钻那一刻 `plugin.record(d)` 的输出随记录落盘。
+          没有它，一条记录只知道「哪个方向有用」，不知道「**那一刻它长什么样**」——
+          而维护会往方向里加项、劈开会造新方向 ⇒ 倾向说的「D5 有用」
+          可能对着一个已经不是当初的 D5。契约见 `docs/插件契约.md`。
+        ⚠️ `record()` 抛异常**直接传播**（与 §I3 / §I4 同策，这一层不静默）。
+        ⚠️ snapshot 只是**留痕**：倾向计算不读它（读了就是使用记录驱动结构，§K9）。
         """
         if self._usage_dir is None:
             return None
         rec = k.record_usage(d, {"outcome": 1.0})
         if rec is None:
             return None
+        snap = json.dumps(k.plugin.record(d), ensure_ascii=False, sort_keys=True)
         out = usage_store.promote(self._usage_dir, qfp=self._last_qfp, did=d.did,
-                                  propensity=rec.propensity)
+                                  propensity=rec.propensity, snapshot=snap)
         if out.get("written"):
             self._last_shown = [x for x in self._last_shown if x != d.did]
         return out

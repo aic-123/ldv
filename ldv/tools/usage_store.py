@@ -7,17 +7,38 @@
     一旦进去就是「使用记录驱动结构」，直接撞 `§K9`
     （可复现性与可解释性同时丢，而且是很久以后才发现）。
 
-目录：`<语料>/usage/<qfp8>-<did>.md`，front matter 六个字段：
+目录：`<语料>/usage/<qfp8>-<did>.md`，front matter 字段：
 
     id          记录 id（= 文件名去扩展名）
     did         方向 id
     outcome     +1 = 有用（被下钻）；**不记负信号**（没被下钻 ≠ 没用）
     propensity  曝光位次折算的倾向权重（内核填，不由本模块算）
     qfp         查询指纹（哪一次查询）
+    at          时间戳（遗忘的输入；缺 ⇒ 不衰减，不猜）
     note        人可读的一句话
+    snapshot    §I7 `record(方向)` 的 JSON —— **可空**，见下
 
 **去重键 = `(qfp, did)`**：同一查询对同一方向只记一次 ——
 重复下钻不叠加（叠加等于把「多看了一眼」当成「更有用」）。
+
+---
+
+## `snapshot` 是什么，为什么要有（§I7 的消费者）
+
+一条使用记录以前只知道「**哪个方向**被下钻过」。缺的那一半是：
+**那一刻这个方向长什么样**（键集 / 锚点 / 模式是什么）。没有它，
+
+    倾向说「D5 有用」     ⇒  D5 现在的内容可能与记这条时**已经不是一回事**
+      （维护会往方向里加项、劈开会造新方向）
+
+⇒ `snapshot` = 下钻那一刻 `plugin.record(d)` 的输出（§I7），
+   随记录一起落盘。它是**可空**的：没接 §I7 的调用方（测试、合成记录）
+   不写这一行，`load()` 读到旧文件也照常解析（`snapshot` 为 `""`）。
+
+⚠️ snapshot 是**留痕**，不是**输入**：倾向计算只读 `outcome / propensity / at`，
+   不读它。它改变不了任何次序 —— 改了就是「使用记录驱动结构」（§K9）。
+⚠️ `record()` 抛异常**直接传播**（与 §I3 / §I4 同策）：这一层不许静默。
+   契约全文见 `docs/插件契约.md`。
 """
 from __future__ import annotations
 
@@ -52,7 +73,7 @@ HALF_LIFE_DAYS = 30.0
 #: 短期 = 缓冲（显式：入口会报「还剩 N 支待看」）；长期 = 正式（隐性：不再逐条呈现）。
 SHORT_TERM = "短期显性记忆"
 LONG_TERM = "长期隐性记忆（稳定区）"
-FIELDS = ("id", "did", "outcome", "propensity", "qfp", "note")
+FIELDS = ("id", "did", "outcome", "propensity", "qfp", "note", "at", "snapshot")
 
 
 def _dir(corpus_dir: Any) -> Path:
@@ -69,8 +90,13 @@ def _safe(s: str) -> str:
 
 
 def append(corpus_dir: Any, *, did: str, outcome: float, propensity: float,
-           qfp: str, note: str = "", at: str | None = None) -> dict:
-    """追加一条记录。**同 `(qfp, did)` 已存在 ⇒ 不写、不覆写、不报错。**"""
+           qfp: str, note: str = "", at: str | None = None,
+           snapshot: str = "") -> dict:
+    """追加一条记录。**同 `(qfp, did)` 已存在 ⇒ 不写、不覆写、不报错。**
+
+    `snapshot`（可空）= §I7 `record(方向)` 的 JSON，一行写完
+    （`sort_keys` ⇒ 确定性；**不许含换行**，否则 front matter 会断）。
+    """
     d = _dir(corpus_dir)
     d.mkdir(parents=True, exist_ok=True)
     name = f"{_qfp8(qfp)}-{_safe(did)}.md"
@@ -81,6 +107,7 @@ def append(corpus_dir: Any, *, did: str, outcome: float, propensity: float,
     # `at` 是**遗忘的输入**：没有它就只能不衰减（见 decay_weight）。
     # 判据要固定 now ⇒ 允许注入。
     at = at or datetime.now().isoformat(timespec="microseconds")
+    snap_line = f"snapshot: {snapshot}\n" if snapshot else ""
     body = (
         "---\n"
         f"id: {p.stem}\n"
@@ -90,9 +117,12 @@ def append(corpus_dir: Any, *, did: str, outcome: float, propensity: float,
         f"qfp: {qfp}\n"
         f"at: {at}\n"
         f"note: {note}\n"
+        f"{snap_line}"
         "---\n"
         f"一次使用记录：查询 {qfp} 展示了方向 {did}，随后它被下钻（outcome = 有用）。\n"
         "⚠️ 没被下钻的方向**不产记录** —— 「没看见」与「看见了不好」不是一回事。\n"
+        + ("⚠️ `snapshot` 是这一刻的方向状态（§I7）—— 只留痕，不参与倾向计算。\n"
+           if snapshot else "")
     )
     # ⚠️ 显式 newline="\n"：Windows 上默认会把 \n 写成 \r\n，而仓库规定 LF。
     io.open(p, "w", encoding="utf-8", newline="\n").write(body)
@@ -120,7 +150,9 @@ def load(corpus_dir: Any) -> list[dict]:
             out.append({"did": row["did"], "outcome": float(row["outcome"]),
                         "propensity": float(row.get("propensity") or 1.0),
                         "note": row.get("note", ""), "qfp": row.get("qfp", ""),
-                        "at": row.get("at", ""), "file": p.name})
+                        "at": row.get("at", ""), "file": p.name,
+                        # §I7 快照：**可空** —— 旧文件没有这一行 ⇒ `""`
+                        "snapshot": row.get("snapshot", "")})
         except Exception:                                    # noqa: BLE001
             bad.append(p.name)
     if bad:
@@ -277,11 +309,13 @@ def stage_load(corpus_dir: Any) -> list[dict]:
 
 
 def promote(corpus_dir: Any, *, qfp: str, did: str, propensity: float,
-            note: str = "drill") -> dict:
+            note: str = "drill", snapshot: str = "") -> dict:
     """缓冲 → 正式：把 `did` 标成 outcome = +1，并从这批的 `shown` 里移除。
 
     ★★ **不在缓冲里的 did 不许 promote** —— 否则就是把「翻到了」当成「用了」。
        这是与「不合成反馈」同一条线：信号必须来自真实动作。
+
+    `snapshot` 透传给 `append`（§I7 的方向状态留痕）。
     """
     sp = _stage_dir(corpus_dir) / f"{_qfp8(qfp)}.md"
     if not sp.exists():
@@ -292,7 +326,7 @@ def promote(corpus_dir: Any, *, qfp: str, did: str, propensity: float,
         return {"ok": False, "written": False,
                 "why": "这一支不在这次查询的展示里，不记"}
     out = append(corpus_dir, did=did, outcome=1.0, propensity=propensity,
-                 qfp=qfp, note=note)
+                 qfp=qfp, note=note, snapshot=snapshot)
     rest = [x for x in cur["shown"] if x != did]
     if rest:
         stage(corpus_dir, qfp=qfp, shown=rest, note="（已 promote 一支，剩余）")

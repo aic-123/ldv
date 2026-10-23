@@ -9923,6 +9923,108 @@ def test_usage_wiring() -> None:
         _sh.rmtree(tmp, ignore_errors=True)
 
 
+def test_usage_snapshot() -> None:
+    """★ [接入] ⑨ **§I7 接线**：每条使用记录带上「这一刻的方向状态」（2026-10-23）。
+
+    §I7 `record(方向)` 原来**全仓零调用方** —— `validate_plugin` 要求这八个方法在，
+    但没有任何一处调用它。这五条把它接上：下钻那一刻 `plugin.record(d)` 的输出
+    随记录落盘（`usage_store` 的 `snapshot` 字段）。
+
+    ① 下钻 ⇒ 文件里有 `snapshot` 行，load 读回、JSON 可解析、`kind` 在
+    ② 两条记录的 snapshot **各对各的 did** —— 防「串方向」
+    ③ snapshot 与现场重算的 `plugin.record(d)` **逐字相同**（同源，不是另算一份）
+    ④ 旧记录（没有 snapshot 行）load 不炸、snapshot 为空 —— 向后兼容
+    ⑤ ★ snapshot 不是**输入**：同 (did, outcome, propensity, at)，
+       带快照与不带快照两份语料的倾向**逐字相同** —— 否则留痕就在驱动结构（§K9）
+
+    ⚠️ 反向对照（回退 `entry.py` 的接线 ⇒ ① 必须红）在
+       `evidence/_probe_usage_snapshot_reverse.py`：回退真源码跑一遍太重，
+       按本仓库惯例不放判据里，留档在同目录。
+    ⚠️ 语料必须在含 `_data` 的路径下（`entry.App` 只在那时启用 usage 目录），
+       且跑完**还原 `LDV_CORPUS`** —— 判据不许留全局状态。
+    """
+    import os as _os
+    import shutil as _sh
+    import tempfile as _tf
+    from datetime import datetime as _dt
+
+    import entry as E
+    from ldv.checks._fixtures import find_corpus
+    from ldv.tools import usage_store as US
+
+    builtin = find_corpus()
+    if builtin is None:
+        ok("★ [接入] ⑨ §I7 快照留痕（**跳过**：内置语料不在）", True, "0")
+        return
+    tmp = Path(_tf.mkdtemp(prefix="ldv-snap-"))
+    saved_env = _os.environ.get("LDV_CORPUS")
+    try:
+        nodes = tmp / "_data" / "shop" / "nodes"
+        nodes.mkdir(parents=True)
+        for f in sorted(builtin.glob("*.md")):
+            _sh.copy2(f, nodes / f.name)
+        # ⚠️ 指向 **nodes 目录本身**（外部语料的解析形状：`_data/<名>/nodes`）
+        #   —— 指到语料根会让 `entry.App` 判不出 usage 目录（name != "nodes"）。
+        _os.environ["LDV_CORPUS"] = str(nodes)
+        app = E.App(None)                       # 读 env ⇒ 刚搭的临时语料
+        r = app.query({"require": []})
+        dids = [n["did"] for n in (r.get("nodes") or [])]
+        if len(dids) < 2:
+            ok("★ [接入] ⑨ §I7 快照留痕（**跳过**：语料没有两支可下钻）", True, "0")
+            return
+        d1, d2 = dids[0], dids[1]
+        app.drill(d1)
+        app.drill(d2)
+        rows = {x["did"]: x for x in US.load(tmp / "_data" / "shop")}
+        s1 = (rows.get(d1) or {}).get("snapshot", "")
+        s2 = (rows.get(d2) or {}).get("snapshot", "")
+        try:
+            j1, j2 = (json.loads(s1) if s1 else {}), (json.loads(s2) if s2 else {})
+        except ValueError as e:
+            j1, j2 = {}, {"_err": str(e)}
+        ok("★ [接入] ⑨-① 下钻 ⇒ 记录带上 §I7 快照（JSON 可解析，kind 在）",
+           bool(s1) and bool(j1.get("kind")) and j1.get("did") == d1,
+           f"快照 {len(s1)} 字节｜did={j1.get('did')}｜kind={j1.get('kind')}")
+        ok("★ [接入] ⑨-② 两条记录的快照**各对各的 did**（防串方向）",
+           j1.get("did") == d1 and j2.get("did") == d2,
+           f"{d1}→{j1.get('did')}｜{d2}→{j2.get('did')}")
+
+        k = app.ensure("keyset")
+        live = json.dumps(k.plugin.record(k.direction(d1)),
+                          ensure_ascii=False, sort_keys=True)
+        ok("★ [接入] ⑨-③ 快照与现场重算的 `record(d)` 逐字相同（同源）",
+           live == s1, f"现场 {len(live)} 字节｜落盘 {len(s1)} 字节｜相同={live == s1}")
+
+        # ④ 向后兼容：没有 snapshot 的旧文件照常读
+        US.append(tmp / "_data" / "shop", did="D-OLD", outcome=1.0,
+                  propensity=0.5, qfp="old-q", note="旧格式")
+        old = next((x for x in US.load(tmp / "_data" / "shop")
+                    if x["did"] == "D-OLD"), None)
+        ok("★ [接入] ⑨-④ 旧记录（无 snapshot 行）load 不炸、快照为空",
+           old is not None and old.get("snapshot") == "",
+           f"读回 {old is not None}｜snapshot={old.get('snapshot')!r}")
+
+        # ⑤ snapshot 是留痕不是输入：带与不带，倾向必须逐字相同
+        now = _dt(2026, 10, 23, 12, 0, 0)
+        a_dir = tmp / "_data" / "a"
+        b_dir = tmp / "_data" / "b"
+        for dd in (a_dir, b_dir):
+            dd.mkdir(parents=True)
+        US.append(a_dir, did="D1", outcome=1.0, propensity=0.5, qfp="q",
+                  note="带快照", snapshot='{"kind":"keyset","did":"D1"}')
+        US.append(b_dir, did="D1", outcome=1.0, propensity=0.5, qfp="q",
+                  note="不带快照")
+        ok("★ [接入] ⑨-⑤ 快照不是输入：带与不带 ⇒ 倾向逐字相同（留痕不驱动结构）",
+           US.aged_tendency(a_dir, now=now) == US.aged_tendency(b_dir, now=now),
+           f"带 {US.aged_tendency(a_dir, now=now)}｜不带 {US.aged_tendency(b_dir, now=now)}")
+    finally:
+        if saved_env is None:
+            _os.environ.pop("LDV_CORPUS", None)
+        else:
+            _os.environ["LDV_CORPUS"] = saved_env
+        _sh.rmtree(tmp, ignore_errors=True)
+
+
 def test_forgetting() -> None:
     """★ [遗忘] 两层记忆：短期显性（缓冲，容量淘汰）+ 长期隐性（正式，降权不删）。
 
@@ -10572,7 +10674,8 @@ def main() -> int:
                test_multilevel, test_retriever, test_cli_paths,
                test_never_judged, test_b17_cyclic_corpus,
                test_skip_evidence_table, test_self_corpus,
-               test_growth_autonomy, test_usage_wiring, test_forgetting,
+               test_growth_autonomy, test_usage_wiring, test_usage_snapshot,
+               test_forgetting,
                test_motivation, test_no_unsourced_strings,
                test_out_of_structure, test_verified_external_only):
         # ★ **兜底：外部语料不在 ⇒ 跳过该函数，不崩**（2026-10-19 修 CI）
