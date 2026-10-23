@@ -6959,6 +6959,115 @@ def test_service_shell() -> None:
         serve.Handler._run_sync = orig_run
     srv.shutdown()
 
+def test_service_failure_paths() -> None:
+    """★ [服务壳] **失败路径**判据（2026-10-23，外部审查抓到的三条 + 一条 CI）。
+
+    原来的 ⑧–⑫ 全是 happy path（等价 / 404 / 排队 / FIFO / 跨租户）——
+    **任务抛异常、`--root` 不生效、非法参数、CI 启动方式** 一条都没被判过。
+    这正是「判据在，但它判的那一侧永远不会出错」。
+
+    ① 任务抛异常 ⇒ 该任务进 `error` 终态、名额释放、**同租户下一个任务仍能 done**
+       （原来 `_work` 裸调 `t["_fn"]()` ⇒ 线程直接死 ⇒ `running` 不减 ⇒ 租户永久卡死）
+    ② `--root` **真的换目录**（原来 `args.root` 只进了启动日志）
+    ③ 非法参数 ⇒ **400**（原来 `int("abc")` 抛出去 ⇒ 连接断开，调用方拿不到原因）
+    ④ CI 里每条 `python <路径>.py` 必须写成 `-m`（原来 CI 那条命令 ImportError）
+    """
+    import re
+    import shutil
+    import subprocess
+    import tempfile
+    import threading
+    import time
+    import urllib.error
+    import urllib.request
+    from http.server import ThreadingHTTPServer
+    from pathlib import Path
+
+    import serve
+    from ldv.tools._paths import REPO
+
+    def _get(url: str) -> tuple[int, str]:
+        try:
+            with urllib.request.urlopen(url, timeout=20) as r:
+                return r.status, r.read().decode("utf-8")
+        except urllib.error.HTTPError as e:          # 400/404 会抛，必须接住
+            return e.code, e.read().decode("utf-8")
+
+    def _wait(tt, tid: str, limit: float = 10.0) -> dict:
+        end = time.time() + limit
+        while time.time() < end:
+            st = tt.status(tid)[1]
+            if st.get("status") in ("done", "error"):
+                return st
+            time.sleep(0.01)
+        return tt.status(tid)[1]
+
+    # ── ① 任务抛异常 ⇒ 队列必须继续前进 ────────────────────────────────
+    tt = serve.TaskTable(max_per_tenant=1)
+
+    def _boom():
+        raise RuntimeError("boom")
+
+    tid_bad = tt.submit("t1", _boom)
+    st_bad = _wait(tt, tid_bad)
+    tid_ok = tt.submit("t1", lambda: (200, "ok"))
+    st_ok = _wait(tt, tid_ok)
+    ok("★ [服务壳] ⑯ **任务抛异常不带走队列**：error 终态 + 同租户下一个任务仍 done",
+       st_bad.get("status") == "error" and st_bad.get("code") == 500
+       and st_ok.get("status") == "done" and tt.running.get("t1", 0) == 0,
+       f"异常任务 {st_bad.get('status')}/{st_bad.get('code')}"
+       f"｜后续任务 {st_ok.get('status')}｜running={tt.running.get('t1', 0)}")
+
+    # ── ② `--root` 生效 + ③ 非法参数 ⇒ 400（同一个 server 上验）─────────
+    tmp = Path(tempfile.mkdtemp(prefix="ldv-root-"))
+    orig_root = serve.Handler.root
+    srv = None
+    try:
+        (tmp / "only-here").mkdir()
+        (tmp / "only-here" / "view_spec.json").write_text("{}", encoding="utf-8")
+        serve.Handler.root = tmp                      # ← 与 `main()` 同一处赋值
+        srv = ThreadingHTTPServer(("127.0.0.1", 0), serve.Handler)
+        port = srv.server_address[1]
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        base = f"http://127.0.0.1:{port}"
+
+        st_r, body_r = _get(base + "/")
+        ok("★ [服务壳] ⑰ **`--root` 真的换目录**：列出租户来自指定目录",
+           st_r == 200 and "only-here" in body_r and "pypi-deps" not in body_r,
+           f"状态 {st_r}｜租户列表 {body_r[:80]}")
+
+        st_p, body_p = _get(base + "/only-here/run?holdout=abc")
+        st_p2, body_p2 = _get(base + "/only-here/run?plugin=nope")
+        ok("★ [服务壳] ⑱ **非法参数 ⇒ 400**（不是断连、不是 500）",
+           st_p == 400 and "holdout" in body_p
+           and st_p2 == 400 and "plugin" in body_p2,
+           f"holdout=abc ⇒ {st_p}｜plugin=nope ⇒ {st_p2}")
+    finally:
+        serve.Handler.root = orig_root                # ★ 必须还原，否则后续判据读错目录
+        if srv is not None:
+            srv.shutdown()
+            srv.server_close()
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    # ── ④ CI 里每条 `python <路径>.py` 必须写成 `-m` ────────────────────
+    ci = (REPO / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    bad_cmds = []
+    for ln in ci.splitlines():
+        m = re.search(r"run:\s*python\s+(\S+)", ln)
+        if not m:
+            continue
+        tok = m.group(1)
+        if tok.startswith("-"):          # `-m` / `-c` / `- <<'PY'` 都对
+            continue
+        if tok.endswith(".py"):
+            bad_cmds.append(tok)
+    rc = subprocess.run([sys.executable, "-c", "import ldv.tools.ci_run_tests"],
+                        cwd=str(REPO), capture_output=True).returncode
+    ok("★ [服务壳] ⑲ CI 的 python 命令**用 `-m`**，且 `ci_run_tests` 能导入",
+       not bad_cmds and rc == 0,
+       f"裸脚本路径 {bad_cmds or '无'}｜`import ci_run_tests` RC={rc}")
+
+
 def _spec_mechanical_mismatch(doc: dict, which: str, nodes, edges) -> list[str]:
     """committed 的 `view_spec.json` 里**机械那几栏**与生成器算出来的差在哪。
 
@@ -9765,7 +9874,7 @@ def main() -> int:
                test_deletion_path, test_persistence, test_persist_atomic,
                test_versioning,
                test_reusable_build, test_lock_scope,
-               test_service_shell,
+               test_service_shell, test_service_failure_paths,
                test_predicates,
                test_reflect,
                test_memory_index,

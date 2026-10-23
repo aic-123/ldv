@@ -90,7 +90,7 @@ jobs:
       #   **Windows 特有**（共享模型按句柄算），POSIX 的 `rename(2)` 原子、读者持旧 inode
       #   ⇒ 那条判据在 Linux 上**必然红**。判据要按 `sys.platform` 分流，不是让它红。
       - name: 单元测试
-        run: python ldv/tools/ci_run_tests.py
+        run: python -m ldv.tools.ci_run_tests
 
       # ⚠️ 这一条**故意不是**「跑一下看它崩不崩」。
       #

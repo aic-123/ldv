@@ -53,10 +53,46 @@ REQUIRED = ("nodes", "view_spec.json")
 #: 每租户同时最多几个进行中任务（§1：限流与排队是**同一个计数**）
 MAX_PER_TENANT = 1
 
+#: `plugin` 的合法值（与 `ldv.cli.DIRECTIONS` 同一个集合）
+PLUGIN_OK = ("keyset", "reach", "sequence")
+#: `only` 的合法值（与 `cli.run_one` 的分段一致；`None` = 全跑）
+ONLY_OK = (None, "b", "a", "d", "r")
+#: `holdout` 的上界 —— **防呆**，不是业务约束（真上界由语料大小定）
+HOLDOUT_MAX = 100_000
 
-def _load_tenant(name: str):
-    """读一个租户的语料。返回 `(nodes, edges, keyset)` 或 `None`（不完整/不存在）。"""
-    base = TENANT_ROOT / name
+
+def _parse_run_args(qs: dict) -> tuple[dict | None, str]:
+    """校验 `?plugin=&only=&holdout=`。返回 `(参数, 错误文案)`。
+
+    ★★ 客户端错误一律 **400**（2026-10-23）：原来 `int(qs.get("holdout"))` 裸调，
+       `holdout=abc` ⇒ `ValueError` 从 handler 里抛出去 ⇒ **连接被断开**，
+       调用方拿不到任何原因，日志里只有 traceback。
+       ⇒ 客户端错误不许混成服务端异常（也就不会被当成「服务挂了」）。
+    """
+    plugin = qs.get("plugin", ["keyset"])[0]
+    if plugin not in PLUGIN_OK:
+        return None, f"400：plugin 必须是 {PLUGIN_OK} 之一（收到 {plugin!r}）"
+    only = qs.get("only", [None])[0]
+    if only not in ONLY_OK:
+        return None, f"400：only 必须是 {ONLY_OK} 之一（收到 {only!r}）"
+    raw = qs.get("holdout", ["12"])[0]
+    try:
+        holdout = int(raw)
+    except (TypeError, ValueError):
+        return None, f"400：holdout 必须是整数（收到 {raw!r}）"
+    if holdout < 0 or holdout > HOLDOUT_MAX:
+        return None, f"400：holdout 必须在 0..{HOLDOUT_MAX} 之间（收到 {holdout}）"
+    return {"plugin": plugin, "only": only, "holdout": holdout}, ""
+
+
+def _load_tenant(name: str, root: Path | None = None):
+    """读一个租户的语料。返回 `(nodes, edges, keyset)` 或 `None`（不完整/不存在）。
+
+    ⚠️ `root` 不给才回落模块级 `TENANT_ROOT` —— `--root` 必须能**真的换目录**
+       （2026-10-23：原来它只进了启动日志，`_load_tenant` 仍读常量 ⇒
+       操作者以为隔离了数据目录，实际没有）。
+    """
+    base = (root if root is not None else TENANT_ROOT) / name
     if not base.is_dir():
         return None
     for req in REQUIRED:
@@ -70,9 +106,15 @@ def _load_tenant(name: str):
     return nodes, edges, keyset
 
 
-def _execute(tenant: str, plugin: str, only, holdout: int) -> tuple[int, str]:
+def _execute(tenant: str, plugin: str, only, holdout: int,
+             root: Path | None = None) -> tuple[int, str]:
     """跑一个任务（**同步执行体** —— 3.1 的 GET 与 3.3 的 worker 共用）。"""
-    loaded = _load_tenant(tenant)
+    # ⚠️ `_load_tenant` 也可能抛（权限 / 磁盘 / 符号链接）—— 它原来在 try **之外**，
+    #    抛出去就是 worker 线程直接死 ⇒ 见 `TaskTable._work` 的 try/finally。
+    try:
+        loaded = _load_tenant(tenant, root=root)
+    except OSError as exc:
+        return 500, f"500：读租户目录失败 —— {type(exc).__name__}: {exc}"
     if loaded is None:
         return 404, f"404：租户 {tenant!r} 不存在或不完整（需要 nodes/ + view_spec.json）"
     nodes, edges, keyset = loaded
@@ -130,14 +172,26 @@ class TaskTable:
     def _work(self, tenant: str, tid: str) -> None:
         t = self.tasks[tid]
         # 执行体由 submit 时闭包带进来 —— 存在任务里，worker 取用
-        code, body = t["_fn"]()
-        with self.cond:
-            t["status"] = "done" if code == 200 else "error"
-            t["finished"] = time.time()
-            t["code"], t["body"] = code, body
-            self.running[tenant] -= 1
-            self._pump(tenant)
-            self.cond.notify_all()
+        #
+        # ★★ **任务失败不许带走队列**（2026-10-23 修）：原来这里是裸调
+        #    `code, body = t["_fn"]()`，一旦抛异常 ⇒ 本线程直接退出 ⇒
+        #    `running[tenant]` **不减**、`_pump` **不再被调用** ⇒
+        #    `MAX_PER_TENANT = 1` 时该租户**永久卡死**（后续任务永远 queued）。
+        #    ⇒ try/except/finally：每个任务最终都进入终态 + 释放名额 + 唤醒等待者。
+        code, body = 500, "500：任务异常（未捕获）"
+        try:
+            code, body = t["_fn"]()
+        except BaseException as exc:        # noqa: BLE001 - worker 不许被任务带走
+            code, body = 500, f"500：{type(exc).__name__}: {exc}"
+        finally:
+            with self.cond:
+                t["status"] = "done" if code == 200 else "error"
+                t["finished"] = time.time()
+                t["code"], t["body"] = code, body
+                # `max(0, …)` 防重复减 —— 名额少减一次会**永久少放行**一个
+                self.running[tenant] = max(0, self.running.get(tenant, 1) - 1)
+                self._pump(tenant)
+                self.cond.notify_all()
 
     def status(self, tid: str) -> tuple[int, dict]:
         with self.cond:
@@ -167,6 +221,10 @@ class Handler(BaseHTTPRequestHandler):
 
     server_version = "ldv-shell/0.2"
 
+    #: 租户根 —— **可被 `main()` 换掉**（`--root` 真正生效的地方）。
+    #: ⚠️ 用类属性而不是模块常量：模块常量改不动（`--root` 原来只进了日志）。
+    root: Path = TENANT_ROOT
+
     # ── 工具 ──────────────────────────────────────────────────────────
     def _send(self, code: int, body: str, ctype: str = "text/plain; charset=utf-8") -> None:
         raw = body.encode("utf-8")
@@ -189,7 +247,7 @@ class Handler(BaseHTTPRequestHandler):
         parts = [p for p in url.path.split("/") if p]
 
         if not parts:  # `/` —— 列出租户
-            tenants = sorted(d.name for d in TENANT_ROOT.iterdir()
+            tenants = sorted(d.name for d in self.root.iterdir()
                              if d.is_dir() and (d / "view_spec.json").exists())
             self._json(200, {"租户": tenants})
             return
@@ -215,24 +273,28 @@ class Handler(BaseHTTPRequestHandler):
 
     # ── 3.1 同步端点（保留：等价判据还在它身上）──────────────────────
     def _run_sync(self, tenant: str, qs: dict) -> None:
-        only = qs.get("only", [None])[0]
-        plugin = qs.get("plugin", ["keyset"])[0]
-        holdout = int(qs.get("holdout", ["12"])[0])
-        code, body = _execute(tenant, plugin, only, holdout)
+        args, err = _parse_run_args(qs)
+        if args is None:
+            self._send(400, err)          # ★ 客户端错误 ⇒ 400，不走异常路径
+            return
+        code, body = _execute(tenant, args["plugin"], args["only"], args["holdout"],
+                              root=self.root)
         self._send(code, body)
 
     # ── 3.3 提交 + 轮询 ───────────────────────────────────────────────
     def _submit(self, tenant: str, qs: dict) -> None:
+        args, err = _parse_run_args(qs)
+        if args is None:
+            self._send(400, err)
+            return
         # 先校验租户（**不完整/不存在 ⇒ 404**，与 GET 同步端点同一条规则）
-        if _load_tenant(tenant) is None:
+        if _load_tenant(tenant, root=self.root) is None:
             self._send(404, f"404：租户 {tenant!r} 不存在或不完整"
                             f"（需要 nodes/ + view_spec.json）")
             return
-        only = qs.get("only", [None])[0]
-        plugin = qs.get("plugin", ["keyset"])[0]
-        holdout = int(qs.get("holdout", ["12"])[0])
 
-        tid = TABLE.submit(tenant, lambda: _execute(tenant, plugin, only, holdout))
+        tid = TABLE.submit(tenant, lambda: _execute(
+            tenant, args["plugin"], args["only"], args["holdout"], root=self.root))
         self._json(202, {"task_id": tid, "tenant": tenant, "status": "queued"})
 
     def _task_status(self, tid: str) -> None:
@@ -247,8 +309,11 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--max-per-tenant", type=int, default=MAX_PER_TENANT)
     args = ap.parse_args(argv[1:])
     TABLE.max = args.max_per_tenant
+    # ★ `--root` **真的换目录**（2026-10-23）：原来只把它打进启动日志，
+    #   `_load_tenant` / 租户枚举仍读模块常量 ⇒ 「日志说 A、实际读 B」。
+    Handler.root = Path(args.root).resolve()
     srv = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
-    print(f"壳已起：http://127.0.0.1:{args.port}/（租户根 {args.root}，"
+    print(f"壳已起：http://127.0.0.1:{args.port}/（租户根 {Handler.root}，"
           f"每租户并发 {args.max_per_tenant}）")
     try:
         srv.serve_forever()
