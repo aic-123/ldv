@@ -780,6 +780,134 @@ def d2_known_answer() -> list[str]:
     return fails
 
 
+def s3_known_answer() -> list[str] | None:
+    """`§S3` 反思显性：每条请求带证据；**未触发时也要报「查了什么」**。
+
+    ★ 判的不是「请求对不对」（那是人的决定），而是**输出能不能由结构复算**：
+
+        ① 未触发 ⇒ `请求` 空，但 `本趟查了` **非空**（「没查」与「查了没有」分得开）
+        ② 触发 ⇒ 每条都有 信号 / 方向 / 阈值 / 涉及的项
+        ③ `涉及的项 ⊆ members(方向)` —— **可复算**，不是随口报的一串 id
+    """
+    from ..core.request import direction_requests, leaf_cap_requests
+
+    got = _real_kernel()
+    if got is None:
+        return None
+    k, _plug = got
+    fails: list[str] = []
+
+    # ① 未触发：cover 恒空 ⇒ 没有请求，但必须说清查了什么
+    quiet = direction_requests(k, lambda payload: frozenset(), n=3)
+    if quiet.get("请求"):
+        fails.append("cover 恒空却仍产出请求 ⇒ 证据不是从结构算的")
+    if not quiet.get("本趟查了"):
+        fails.append("未触发时 `本趟查了` 为空 ⇒ 「没查」与「查了没有」长得一样")
+
+    # ②③ 触发：叶容量超限（cap=1）⇒ 每条请求都要带可复算的证据
+    loud = leaf_cap_requests(k, cap=1)
+    reqs = loud.get("请求") or []
+    if not reqs:
+        fails.append("cap=1 却一条请求都没有 ⇒ 对照无内容")
+    for r in reqs:
+        for f in ("信号", "方向", "阈值", "涉及的项"):
+            if f not in r:
+                fails.append(f"请求缺字段 `{f}`：{sorted(r)[:5]}")
+        d = k.direction(r["方向"])
+        if not set(r["涉及的项"]) <= set(k.members_of(d)):
+            fails.append(f"{r['方向']} 的「涉及的项」不在 members 里 ⇒ 复算对不上")
+    return fails
+
+
+def s4_known_answer() -> list[str] | None:
+    """`§S4` 重构显性：变更留账，且**批准了但材料里没有 ⇒ 报「未生效」**。
+
+    判的不是「这个维度该不该批准」，而是**系统有没有如实记账**：
+    假成功（报「生效」而实际没动）与真生效在输出上长得一样 —— 这条防的就是它。
+    """
+    import json as _json
+    import tempfile
+
+    from ..core.request import apply_approved
+    from ._fixtures import items as _items
+
+    got = _real_kernel()
+    if got is None:
+        return None
+    loaded = __import__("ldv.checks._fixtures", fromlist=["load"]).load()
+    assert loaded is not None
+    nodes_d, edges_d, _d = loaded
+    its = _items(nodes_d)
+    ids = sorted(its)[:12]
+
+    class _N:
+        def __init__(self, keys: Any) -> None:
+            self.keys = keys
+            self.fields: dict[str, Any] = {}
+
+    def _ledger(field: str) -> dict[str, Any]:
+        nd = {i: _N(its[i]) for i in ids}
+        with tempfile.TemporaryDirectory(prefix="ldv-s4-") as td:
+            (Path(td) / "directions.json").write_text(
+                _json.dumps({"已批准": [{"信号": "x", "维度": field}]},
+                            ensure_ascii=False), encoding="utf-8")
+            _new, ledger = apply_approved(nd, Path(td), edges_d)
+        return ledger
+
+    fails: list[str] = []
+    miss = _ledger("不存在的字段")
+    if miss.get("生效"):
+        fails.append("批准了材料里没有的字段却报「生效」⇒ 假成功")
+    if not miss.get("未生效"):
+        fails.append("批准了材料里没有的字段却**什么都不报** ⇒ 静默失败")
+    return fails
+
+
+def s5_known_answer() -> list[str]:
+    """`§S5` 自我标签一致：每个 `我=是` 的项都能**指回仓库里的一份文件**。
+
+    ★ 判的不是「哪些算我的产物」（那是人的约定，可争论），而是**标签有没有编**：
+
+        ① 生成出来的每个节点都有 `source.ref`，且那个文件**真的存在**
+        ② 项数 > 0（否则对照无内容）
+        ③ 删掉输出目录 ⇒ 回到原状（不残留）
+
+    ⚠️ 约定那半（「release 正文算不算产物」）**判不了** —— 断言集 §S5 自己写着
+       「实验支持 / 推翻不了它」。这里只判可判的那半。
+    """
+    import shutil
+    import tempfile
+
+    from ..tools._paths import REPO
+    from ..tools.make_self_corpus import build
+
+    tmp = Path(tempfile.mkdtemp(prefix="ldv-s5-"))
+    fails: list[str] = []
+    try:
+        st = build(REPO, tmp)
+        nodes = sorted((tmp / "nodes").glob("*.md"))
+        if not nodes:
+            fails.append("一个自我项都没生成 ⇒ 对照无内容")
+        bad: list[str] = []
+        for f in nodes:
+            text = f.read_text(encoding="utf-8")
+            m = __import__("re").search(r'source:\s*\n\s*ref:\s*"([^"]+)"', text)
+            if not m:
+                bad.append(f"{f.name} 没有 source.ref")
+                continue
+            if not (REPO / m.group(1)).exists():
+                bad.append(f"{f.name} 的来源 {m.group(1)!r} 不存在")
+        if bad:
+            fails.append(f"{len(bad)}/{len(nodes)} 个自我项指不回文件：{bad[:2]}")
+        if not st.get("断言"):
+            fails.append("统计里没有断言条数 ⇒ 说不清抽了多少")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    if tmp.exists():
+        fails.append("删掉输出目录后仍残留 ⇒ 不可回退")
+    return fails
+
+
 ALL = (b4_known_answer, b7_known_answer, b9_known_answer,
        b12_known_answer, b13_known_answer, b14_known_answer,
        b2_known_answer, b3_known_answer, b5_known_answer,
@@ -787,4 +915,5 @@ ALL = (b4_known_answer, b7_known_answer, b9_known_answer,
        b6_known_answer, b8_known_answer, b10_known_answer,
        b11_known_answer, b15_known_answer, d8_known_answer,
        d4_known_answer, d3_known_answer, d1_known_answer,
-       d6_known_answer, d5_known_answer, d2_known_answer)
+       d6_known_answer, d5_known_answer, d2_known_answer,
+       s3_known_answer, s4_known_answer, s5_known_answer)

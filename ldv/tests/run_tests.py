@@ -7483,6 +7483,20 @@ def test_b_known_answers() -> None:
     fd2 = _run(C.d2_known_answer)
     ok("★ [保证] 合成对照 · §D2 真二分（空/全谓词零贡献，真二分才进划分）",
        not fd2, "；".join(fd2[:2]) or "空/全被拒、真二分入选")
+    # §S3 / §S4：判的不是「答案对不对」（那是人的决定），是**输出能不能由结构复算**
+    fs3 = _run(C.s3_known_answer)
+    ok("★ [保证] 合成对照 · §S3 反思显性（未触发报「查了什么」；涉及的项可复算）",
+       fs3 is not None and not fs3,
+       "**跳过**：内置语料不在" if fs3 is None
+       else ("；".join(fs3[:2]) or "字段齐、项集复算对得上"))
+    fs4 = _run(C.s4_known_answer)
+    ok("★ [保证] 合成对照 · §S4 重构显性（批准了材料里没有 ⇒ 报「未生效」不假装成功）",
+       fs4 is not None and not fs4,
+       "**跳过**：内置语料不在" if fs4 is None
+       else ("；".join(fs4[:2]) or "假成功被挡住"))
+    fs5 = _run(C.s5_known_answer)
+    ok("★ [保证] 合成对照 · §S5 自我标签一致（每个 `我=是` 都指回真实文件，删掉即回原状）",
+       not fs5, "；".join(fs5[:2]) or "来源全部指得回、删掉无残留")
 
 
 def test_guarantee_matrix() -> None:
