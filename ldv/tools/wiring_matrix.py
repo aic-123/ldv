@@ -181,9 +181,14 @@ def build() -> dict[str, dict]:
             for target, symbol, alias in imp:
                 if target != mod:
                     continue
-                code = code_only(files[consumer])
-                if symbol is None:                 # import X as a ⇒ a.func(
-                    hit = any(f"{alias} . {n}" in code or f"{alias}.{n}" in code
+                code = code_only(files[consumer]).replace(" ", "")
+                # ⚠️ `code_only` 用空格拼 token ⇒ `IM.removal_impact(` 变成
+                #   `IM . removal_impact (`。所以**去空格再比**，否则
+                #   「函数内 import 的模块」永远判不出被调用（实测：entry 里
+                #   `from .core import impact as IM` + `IM.removal_impact(...)`
+                #   一直报未接线）。
+                if symbol is None:                 # import X as a ⇒ a.func( / a.Class.
+                    hit = any(f"{alias}.{n}(" in code or f"{alias}.{n}." in code
                               for n in names)
                 else:                              # from X import F ⇒ F( 或条件表达式里用 F
                     hit = code.count(alias) >= 1

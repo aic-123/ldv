@@ -488,6 +488,114 @@ def plan_report(*, rounds: int = 8, per_round: int = 3,
     return (not hit_cap), "\n".join(lines)
 
 
+
+def hot_report(*, holdout: int = 12) -> tuple[bool, str]:
+    """`--hot`：热启动会话（`core/session.py`，快照 + 追加日志）。
+
+    ★ 2026-10-24 接线：这个模块有 3 条判据、有专章（§13.20），但**没有任何调用方**
+      —— 判据全绿而功能等于不存在。接在这里，它才算「承接上游（cli）、传递下游（树 + 读数）」。
+
+    ⚠️ 它给的树是**增量树**，与冷建树**不能并列比较**（`session.py` 文首写明）。
+       ⇒ 只做诊断入口，**不进 A/B/D 流程**、不改任何既有读数。
+    """
+    import time
+
+    from .checks._fixtures import items, load
+    from .core import session as SS
+    from .core.kernel import Kernel
+    from .plugins.keyset import KeysetPlugin
+
+    loaded = load()
+    if loaded is None:
+        return False, "语料读不到 —— 热启动需要能加载的材料"
+    nodes, _edges, _d = loaded
+    plug = KeysetPlugin()
+    its = items(nodes)
+    ids = sorted(its)
+    hold = set(ids[-holdout:]) if holdout > 0 else set()
+    init = {k: v for k, v in its.items() if k not in hold}
+    root = plug.merge([])
+
+    def _build():
+        k = Kernel(plug, init)
+        k.build(root)
+        return k
+
+    t0 = time.perf_counter()
+    # ⚠️ `items` 要传**全量**（含 holdout）：日志里追加的就是 holdout 那些 id，
+    #   重放时要能在当前项集里校验到它们。传 `init` 会让日志被整份丢弃
+    #   （实测：`日志: 丢弃（insert 的 judge-0006 不在当前项集里）`）。
+    #   而 `build` 只用 `init` 建 —— 这两件事本来就不是同一个集合。
+    s = SS.TreeSession.open(name="keyset", plugin=plug, items=dict(its),
+                            build=_build, scope="cli-hot")
+    t_open = time.perf_counter() - t0
+    t0 = time.perf_counter()
+    added = 0
+    for i in sorted(hold):
+        try:
+            s.insert(i, its[i])
+            added += 1
+        except Exception as e:                       # noqa: BLE001
+            return False, f"插入 {i} 失败：{type(e).__name__}: {e}"
+    t_ins = time.perf_counter() - t0
+    rep = dict(getattr(s, "report", {}) or {})
+    s.close()
+
+    lines = [
+        "═══ 热启动会话（--hot，core/session.py）═══",
+        f"  项：进树 {len(init)}｜追加 {added}（每次 append 一行，不重写快照）",
+        f"  打开 {t_open * 1000:.0f} ms｜追加 {t_ins * 1000:.0f} ms"
+        f"（{t_ins / max(1, added) * 1000:.1f} ms/项）",
+        f"  会话报告：{rep if rep else '（无）'}",
+        "  ⚠️ 增量树与冷建树不能并列比较 —— 这是使用前提，不是缺陷。",
+    ]
+    return added == len(hold), "\n".join(lines)
+
+
+def versions_report(*, every: int = 4) -> tuple[bool, str]:
+    """`--versions K`：版本访问（`core/versioning.py`）—— 报「重放步数 < K」。
+
+    ★ 2026-10-24 接线：2 条判据、零调用。接在这里，`O(i/k + k)` 这条声称
+      才有一条**产品路径上**的读数（不是只有测试里）。
+    """
+    from .checks._fixtures import items, load
+    from .core import versioning as VS
+    from .plugins.keyset import KeysetPlugin
+
+    loaded = load()
+    if loaded is None:
+        return False, "语料读不到 —— 版本访问需要能加载的材料"
+    nodes, _edges, _d = loaded
+    plug = KeysetPlugin()
+    its = items(nodes)
+    ids = sorted(its)
+    hold = ids[-12:]
+    init = {k: v for k, v in its.items() if k not in hold}
+
+    vs = VS.VersionStore(plug, init, every=every)
+    vs.build(plug.merge([]))
+    for i in hold:
+        vs.insert(i, its[i])
+    n = vs.versions
+    # ★ 读数要落在**非快照版**上：快照版（every 的正倍数）与当前版都**不重放**
+    #   （前者直接读快照，后者走内存快路径）⇒ 拿它们报「重放 0 步」会让人
+    #   误以为快照没生效。取 n-2：它既不是快照版、也不是当前版。
+    k_old = vs.at(max(1, n - 2))
+    replay_last = vs.last_replay
+    k = vs.at(n)
+    got = set(k.placed)
+    want = set(init) | set(hold)
+    lines = [
+        "═══ 版本访问（--versions，core/versioning.py）═══",
+        f"  快照间隔 every={every}｜版本数 {n}｜快照落在 {vs.snapshot_versions()}",
+        f"  访问旧版 {max(1, n - 2)} ⇒ 重放 {replay_last} 步（必须 < {every}）"
+        f"｜项数 {len(set(k_old.placed))}",
+        f"  访问当前版 {n} ⇒ 项数 {len(got)}｜应到 {len(want)}｜一致 {got == want}",
+    ]
+    ok = (got == want) and replay_last < every
+    return ok, "\n".join(lines)
+
+
 def main(argv: list[str]) -> int:
     args = argv[1:]
     # ★ **可选入口：建树计划**（2026-10-22，`--plan [轮数]`）。
@@ -500,6 +608,22 @@ def main(argv: list[str]) -> int:
             _rounds = int(args[_i + 1])
         _ok, _text = plan_report(rounds=_rounds, snapshot="--snapshot" in args,
                                  until_done="--plan-all" in args)
+        print(_text)
+        print(f"\n退出码 {0 if _ok else 1}")
+        return 0 if _ok else 1
+    # ★ 两个可选入口（2026-10-24 接线）：`--hot`（热启动）/ `--versions K`（版本访问）。
+    #   都只做诊断、**不进 A/B/D**，与 `--plan` 同一个形状。
+    if "--hot" in args:
+        _ok, _text = hot_report(holdout=12)
+        print(_text)
+        print(f"\n退出码 {0 if _ok else 1}")
+        return 0 if _ok else 1
+    if "--versions" in args:
+        _i = args.index("--versions")
+        _every = 4
+        if _i + 1 < len(args) and args[_i + 1].isdigit():
+            _every = int(args[_i + 1])
+        _ok, _text = versions_report(every=_every)
         print(_text)
         print(f"\n退出码 {0 if _ok else 1}")
         return 0 if _ok else 1

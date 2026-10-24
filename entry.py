@@ -75,7 +75,7 @@ from ldv.core.interfaces import WeightedRecord
 from ldv.corpus.loader import load_edges, load_nodes
 from ldv.tools import usage_store
 
-FIELDS = ("require", "forbid")
+FIELDS = ("require", "forbid", "impact")
 UI_PLUGINS = ("keyset",)
 
 #: 默认语料 —— 实测**内容最多、节点也不少**的那份（7115 项 ⇒ 37 个方向 / 8 层）。
@@ -520,7 +520,20 @@ class App:
         #    需要截断的调用方自己传 `max_branches`，那时 `branches_shown` 会小于 `n_branches`。
         cap = int(spec.get("max_branches") or 0)
         shown = nodes[:cap] if cap > 0 else nodes
+        # ★ 反事实（2026-10-24 接线）：`impact` 为真才算「删掉这些答案，结构会怎么变」。
+        #   **只算不改**（`core/impact.removal_impact`），与入口的只读定位一致。
+        #   ⚠️ 默认**不算** —— 它是 O(方向数 × 成员数)，而默认路径的读数一个都不能动。
+        impact_doc = None
+        if spec.get("impact"):
+            # ⚠️ **绝对导入**：`entry.py` 是仓库根的顶层脚本（不是包），
+            #   `from .core import ...` 会在运行时抛
+            #   `ImportError: attempted relative import with no known parent package`
+            #   —— 接线矩阵当场判它未接线，是对的。
+            from ldv.core import impact as IM
+
+            impact_doc = IM.removal_impact(k, ans)
         return {"ok": True, "plugin": plugin,
+                "impact": impact_doc,
                 "requirement": {"require": sorted(req), "forbid": sorted(forb)},
                 # 「先看哪一支」由谁定：default = 无历史；usage = 按使用记录排的
                 # ⚠️ 它只描述**次序**，不是分数、不可跨系统比较（协议禁词那一类）
