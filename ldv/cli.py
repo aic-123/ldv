@@ -526,12 +526,21 @@ def hot_report(*, holdout: int = 12) -> tuple[bool, str]:
     #   重放时要能在当前项集里校验到它们。传 `init` 会让日志被整份丢弃
     #   （实测：`日志: 丢弃（insert 的 judge-0006 不在当前项集里）`）。
     #   而 `build` 只用 `init` 建 —— 这两件事本来就不是同一个集合。
+    # ⚠️ `scope` 带语料名：否则不同语料共用同一份快照/日志（指纹校验会兜，
+    #   但那是兜底，不是设计）。
     s = SS.TreeSession.open(name="keyset", plugin=plug, items=dict(its),
-                            build=_build, scope="cli-hot")
+                            build=_build, scope="cli-hot-" + str(len(its)))
     t_open = time.perf_counter() - t0
     t0 = time.perf_counter()
     added = 0
+    skipped = 0
     for i in sorted(hold):
+        # ★ 幂等：已经在树里就不追加 —— 否则连跑两次会把同一批 insert 记两遍，
+        #   日志从 12 涨到 24（实测踩到）。`session.py` 文首那条「不适合固定流程」
+        #   说的就是这件事，入口这一侧必须自己防。
+        if i in set(s.kernel.placed):
+            skipped += 1
+            continue
         try:
             s.insert(i, its[i])
             added += 1
@@ -543,7 +552,8 @@ def hot_report(*, holdout: int = 12) -> tuple[bool, str]:
 
     lines = [
         "═══ 热启动会话（--hot，core/session.py）═══",
-        f"  项：进树 {len(init)}｜追加 {added}（每次 append 一行，不重写快照）",
+        f"  项：进树 {len(init)}｜追加 {added}｜已在树里跳过 {skipped}"
+        f"（每次 append 一行，不重写快照）",
         f"  打开 {t_open * 1000:.0f} ms｜追加 {t_ins * 1000:.0f} ms"
         f"（{t_ins / max(1, added) * 1000:.1f} ms/项）",
         f"  会话报告：{rep if rep else '（无）'}",
