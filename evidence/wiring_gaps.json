@@ -1,0 +1,12 @@
+{
+ "_note": "冻结的接线缺口。新增缺口 ⇒ 红；缺口修好却没更新这里 ⇒ 也红。",
+ "半链路": [
+  "ldv.core.persist",
+  "ldv.core.session",
+  "ldv.recognize"
+ ],
+ "未接线": [
+  "ldv.core.impact",
+  "ldv.core.versioning"
+ ]
+}
