@@ -10268,6 +10268,16 @@ def test_negation() -> None:
                f"标记 {len(marked['answer_verdicts'])} 项｜n_answer={marked['n_answer']}")
         finally:
             one.write_text(raw, encoding="utf-8", newline="\n")
+
+        # ⑧ 点号字段的两种写法**必须等价**（真实流程探针 E02 挖出来的）
+        #   平铺 `source.kind: x` 与嵌套 `source:\n  kind: x` 若只支持一种，
+        #   同一语义就会出现「一种写法能按值查、另一种报未知键」。
+        from ldv.corpus.loader import keys_of as _keys_of
+        flat = _keys_of({"source.kind": "论文", "type": "立场"})
+        nest = _keys_of({"source": {"kind": "论文"}, "type": "立场"})
+        ok("★ [否定] ⑧ 点号字段两种写法等价（平铺 / 嵌套都产 `source.kind=论文`）",
+           "source.kind=论文" in flat and "source.kind=论文" in nest,
+           f"平铺 {sorted(flat)}｜嵌套 {sorted(nest)}")
     finally:
         if saved_env is None:
             _os.environ.pop("LDV_CORPUS", None)
