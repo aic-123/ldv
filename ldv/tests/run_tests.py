@@ -10278,6 +10278,26 @@ def test_negation() -> None:
         ok("★ [否定] ⑧ 点号字段两种写法等价（平铺 / 嵌套都产 `source.kind=论文`）",
            "source.kind=论文" in flat and "source.kind=论文" in nest,
            f"平铺 {sorted(flat)}｜嵌套 {sorted(nest)}")
+
+        # ⑨ **空语料是合法的**（2026-10-25 用户定）—— 空库不该靠一个占位文件才能起来。
+        #   两条都要：空目录能 load 成 0 项；**目录不存在仍然报错**（两者分得开）。
+        import tempfile as _tf2
+        from ldv.corpus.loader import CorpusError as _CE
+        from ldv.corpus.loader import load_nodes as _load_nodes
+        empty_dir = Path(_tf2.mkdtemp(prefix="ldv-empty-"))
+        try:
+            got = _load_nodes(empty_dir)
+            missing_raised = False
+            try:
+                _load_nodes(empty_dir / "没有这个子目录")
+            except _CE:
+                missing_raised = True
+            ok("★ [否定] ⑨ 空语料合法（0 项），且与「目录不存在」分得开",
+               got == {} and missing_raised,
+               f"空目录 ⇒ {len(got)} 项｜不存在的目录 ⇒ "
+               f"{'报错' if missing_raised else '**没报错（分不开）**'}")
+        finally:
+            _sh.rmtree(empty_dir, ignore_errors=True)
     finally:
         if saved_env is None:
             _os.environ.pop("LDV_CORPUS", None)
