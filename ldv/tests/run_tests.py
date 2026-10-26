@@ -10241,7 +10241,7 @@ def test_negation() -> None:
             off = app.query({"require": [], "reject_below": 0.0})
         finally:
             E.App._rejected_dirs = orig
-        ok("★ [否定] ⑤ **反向对照**：关掉跳过 ⇒ 同样的查询一条都不跳",
+        ok("★ [否定] ⑤ §S7 **反向对照**：关掉跳过 ⇒ 同样的查询一条都不跳",
            off["skipped_rejected"] == [] and off["n_answer"] == n_all,
            f"skipped={off['skipped_rejected']}｜n_answer={off['n_answer']}")
 
