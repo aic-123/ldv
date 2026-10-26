@@ -6098,6 +6098,21 @@ def test_version_spots() -> None:
     ok("★ [版本落点] 57 每个落点的正则**恰好命中 1 次**（`bump` 的前提）",
        not bad, f"命中异常 {bad}" if bad else f"{len(VS.SPOTS)} 个落点各命中 1 次")
 
+    # ── 58 「带日期的落点」必须**真读到日期**（2026-10-26 补） ────────────
+    #   踩过的坑：`## 当前状态：v0.1.49（2026-10-23）` 这一行**版本新、日期旧**，
+    #   而它的正则只抓了版本 ⇒ `scan` 报「日期 None」⇒ `bump` 不改它。
+    #   更坏的是：`check` 判一致时 `dates` 集合**滤掉 None** ⇒ 空了就恒真
+    #   ⇒ 判据 56 一直绿，提示语还打「无日期」。**一个落点只抓一半，比不抓更糟。**
+    #   ⇒ 这条判的是：**说明里写了「状态」「本版」「当前状态」那种带日期的落点，
+    #     扫描结果里必须真有日期**（不再靠人记「我手工改过」）。
+    dated_labels = {"README 状态行「本版」", "README 当前状态标题", "长文 状态行"}
+    got = {r["落点"]: r["日期"] for r in rows}
+    missing_date = sorted(lab for lab in dated_labels if not got.get(lab))
+    ok("★ [版本落点] 58 **带日期的落点必须真读到日期**（否则 bump 不管它、check 恒真）",
+       not missing_date,
+       f"读不到日期的：{missing_date}｜实读 "
+       f"{ {k: v for k, v in got.items() if k in dated_labels} }")
+
     # ── 58 **反向对照**：伪造一处不一致 ⇒ `check` 必须报不一致 ───────────
     #    ⚠️ 不碰真实文档：把 `SPOTS` 与 `REPO` 一起指到临时目录。
     tmp = _P(tempfile.mkdtemp())
