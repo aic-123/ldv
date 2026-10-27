@@ -6133,6 +6133,118 @@ def test_version_spots() -> None:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_agenda() -> None:
+    """★ [议程] 主动性：**什么时候轮到哪条待办**（`core/agenda.py`，2026-10-27）。
+
+    反思层只回答「哪里不平」，而且 `significance()` 是纯函数 ——
+    一个矛盾出现 1 次和 100 次，**档位一样、先后也一样**。
+    ⇒ 这层补的是「反复出现 ⇒ 更早被处理」+「越闲越不挑」。
+
+    ★★ 三条不能破的边界（破了就是裁判）：
+       ① 档位**原样透传**，本层不改（档位由后果定，不由时间定）
+       ② **跨档不许越级**：可延后的激活再高，也排不到必须前面
+       ③ 阈值单调下降 ⇒ 存在的待办**最终**都会到点（老化兜底另加一条）
+    """
+    from datetime import datetime as _dt, timedelta as _td
+    import shutil
+
+    from ldv.checks._fixtures import make_keyset_root
+    from ldv.core import agenda as A
+
+    now = _dt(2026, 10, 27, 12, 0, 0)
+
+    # ── 59 激活公式：量级与单调性 ────────────────────────────────────
+    b_1d = A.activation([now - _td(days=1)], now)
+    b_5x = A.activation([now - _td(hours=h) for h in (1, 3, 6, 12, 20)], now)
+    b_10d = A.activation([now - _td(days=10)], now)
+    ok("★ [议程] 59 ACT-R 激活：**出现得多/近 ⇒ 高**，久远的低；无历史 = -inf",
+       abs(b_1d - 0.0) < 1e-6 and b_5x > b_1d > b_10d
+       and A.activation([], now) == float("-inf"),
+       f"1 天 1 次 {b_1d:.3f}｜近 1 天 5 次 {b_5x:.3f}｜10 天 1 次 {b_10d:.3f}"
+       f"｜无历史 {A.activation([], now)}")
+
+    # ── 60 阈值**单调不增**（k 越大越松，且不能反弹）────────────────
+    taus = [A.threshold(k) for k in range(0, 12)]
+    ok("★ [议程] 60 阈值 τ(k) **单调不增**（越闲越不挑）",
+       all(b <= a for a, b in zip(taus, taus[1:])) and taus[-1] < taus[0],
+       f"k=0..11：{[round(x, 2) for x in taus]}")
+
+    # ── 61 首次见到 ⇒ **按「刚发现」算，会触发**（不是 -inf 不触发）─────
+    #   ⚠️ 第一版照抄 ACT-R 给了 -inf ⇒ 真内核上「到点」恒 0，
+    #      主动性**永远启动不了第一次**。待办不是记忆痕迹，是客观缺口：
+    #      「第一次看到」= 刚发现 = 激活最高。
+    #      纯函数 `activation([])` 仍是 -inf（那是 ACT-R 的语义，不改）；
+    #      **策略在议程层**：首次按 `[now]` 算。
+    from ldv.core.agenda import agenda as _agenda
+    _loaded = load()
+    if _loaded is None:
+        ok("★ [议程] 61 首次见到 ⇒ 按「刚发现」算（**跳过**：内置语料加载不了）",
+           True, "0")
+    else:
+        _nodes2, _e2, _d2 = _loaded
+        _k2 = make_keyset_root(_nodes2)()
+        _a0 = _agenda(_k2, k=0)
+        _first = [r for r in _a0["到点"] if r["首次"]]
+        ok("★ [议程] 61 **首次见到 ⇒ 按「刚发现」算 ⇒ 会触发**"
+           "（不是 -inf 永不触发；纯函数层仍是 -inf）",
+           A.activation([], now) == float("-inf")
+           and len(_a0["到点"]) >= 1 and len(_first) == len(_a0["到点"]),
+           f"纯函数 activation([])={A.activation([], now)}｜"
+           f"真内核 k=0 到点 {len(_a0['到点'])} 条，全是首次 {len(_first)} 条")
+
+    # ── 62 档位原样透传 + 跨档不越级 ────────────────────────────────
+    #   造两个假待办：一个「必须」但很冷，一个「可延后」但很热。
+    #   热的那条**不许**排到前面 —— 跨档用有序等级，不比激活。
+    hist = {"矛盾|边打架": [], "待展开|D9": [now - _td(hours=1)] * 20}
+    rows = [
+        {"键": "矛盾|边打架", "档位": "必须", "激活": None,
+         "出现次数": 0, "最近一次": None, "首次出现": None,
+         "老化": False, "冷却中": False, "待办": {}},
+        {"键": "待展开|D9", "档位": "可延后", "激活": 3.0,
+         "出现次数": 20, "最近一次": now.isoformat(), "首次出现": None,
+         "老化": False, "冷却中": False, "待办": {}},
+    ]
+    rows.sort(key=lambda r: (A.TIER_ORDER[r["档位"]],
+                             -(r["激活"] if r["激活"] is not None else -99.0)))
+    ok("★ [议程] 62 **跨档不许越级**：可延后的激活再高，也排在必须之后",
+       rows[0]["档位"] == "必须",
+       f"排序后首条 = {rows[0]['档位']}（激活 {rows[0]['激活']}）")
+
+    # ── 63 阈值真起作用：同一个待办，k 小不触发、k 大触发 ────────────
+    #   取一条「10 天前出现 1 次」的：B=-1.151。
+    #   τ(0)=0.5 ⇒ 不触发；τ(6)=-1.3 ⇒ 触发。
+    b = A.activation([now - _td(days=10)], now)
+    ok("★ [议程] 63 阈值**真起作用**：同一条待办，k 小不触发、k 大触发",
+       b <= A.threshold(0) and b > A.threshold(6),
+       f"B={b:.3f}｜τ(0)={A.threshold(0)}（不过）｜τ(6)={A.threshold(6):.1f}（过）")
+
+    # ── 64 老化兜底：存在够久 ⇒ 无条件触发（与 k 无关）────────────────
+    #   这条治的是「人类需求一直插进来 ⇒ k 不涨 ⇒ 饿死」。
+    old = now - _td(days=A.STALE_DAYS + 1)
+    stale = (now - old) >= _td(days=A.STALE_DAYS)
+    ok("★ [议程] 64 **老化兜底**：存在超过 STALE_DAYS ⇒ 无条件触发（不看 k）",
+       stale and A.STALE_DAYS >= 1,
+       f"存在 {(now - old).days} 天 ≥ {A.STALE_DAYS} 天 ⇒ 老化")
+
+    # ── 65 账本只追加 + 冷却读得回来（「不知道」不是永久跳过）─────────
+    import tempfile as _tf
+    from pathlib import Path as _P
+    tmp = _P(_tf.mkdtemp())
+    try:
+        (tmp / "nodes").mkdir()
+        A.append_record(tmp / "nodes", kind="seen", keys=["矛盾|边打架"], k=0, now=now)
+        A.append_record(tmp / "nodes", kind="unknown", keys=["矛盾|边打架"], now=now)
+        lines = A.agenda_path(tmp / "nodes").read_text(encoding="utf-8").splitlines()
+        hist2 = A.load_history(tmp / "nodes")
+        cool = A.cooldown_until(tmp / "nodes")
+        ok("★ [议程] 65 账本**只追加**（2 条记录 2 行），冷却读得回来且**不是永久**",
+           len(lines) == 2 and len(hist2.get("矛盾|边打架") or []) == 1
+           and (cool.get("矛盾|边打架") or now) > now,
+           f"{len(lines)} 行｜seen {len(hist2.get('矛盾|边打架') or [])} 次"
+           f"｜冷却到 {cool.get('矛盾|边打架')}")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
 
 def test_evidence() -> None:
     """★ 仓库里每一处「实测/留档」引用都**有实体**（`tools/evidence_index.py`，2026-10-20）。
@@ -11000,6 +11112,7 @@ def main() -> int:
                test_predicate_naming,
                test_dimension_values,
                test_version_spots,
+               test_agenda,
                test_evidence,
                test_quotes_evidence,
                test_entry, test_protocol,

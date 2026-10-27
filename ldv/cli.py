@@ -606,6 +606,47 @@ def versions_report(*, every: int = 4) -> tuple[bool, str]:
     return ok, "\n".join(lines)
 
 
+def agenda_report(*, k: int = 0, days: float | None = None) -> tuple[bool, str]:
+    """`--agenda K`：报「空闲第 K 轮，轮到哪条待办」。**纯诊断，不落盘**。
+
+    ★ 为什么要这个入口：`core/agenda.py` 的消费者在 MCP 侧（`next(idle=)`），
+      repo 里如果没有一个真实入口，接线矩阵会报「半链路」——
+      那是对的：**加了模块没人用**。这个入口就是 repo 侧的消费者。
+
+    ⚠️ 内置语料没有 `agenda.jsonl` ⇒ 所有待办都是「首次」⇒ 全按「刚发现」算。
+       想看阈值的作用，用 `--days` 造一份「这么多天前出现过一次」的历史（**演示用**）。
+    """
+    from datetime import datetime, timedelta
+
+    from .checks._fixtures import load, make_keyset_root
+    from .core import agenda as _ag
+
+    loaded = load()
+    if loaded is None:
+        return False, "语料读不到（`_data/` 不在？）—— 议程需要能加载的材料"
+    nodes, _edges, _d = loaded
+    kern = make_keyset_root(nodes)()
+    hist = None
+    if days is not None:
+        now = datetime.now()
+        first = _ag.agenda(kern, k=0)
+        hist = {r["键"]: [now - timedelta(days=days)]
+                for r in first["到点"] + first["未到"]}
+    out = _ag.agenda(kern, k=k, history=hist)
+
+    lines = [f"空闲第 {out['空闲轮次']} 轮｜阈值 τ={out['阈值']}｜{out['公式']}"]
+    if days is not None:
+        lines.append(f"（演示历史：每条按「{days} 天前出现过一次」算）")
+    lines.append(f"到点 {len(out['到点'])} 条｜未到 {len(out['未到'])} 条")
+    for r in out["到点"][:8]:
+        lines.append(f"  · [{r['档位']}] {r['键']}  激活={r['激活']} "
+                     f"次数={r['出现次数']} 首次={r['首次']}")
+    if out["老化兜底"]:
+        lines.append(f"老化兜底：{out['老化兜底']}")
+    lines.append(out["说明"])
+    return True, "\n".join(lines)
+
+
 def main(argv: list[str]) -> int:
     args = argv[1:]
     # ★ **可选入口：建树计划**（2026-10-22，`--plan [轮数]`）。
@@ -618,6 +659,25 @@ def main(argv: list[str]) -> int:
             _rounds = int(args[_i + 1])
         _ok, _text = plan_report(rounds=_rounds, snapshot="--snapshot" in args,
                                  until_done="--plan-all" in args)
+        print(_text)
+        print(f"\n退出码 {0 if _ok else 1}")
+        return 0 if _ok else 1
+    # ★ **可选入口：议程**（2026-10-27，`--agenda K`）。
+    #   「空闲第 K 轮轮到谁」—— 与 `--plan` 同一个形状：只诊断、不落盘、不进 A/B/D。
+    if "--agenda" in args:
+        _i = args.index("--agenda")
+        _k = 0
+        if _i + 1 < len(args) and args[_i + 1].lstrip("-").isdigit():
+            _k = int(args[_i + 1])
+        _days = None
+        if "--days" in args:
+            _j = args.index("--days")
+            if _j + 1 < len(args):
+                try:
+                    _days = float(args[_j + 1])
+                except ValueError:
+                    _days = None
+        _ok, _text = agenda_report(k=_k, days=_days)
         print(_text)
         print(f"\n退出码 {0 if _ok else 1}")
         return 0 if _ok else 1
