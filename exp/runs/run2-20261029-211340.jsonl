@@ -1,0 +1,1 @@
+{"exp": 2, "ratio": 0, "seed": 1, "at": "run2-20261029-211340", "n_chars": 24768, "n_answer": 34, "threshold": 2007, "C": {"precision": 1.0, "recall": 1.0, "f1": 1.0, "n_nodes": 250, "n_paper": 250, "n_got": 34, "wall_s": 0.7, "tokens": 0}}

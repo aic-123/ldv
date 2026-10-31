@@ -1,0 +1,1 @@
+{"exp": "E1", "group": "R-L", "run": 1, "task_idx": 1, "model": "glm-4.6", "error": "balance: glm-4.6: {\"error\":{\"code\":\"1113\",\"message\":\"余额不足或无可用资源包,请充值。\"}}", "ts": "2026-10-31T15:01:24"}

@@ -1,0 +1,2 @@
+{"exp": 3, "n_fill": 1, "seed": 1, "at": "run3-20261029-194951", "C": {"score": {"q1_now": true, "q2_original": true, "q3_when": true, "q3_why": true}, "ids": ["R0", "R1"], "queries": 2, "wall_s": 0.1, "tokens": 0}}
+{"exp": 3, "n_fill": 1, "seed": 2, "at": "run3-20261029-194951", "C": {"score": {"q1_now": true, "q2_original": true, "q3_when": true, "q3_why": true}, "ids": ["R0", "R1"], "queries": 2, "wall_s": 0.0, "tokens": 0}}
