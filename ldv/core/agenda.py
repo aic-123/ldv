@@ -44,6 +44,8 @@ from __future__ import annotations
 import json
 import math
 from datetime import datetime, timedelta
+
+from . import clock
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
@@ -71,8 +73,18 @@ _MIN_AGE_DAYS = 1.0 / 1440.0
 TIER_ORDER = {"必须": 0, "可延后": 1, "可忽略": 2}
 
 
+#: 「闲了一轮」的时间尺度（**暂定值**，同 `usage` 缓冲那 50 批的性质）：
+#: 宿主一整天没来问，`k` 也会自己涨到上限 —— 这就是「内部时钟」要解决的那件事。
+IDLE_PERIOD_MIN = 30
+
+#: `k` 的上限。`τ(k)=0.5-0.3k`，k=6 已经是 -1.3（几乎什么都不挑）；
+#: 再涨只会让「全都要」—— 那不是主动，是噪声。上限把它钉住。
+IDLE_CAP = 6
+
+
 def _age_days(t: datetime, now: datetime) -> float:
-    return max((now - t).total_seconds() / 86400.0, _MIN_AGE_DAYS)
+    """天为单位的年龄（下限 1 分钟：防 `age^-0.5 → ∞`）。"""
+    return max(clock.age_days(t, now), _MIN_AGE_DAYS)
 
 
 def activation(times: Sequence[datetime], now: datetime,
@@ -174,7 +186,7 @@ def append_record(nodes_dir: Path, *, kind: str, keys: Iterable[str],
     """追加一行账本。`kind` 只有两种：`seen`（本轮看到了）/ `unknown`（判过不知道）。"""
     if kind not in ("seen", "unknown"):
         raise ValueError(f"未知的议程记录种类 {kind!r}")
-    now = now or datetime.now()
+    now = now or clock.now()
     rec: dict[str, Any] = {"ts": now.isoformat(timespec="seconds"), "kind": kind,
                            "keys": sorted({str(x) for x in keys})}
     if k is not None:
@@ -202,7 +214,7 @@ def agenda(kernel: Any, *, k: int = 0,
     from .request import LEAF_CAP
 
     cap = LEAF_CAP if cap is None else cap
-    now = now or datetime.now()
+    now = now or clock.now()
     hist = history if history is not None else {}
     cool = cooldown if cooldown is not None else {}
     tau = threshold(k)
@@ -271,3 +283,88 @@ def agenda(kernel: Any, *, k: int = 0,
         "下一轮": (int(k) + 1 if not due else None),
         "老化兜底": [r["键"] for r in due if r["老化"]],
     }
+
+
+# ── 内部时钟：把「闲了多少」从宿主手里接过来（2026-10-29）─────────────
+#
+# 在有时钟之前，`k` 只能由宿主数：它每说一次「我闲了」，k +1。
+# 问题是**宿主不说话，k 就不动** —— 一个三天没人来问的库，门槛还停在 k=0，
+# 待办一条都不会自己浮上来。「主动性」于是依赖外部有没有人搭理它。
+#
+# 现在有一层 `clock`（`ldv/core/clock.py`），于是 k 可以**由时间推**：
+#
+#     k = clamp( (now - 最近一次「看到待办」的时间) // IDLE_PERIOD_MIN , 0, IDLE_CAP )
+#
+# ⚠️ **它仍然只决定「什么时候报」，不决定「做不做」。** 档位、答案集合、
+#    判定逻辑一个字没改 —— 变的只是 k 从哪来。
+# ⚠️ 没有账本 / 账本里一条 `seen` 都没有 ⇒ `k=0`。**没有基线就不许假装闲过**
+#    （否则第一次运行就会把所有待办一次性倒出来）。
+
+
+def last_seen_at(nodes_dir: Path) -> datetime | None:
+    """账本里**最后一次「看到待办」**的时刻；没有 ⇒ `None`（不猜）。"""
+    p = agenda_path(nodes_dir)
+    if not p.is_file():
+        return None
+    last: datetime | None = None
+    for line in p.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        if rec.get("kind") != "seen":
+            continue
+        try:
+            ts = datetime.fromisoformat(str(rec.get("ts")))
+        except ValueError:
+            continue
+        if last is None or ts > last:
+            last = ts
+    return last
+
+
+def idle_rounds(nodes_dir: Path, *, period_minutes: float = IDLE_PERIOD_MIN,
+                cap: int = IDLE_CAP, now: datetime | None = None) -> int:
+    """**由时间推**的空闲轮次：距上次「看到待办」过了多少个 `period_minutes`。
+
+    `cap` 是硬上限：再久也不无限降门槛（见 `IDLE_CAP` 的注释）。
+    没有基线 ⇒ 0。
+    """
+    now = now or clock.now()
+    base = last_seen_at(nodes_dir)
+    if base is None:
+        return 0
+    minutes = clock.age_days(base, now) * 1440.0
+    if minutes <= 0:                      # 时钟回拨：不许把 k 推成负的，也不假装闲过
+        return 0
+    return max(0, min(int(cap), int(minutes // max(1e-9, period_minutes))))
+
+
+def tick(kernel: Any, nodes_dir: Path, *,
+         period_minutes: float = IDLE_PERIOD_MIN, cap: int = IDLE_CAP,
+         now: datetime | None = None, record: bool = True) -> dict[str, Any]:
+    """**自己走一格**：由时间算 k → 算议程 → （可选）记下这一轮摆出了什么。
+
+    `record=True` 记的是「**摆出来了**」（`kind=seen`），不是「做了」——
+    与 MCP 侧 `drill` / `next` 的记账口径一致：曝光 ≠ 有用。
+    """
+    now = now or clock.now()
+    k = idle_rounds(nodes_dir, period_minutes=period_minutes, cap=cap, now=now)
+    out = agenda(kernel, k=k, history=load_history(nodes_dir),
+                 cooldown=cooldown_until(nodes_dir), now=now)
+    base = last_seen_at(nodes_dir)
+    out["时钟"] = {
+        "k 来源": "内部时钟（时间推）",
+        "周期（分钟）": period_minutes,
+        "上限": cap,
+        "上次看到待办": (base.isoformat(timespec="seconds") if base else None),
+        "闲置（分钟）": (round(clock.age_days(base, now) * 1440.0, 1)
+                         if base else None),
+    }
+    if record and out["到点"]:
+        append_record(nodes_dir, kind="seen",
+                      keys=[r["键"] for r in out["到点"]], k=k, now=now)
+    return out

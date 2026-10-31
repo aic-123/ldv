@@ -11079,6 +11079,616 @@ def test_self_corpus() -> None:
         _shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_service_p1() -> None:
+    """★ [P1] 服务壳的**外面那一圈**：契约 / 认证 / 配额 / 租户 / 调度 / 观测（2026-10-29）。
+
+    这一组与 `test_service_shell` 分工：那组判「壳跑得对」（等价 / 隔离 / 排队 / 备份），
+    这组判「**能不能给别人用**」。P1 的出口条件就写在下面，一条对一条：
+
+        401 / 403 / 404 / 429 **四种失败长得不一样**          → ⑳ 61 63
+        建/删租户各一条，删**走回收站**（可恢复）             → ⑳ 64 65 66
+        调度器单实例 **tick 幂等**（同槽两次，账本只加一行）   → ⑳ 70 72 73
+        `/healthz` 与 `/readyz` 分开，缺语料**如实不 ready**   → ⑳ 68 69
+
+    ⚠️ 两条**反向对照**（这组判据本身会不会红）：
+       · 69：把租户根指到空目录 ⇒ `readyz` 必须 **503**（不是 200 敷衍）；
+       · 72：把槽位改成「每次都不一样」（= 不做幂等）⇒ 同槽会 tick **两次**
+         ⇒ 证明 70 判的是**幂等**，不是「反正只跑一次」。
+    ⚠️ 全程在**临时根**里，租户是**现建**的（`POST /tenants/demo`）——
+       不依赖 `_data/` 下任何语料，因此不会因为「外部语料不在」而跳过。
+       喂进去的 3 个节点是本判据自己写的（最小合法 front-matter），不是抄来的。
+    ⚠️ 它**不判**：多实例租约（那是 P3）、任务表落盘、限流与排队合流（`test_service_shell` ⑩–⑫）。
+    """
+    import json as _json
+    import shutil
+    import tempfile
+    import threading
+    import urllib.error
+    import urllib.request
+    from http.server import ThreadingHTTPServer
+
+    import serve
+    import serve_auth as A
+    import serve_sched as S
+    import serve_tenants as T
+
+    def _mk_node(dirp: Path, nid: str, rels=()) -> None:
+        """最小合法节点：`id` + `type`（变键集）+ `relations`（变边）。"""
+        (dirp / f"{nid}.md").write_text(
+            "---\n" f'id: "{nid}"\n' 'type: "测试品类"\n' f'title: "节点 {nid}"\n'
+            'evidence_status: "原始记录"\n' "relations:\n"
+            + "".join(f'  - "{r}"\n' for r in rels) + "---\n\n正文。\n",
+            encoding="utf-8")
+
+    tmp = Path(tempfile.mkdtemp(prefix="ldv-p1-"))
+    root = tmp / "tenants"
+    root.mkdir()
+
+    tok_admin, tok_alice, tok_carol, tok_bob, tok_stale = (A.mint() for _ in range(5))
+    store = A.TokenStore.from_obj({"tokens": [
+        {"name": "admin", "sha256": A.hash_token(tok_admin), "tenant": "*"},
+        {"name": "alice", "sha256": A.hash_token(tok_alice), "tenant": "demo"},
+        # 配额只给 1 —— ⑳ 62 要能在两步内撞到墙
+        {"name": "carol", "sha256": A.hash_token(tok_carol), "tenant": "demo",
+         "quota_per_min": 1},
+        {"name": "bob", "sha256": A.hash_token(tok_bob), "tenant": "other"},
+        # ⑳ 85：过期的那条（2020 就到期了）
+        {"name": "stale", "sha256": A.hash_token(tok_stale), "tenant": "demo",
+         "expires_at": "2020-01-01"},
+    ]})
+
+    saved = (serve.Handler.root, serve.Handler.store, serve.Handler.quota,
+             serve.Handler.quiet, serve.Handler.scheduler)
+    serve.Handler.root = root
+    serve.Handler.store = store
+    serve.Handler.quota = A.Quota()
+    serve.Handler.quiet = True                 # 别把每请求那行 JSON 打进测试输出
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), serve.Handler)
+    base = f"http://127.0.0.1:{srv.server_address[1]}"
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+
+    seen_headers: list[dict] = []
+
+    def req(method: str, path: str, tok: str | None = None,
+            headers: dict | None = None) -> tuple[int, str, dict]:
+        r = urllib.request.Request(base + path, method=method)
+        if tok:
+            r.add_header("Authorization", f"Bearer {tok}")
+        for k, v in (headers or {}).items():
+            r.add_header(k, v)
+        try:
+            with urllib.request.urlopen(r, timeout=60) as resp:
+                code, body, hd = resp.status, resp.read().decode("utf-8"), dict(resp.headers)
+        except urllib.error.HTTPError as e:
+            code, body, hd = e.code, e.read().decode("utf-8"), dict(e.headers)
+        hd = {k.lower(): v for k, v in hd.items()}
+        seen_headers.append(hd)
+        return code, body, hd
+
+    try:
+        # ── 建租户（⑳ 64）：201 + 目录形状 + **空库直接能跑** ─────────────
+        st_new, body_new, _ = req("POST", "/tenants/demo", tok_admin)
+        ok("★ [P1] 64 建租户：POST /tenants/demo ⇒ 201，且 nodes/ 与 view_spec.json 都在",
+           st_new == 201 and (root / "demo" / "nodes").is_dir()
+           and (root / "demo" / "view_spec.json").is_file(),
+           f"状态 {st_new}｜{body_new[:80]}")
+        st_empty, body_empty, _ = req("GET", "/demo/run?plugin=keyset", tok_admin)
+        ok("★ [P1] 64 空库**直接能跑**：刚建的租户 GET /run ⇒ 200 且正文是「装进 0 项」",
+           st_empty == 200 and "装进 0 项" in body_empty,
+           f"状态 {st_empty}｜首行 {body_empty.splitlines()[0][:40] if body_empty else '空'}")
+
+        # 喂 3 个自己写的节点（不依赖 `_data/`）
+        for nid, rels in (("n1", ("n2", "n3")), ("n2", ("n3",)), ("n3", ())):
+            _mk_node(root / "demo" / "nodes", nid, rels)
+
+        st_o, _, _ = req("POST", "/tenants/other", tok_admin)
+        ok("★ [P1] 64 建第二个租户也成（后面 ⑳ 61 要用它证「存在但不属于你」）",
+           st_o == 201, f"状态 {st_o}")
+
+        # ── 契约（⑳ 58 59）：同请求逐字相同 + 不认识的参数不被静默忽略 ─────
+        a1 = req("GET", "/demo/run?plugin=keyset&only=a", tok_alice)
+        a2 = req("GET", "/demo/run?plugin=keyset&only=a", tok_alice)
+        ok("★ [P1] 58 契约：同一请求两次，正文**逐字相同**（有随机成分就会红）",
+           a1[0] == a2[0] == 200 and a1[1] == a2[1],
+           f"{a1[0]}/{a2[0]}｜{len(a1[1].encode())}B vs {len(a2[1].encode())}B")
+        ok("★ [P1] 58 契约：每个响应都带协议头 ldv-http/1 与 X-Request-Id",
+           all(h.get("x-ldv-protocol") == A.PROTOCOL and h.get("x-request-id")
+               for h in seen_headers if h),
+           f"{sum(1 for h in seen_headers if h.get('x-ldv-protocol'))}/{len(seen_headers)} 个响应有协议头")
+        st_u, body_u, _ = req("GET", "/demo/run?plugin=keyset&bogus=1", tok_alice)
+        ok("★ [P1] 59 契约：不认识的查询参数 ⇒ 400（静默忽略会让拼写错拿到默认答案）",
+           st_u == 400 and "bogus" in body_u, f"状态 {st_u}｜{body_u[:60]}")
+
+        # ── 认证（⑳ 60）：无 token / 错 token 都是 401 ───────────────────
+        st_no, _, h_no = req("GET", "/demo/run")
+        st_bad, _, h_bad = req("GET", "/demo/run", tok="not-a-real-token")
+        ok("★ [P1] 60 认证：无 token ⇒ 401，且带 WWW-Authenticate（告诉调用方怎么带）",
+           st_no == 401 and "www-authenticate" in h_no, f"状态 {st_no}")
+        ok("★ [P1] 60 认证：错 token ⇒ 401（与「无租户」的 404 分开）",
+           st_bad == 401, f"状态 {st_bad}")
+
+        # ── 授权（⑳ 61）：不是你的 ⇒ 403，且**不泄露存在性** ─────────────
+        st_f1, _, _ = req("GET", "/other/run?plugin=keyset", tok_alice)   # 存在但属于 bob
+        st_f2, _, _ = req("GET", "/no-such-tenant/run?plugin=keyset", tok_alice)
+        ok("★ [P1] 61 授权：「存在但不是你的」与「根本不存在」对 alice **都是 403**",
+           st_f1 == 403 and st_f2 == 403, f"存在 {st_f1}｜不存在 {st_f2}")
+        st_admin404, _, _ = req("GET", "/no-such-tenant/run?plugin=keyset", tok_admin)
+        ok("★ [P1] 61 对照：同一个不存在的租户，管理员得到的是 404（不是 403）",
+           st_admin404 == 404, f"状态 {st_admin404}")
+
+        # ── 配额（⑳ 62）：429 + Retry-After，且**不消耗任务表** ──────────
+        st_q1, _, _ = req("POST", "/demo/run?plugin=keyset", tok_carol)    # 配额 1 ⇒ 放行
+        n_before = len(serve.TABLE.tasks)
+        st_q2, body_q2, h_q2 = req("POST", "/demo/run?plugin=keyset", tok_carol)  # ⇒ 429
+        n_after = len(serve.TABLE.tasks)
+        ok("★ [P1] 62 配额：第 2 次 ⇒ 429，且带 Retry-After（可重试 ≠ 写错了）",
+           st_q1 == 202 and st_q2 == 429 and "retry-after" in h_q2,
+           f"{st_q1} → {st_q2}｜Retry-After={h_q2.get('retry-after')}")
+        ok("★ [P1] 62 配额拒绝**不消耗任务表**：429 前后表长不变（否则重试会把队列填满）",
+           n_after == n_before, f"任务表 {n_before} → {n_after}")
+
+        # ── 四种失败**长得不一样**（⑳ 63）────────────────────────────────
+        kinds = {
+            401: h_no.get("x-ldv-error"),
+            403: req("GET", "/other/run", tok_alice)[2].get("x-ldv-error"),
+            404: req("GET", "/no-such-tenant/run", tok_admin)[2].get("x-ldv-error"),
+            429: (req("POST", "/demo/run?plugin=keyset", tok_carol)[2].get("x-ldv-error")),
+        }
+        ok("★ [P1] 63 四种失败：401/403/404/429 的 `X-Ldv-Error` **两两不同**",
+           len(set(kinds.values())) == 4 and all(kinds.values()),
+           f"{kinds}")
+
+        # ── 租户删除（⑳ 66）：进回收站，且**能恢复** ────────────────────
+        st_del, body_del, _ = req("DELETE", "/tenants/other", tok_admin)
+        trashed = T.trash_entries(root, "other")
+        ok("★ [P1] 66 删租户：200，原目录**不在**，回收站里有一份（不是 rm）",
+           st_del == 200 and not (root / "other").exists() and len(trashed) == 1,
+           f"状态 {st_del}｜回收站 {[p.name for p in trashed]}")
+        if trashed:
+            shutil.move(str(trashed[0]), str(root / "other"))     # 拷回来 = 恢复
+        st_r1, _, _ = req("GET", "/other/run?plugin=keyset", tok_admin)
+        ok("★ [P1] 66 恢复：把回收站那份挪回来 ⇒ 又能跑（200），删是可逆的",
+           st_r1 == 200, f"状态 {st_r1}")
+
+        # ── 建重名不许覆盖（⑳ 65）────────────────────────────────────────
+        st_dup, _, _ = req("POST", "/tenants/demo", tok_admin)
+        n_nodes = len(list((root / "demo" / "nodes").glob("*.md")))
+        ok("★ [P1] 65 建重名 ⇒ 409，且原有节点**一个没少**（覆盖等于静默删数据）",
+           st_dup == 409 and n_nodes == 3, f"状态 {st_dup}｜节点 {n_nodes}")
+
+        # ── 观测（⑳ 67 68 74）：请求 id 沿用 + healthz/readyz 分开 ───────
+        st_id, _, h_id = req("GET", "/healthz", headers={"X-Request-Id": "trace-42"})
+        ok("★ [P1] 67 观测：客户端给的 X-Request-Id **被沿用**（跨服务串链要用它）",
+           st_id == 200 and h_id.get("x-request-id") == "trace-42",
+           f"回显 {h_id.get('x-request-id')!r}")
+        st_h, body_h, _ = req("GET", "/healthz")
+        st_r, body_r, _ = req("GET", "/readyz")
+        ok("★ [P1] 68 /healthz 与 /readyz **分开**：活着 200，且此刻真有可服务租户 ⇒ 200",
+           st_h == 200 and st_r == 200 and _json.loads(body_r)["ready"] is True,
+           f"healthz {st_h}｜readyz {st_r}｜{_json.loads(body_r)['检查']}")
+        st_deny = req("GET", "/metrics", tok_alice)[0]
+        ok("★ [P1] 74 /metrics 只给管理员（alice ⇒ 403），管理员 200",
+           st_deny == 403 and req("GET", "/metrics", tok_admin)[0] == 200,
+           f"alice {st_deny}")
+
+        # ── ⑳ 74b 两个指标出口：文本（标准）与 JSON（判据读）──────────────
+        st_mt, body_mt, hd_mt = req("GET", "/metrics", tok_admin)
+        st_mj, body_mj, _ = req("GET", "/metrics.json", tok_admin)
+        try:
+            _json.loads(body_mj)
+            json_ok = True
+        except ValueError:
+            json_ok = False
+        ok("★ [P1] 74b /metrics 是 **Prometheus 文本**（# HELP / _total），"
+           "/metrics.json 仍是 JSON（判据与端到端读它）",
+           st_mt == 200 and body_mt.startswith("# HELP ldv_shell_events_total")
+           and "text/plain" in (hd_mt.get("content-type") or "")
+           and st_mj == 200 and json_ok and "计数" in body_mj,
+           f"文本 {st_mt}｜json {st_mj}（可解析={json_ok}）")
+
+        # ── ⑳ 85–87 token 生命周期（过期 / 写坏 / 双 key 重叠）───────────
+        #   ⚠️ 这三条**不走 HTTP**：它们判的是 `TokenStore` 的语义，
+        #      而 401 的正文差别已经在 60/61 里经 HTTP 验过（过期另有 85 的一半）。
+        import hashlib as _hl
+        alive = "ldv_t_alive_" + "a" * 20
+        dead = "ldv_t_dead_" + "b" * 20
+        new1 = "ldv_t_new_" + "c" * 20
+        new2 = "ldv_t_new2_" + "d" * 20
+
+        def _entry(name, tok, exp=None):
+            e = {"name": name, "sha256": _hl.sha256(tok.encode()).hexdigest(),
+                 "tenant": "demo"}
+            if exp is not None:
+                e["expires_at"] = exp
+            return e
+
+        # ⚠️ 这个 `req` 不接 params（本轮只加了 headers），非 ASCII 得自己转义
+        from urllib.parse import quote as _q
+        st_x, body_x, _ = req("GET", f"/demo/ask?require={_q('type=论文')}",
+                              tok=tok_stale)
+        ok("★ [P1] 85 过期 token 走 HTTP ⇒ 401 且**正文说「已过期」**"
+           "（与「没带 / 认不出」共用状态码、不同的话）",
+           st_x == 401 and "过期" in body_x, f"{st_x}｜{body_x[:40]}")
+
+        store2 = A.TokenStore.from_obj({"tokens": [
+            _entry("alive", alive),
+            _entry("dead", dead, "2020-01-01"),
+        ]}, now=lambda: 1_800_000_000.0)     # 2027 年，晚于 2020-01-01
+        p_ok, why_ok = store2.authenticate_detail(f"Bearer {alive}")
+        p_dead, why_dead = store2.authenticate_detail(f"Bearer {dead}")
+        p_none, why_none = store2.authenticate_detail(None)
+        ok("★ [P1] 85 过期与「没带 / 认不出」分得开：过期 ⇒ reason=expired，"
+           "同一次里未过期的仍 ok",
+           p_ok is not None and why_ok == "ok" and p_dead is None
+           and why_dead == "expired" and why_none == "missing",
+           f"{why_ok}/{why_dead}/{why_none}")
+
+        bad_format = None
+        try:
+            A.TokenStore.from_obj({"tokens": [_entry("x", alive, "明天")]})
+        except ValueError as exc:
+            bad_format = str(exc)
+        ok("★ [P1] 86 `expires_at` 写坏 ⇒ **当场抛**（不静默当「不过期」："
+           "写错的时间与没写在运行时一模一样）",
+           bad_format is not None and "ISO" in bad_format,
+           f"{str(bad_format)[:60]}")
+
+        store3 = A.TokenStore.from_obj({"tokens": [
+            _entry("rot", new1, "2099-01-01"), _entry("rot", new2, "2099-01-01"),
+        ]}, now=lambda: 1_800_000_000.0)
+        a1p = store3.authenticate_detail(f"Bearer {new1}")[0]
+        a2p = store3.authenticate_detail(f"Bearer {new2}")[0]
+        ok("★ [P1] 87 双 key 重叠：同名两条都未过期 ⇒ **新旧 token 同时有效**"
+           "（轮换才可能不中断）",
+           a1p is not None and a2p is not None and a1p.name == a2p.name == "rot",
+           f"{a1p and a1p.name}/{a2p and a2p.name}")
+
+        # ── ⑳ 69 反向对照：语料没了 ⇒ readyz 必须 **503**（不许 200 敷衍）──
+        hollow = tmp / "hollow"
+        hollow.mkdir()
+        serve.Handler.root = hollow
+        st_hollow, body_hollow, _ = req("GET", "/readyz")
+        serve.Handler.root = root
+        ok("★ [P1] 69 反向对照：租户根没有可服务租户 ⇒ /readyz **503** 且逐项说明",
+           st_hollow == 503 and _json.loads(body_hollow)["ready"] is False,
+           f"状态 {st_hollow}｜{_json.loads(body_hollow)['检查']}")
+
+        # ── 调度器（⑳ 70 71 72 73）：同槽幂等，跨槽才再走 ────────────────
+        sroot = tmp / "sched"
+        sroot.mkdir()
+        T.create(sroot, "s1")
+        _mk_node(sroot / "s1" / "nodes", "x1", ("x2",))
+        _mk_node(sroot / "s1" / "nodes", "x2")
+        # 「列得出、但不完整」：有 view_spec.json、没有 nodes/ ⇒ 必须被跳过
+        (sroot / "half").mkdir()
+        (sroot / "half" / "view_spec.json").write_text("{}", encoding="utf-8")
+
+        calls: list[str] = []
+
+        def fake_tick(name, nodes_dir, now):
+            calls.append(name)
+            return {"k": 0}
+
+        sch = S.Scheduler(sroot, interval_s=60, tick_fn=fake_tick,
+                          now=lambda: 1000.0)
+        first = sch.run_once()
+        again = sch.run_once()
+        ok("★ [P1] 70 调度器幂等：同一槽调两次 ⇒ tick 只发生**一次**（第二次记 already）",
+           first["ticked"] == ["s1"] and again["ticked"] == [] and calls == ["s1"],
+           f"第一次 {first['ticked']}｜第二次 {again['ticked']}｜实调 {calls}")
+        ok("★ [P1] 71 调度器跳过不完整租户：`half`（有 view_spec 无 nodes/）进 skipped，不 tick",
+           "half" in first["skipped"] and "half" not in calls,
+           f"skipped={first['skipped']}｜calls={calls}")
+
+        # ⑳ 73 落盘：换一个**新实例**（= 模拟重启）在同一槽里跑 ⇒ 仍然 already
+        sch2 = S.Scheduler(sroot, interval_s=60, tick_fn=fake_tick,
+                           now=lambda: 1000.0)
+        restart = sch2.run_once()
+        ok("★ [P1] 73 槽位**落盘**：新实例（= 重启）在同一槽 ⇒ already，不重复 tick",
+           restart["ticked"] == [] and calls == ["s1"],
+           f"重启后 ticked={restart['ticked']}｜calls={calls}")
+
+        nxt = sch2.run_once(1060.0)          # 下一槽
+        ok("★ [P1] 70 跨槽：时间推进一个间隔 ⇒ 允许再 tick 一次（幂等不等于「只跑一次」）",
+           nxt["ticked"] == ["s1"] and calls == ["s1", "s1"],
+           f"新槽 ticked={nxt['ticked']}｜calls={calls}")
+
+        # ⑳ 72 反向对照：槽位「每次都变」= 不做幂等 ⇒ 同一时刻会 tick 两次
+        orig_slot = S.Scheduler.slot_of
+        counter = iter(range(10_000))
+        try:
+            S.Scheduler.slot_of = lambda self, now: next(counter)  # noqa: ARG005
+            calls.clear()
+            sch3 = S.Scheduler(sroot, interval_s=60, tick_fn=fake_tick,
+                               now=lambda: 1000.0)
+            sch3.run_once()
+            sch3.run_once()
+        finally:
+            S.Scheduler.slot_of = orig_slot
+        ok("★ [P1] 72 反向对照：槽位每次都变（= 不幂等）⇒ 同一时刻 tick **两次**（判据会红）",
+           calls == ["s1", "s1"], f"实调 {calls}")
+    finally:
+        (serve.Handler.root, serve.Handler.store, serve.Handler.quota,
+         serve.Handler.quiet, serve.Handler.scheduler) = saved
+        srv.shutdown()
+        srv.server_close()
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_service_agent_http() -> None:
+    """★ [agent] 壳上**真正答题的那三个端点**（`/ask` `/drill` `/agenda`，2026-10-29）。
+
+    为什么单列一组：P1 之前壳只会在租户上「跑一遍流水线」并把追踪文本吐出来 ——
+    那是**诊断**，不是**答案**。真正回答问题的 `entry.App` 在**另一个进程**里，
+    而且它自己写着「只绑 127.0.0.1，无鉴权，不是对外服务」⇒ 一个 agent 走不通全程：
+    **有鉴权的那半不会答题，会答题的那半没有鉴权**。
+
+    这一组守四件事：
+
+      · 空库 / 结构外 / 参数错 —— **三种「不是成功」要分得开**；
+      · 下钻是「这一支有用」的唯一真实信号，且**只改次序不改集合**；
+      · agent **不能判错**（`verdict=wrong` ⇒ 403，只能人来给）；
+      · **坏语料不许拖死连接**：以前 `CorpusError` 从 handler 穿出去 ⇒ 客户端拿到的是
+        `RemoteDisconnected`（这个函数的 `_req` 把它记成 **0**），日志里只有 traceback。
+        ⇒ 现在必须 500 + 说清哪一处，且 `/readyz` 跟着变 503。
+
+    ⚠️ 端到端那版（`e2e_agent.py`，真进程 + 真 HTTP + 重启）**不在这里**：
+       它要 spawn 进程、要等调度器、要重启，跑一趟 8 秒，属于**证据**不是**判据**。
+       两者互不替代：这里判「行为」，那里判「一条流程走得完」。
+    """
+    import json as _json
+    import shutil
+    import tempfile
+    import threading
+    import urllib.error
+    import urllib.request
+    from http.server import ThreadingHTTPServer
+
+    import serve
+    import serve_auth as A
+    import serve_tenants as T
+
+    def _mk(dirp: Path, nid: str, typ: str, rels=()) -> None:
+        lines = ["---", f'id: "{nid}"', f'type: "{typ}"', f'title: "N {nid}"',
+                 'evidence_status: "原始记录"']
+        lines += (["relations:"] + [f'  - "{r}"' for r in rels]) if rels \
+            else ["relations: []"]
+        lines += ["---", "", "正文。" + "\n"]
+        (dirp / f"{nid}.md").write_text("\n".join(lines), encoding="utf-8")
+
+    tmp = Path(tempfile.mkdtemp(prefix="ldv-agent-"))
+    # ⚠️ 路径里有 `_data`：`entry.App` 只在这个条件下写使用记录，否则「下钻→记录」
+    #    这一环**静默不生效**，而判据会把「没记」当成「不该记」。
+    root = tmp / "_data" / "tenants"
+    root.mkdir(parents=True)
+    tok = A.mint()
+    saved = (serve.Handler.root, serve.Handler.store, serve.Handler.quota,
+             serve.Handler.quiet, serve.FAULTS)
+    serve.Handler.root = root
+    serve.Handler.store = A.TokenStore.from_obj(
+        {"tokens": [{"name": "t", "sha256": A.hash_token(tok), "tenant": "demo"}]})
+    serve.Handler.quota = A.Quota()
+    serve.Handler.quiet = True
+    serve.FAULTS = serve.LoadFaults()          # 干净的一张故障表
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), serve.Handler)
+    base = f"http://127.0.0.1:{srv.server_address[1]}"
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+
+    def _req(method: str, path: str, params: dict | None = None):
+        url = base + path
+        if params:
+            from urllib.parse import urlencode
+            url += "?" + urlencode(params)
+        r = urllib.request.Request(url, method=method)
+        r.add_header("Authorization", f"Bearer {tok}")
+        try:
+            with urllib.request.urlopen(r, timeout=120) as resp:
+                return resp.status, resp.read().decode("utf-8"), dict(resp.headers)
+        except urllib.error.HTTPError as e:
+            return e.code, e.read().decode("utf-8"), dict(e.headers)
+        except Exception as exc:      # noqa: BLE001 - 断连要能被**看见**（记 0，不是 500）
+            return 0, f"{type(exc).__name__}: {exc}", {}
+
+    try:
+        T.create(root, "demo")
+        # ⑳ 75 空库
+        st0, b0, _ = _req("GET", "/demo/ask", {"require": "type=论文"})
+        d0 = _json.loads(b0) if st0 == 200 else {}
+        ok("★ [agent] 75 空库上问 ⇒ 200 + empty_corpus（不是「你键写错了」）",
+           st0 == 200 and d0.get("empty_corpus") is True and "空的" in str(d0.get("error")),
+           f"{st0}｜{str(d0.get('error'))[:36]}")
+
+        nd = root / "demo" / "nodes"
+        for nid, typ, rels in (("p1", "论文", ("p2",)), ("p2", "论文", ()),
+                               ("p3", "论文", ()), ("c1", "代码", ("c2",)),
+                               ("c2", "代码", ()), ("c3", "代码", ())):
+            _mk(nd, nid, typ, rels)
+
+        # ⑳ 76 喂料后能问，且每支有 did（客户端靠它下钻）
+        st1, b1, hd1 = _req("GET", "/demo/ask", {"require": "type=论文"})
+        d1 = _json.loads(b1) if st1 == 200 else {}
+        ok("★ [agent] 76 喂料后能问：200，n_answer=3，每一支都有 did，且带协议头",
+           st1 == 200 and d1.get("n_answer") == 3 and d1.get("nodes")
+           and all("did" in x for x in d1["nodes"])
+           and {k.lower(): v for k, v in hd1.items()}.get("x-ldv-protocol") == "ldv-http/1",
+           f"{st1}｜n_answer={d1.get('n_answer')}｜支={[x.get('did') for x in d1.get('nodes') or []]}")
+
+        # ⑳ 77 结构外 vs 参数错
+        st2, b2, _ = _req("GET", "/demo/ask", {"require": "type=会议"})
+        d2 = _json.loads(b2) if st2 == 200 else {}
+        ok("★ [agent] 77 结构里没有的键 ⇒ 200 + out_of_structure（不是 0 项了事）",
+           st2 == 200 and d2.get("out_of_structure") is True, f"{st2}")
+        st3, _, h3 = _req("GET", "/demo/ask", {"require": "type=论文", "bogus": "1"})
+        ok("★ [agent] 77 不认识的参数 ⇒ 400 + bad-request",
+           st3 == 400 and {k.lower(): v for k, v in h3.items()}.get("x-ldv-error")
+           == "bad-request", f"{st3}")
+
+        # ⑳ 78 分叉：问跨族的键 ⇒ 真的有多支
+        st4, b4, _ = _req("GET", "/demo/ask", {"require": "evidence_status=原始记录"})
+        d4 = _json.loads(b4) if st4 == 200 else {}
+        br = d4.get("nodes") or []
+        ok("★ [agent] 78 问全库 ⇒ 真的分叉（6 项 / ≥2 支），才谈得上「先看哪一支」",
+           st4 == 200 and d4.get("n_answer") == 6 and len(br) >= 2,
+           f"{st4}｜支={[(x.get('did'), x.get('n_answer')) for x in br]}")
+
+        # ⑳ 79 下钻：记下来了，且只改次序不改集合
+        target = br[-1]["did"] if br else ""
+        st5, b5, _ = _req("POST", "/demo/drill", {"did": target})
+        d5 = _json.loads(b5) if st5 == 200 else {}
+        usage = list((root / "demo" / "usage").rglob("*")) \
+            if (root / "demo" / "usage").is_dir() else []
+        ok("★ [agent] 79 下钻：200 + recorded=True，且 usage/ 下真的落了文件",
+           st5 == 200 and d5.get("recorded") is True and bool(usage),
+           f"{st5}｜recorded={d5.get('recorded')}｜usage {len(usage)} 个文件")
+        _s6, b6, _ = _req("GET", "/demo/ask", {"require": "evidence_status=原始记录"})
+        d6 = _json.loads(b6) if _s6 == 200 else {}
+        same = sorted(d4.get("answer_ids") or []) == sorted(d6.get("answer_ids") or [])
+        first = ((d6.get("nodes") or [{}])[0].get("did"))
+        ok("★ [agent] 79 下钻**只改次序**：集合不变、ordered_by=usage、首支=刚钻的那支",
+           same and d6.get("ordered_by") == "usage" and first == target,
+           f"集合不变={same}｜ordered_by={d6.get('ordered_by')}｜首支 {first} vs {target}")
+
+        # ⑳ 80 agent 不能判错
+        st7, _, h7 = _req("POST", "/demo/drill", {"did": target, "verdict": "wrong"})
+        ok("★ [agent] 80 agent 不能判错：verdict=wrong ⇒ 403（判错只能人来给）",
+           st7 == 403 and {k.lower(): v for k, v in h7.items()}.get("x-ldv-error")
+           == "forbidden", f"{st7}")
+
+        # ⑳ 81 议程
+        st8, b8, _ = _req("GET", "/demo/agenda", {"k": "0"})
+        d8 = _json.loads(b8) if st8 == 200 else {}
+        ok("★ [agent] 81 问议程：200，且 {到点, 未到, 阈值} 都在（答的是「轮到谁」）",
+           st8 == 200 and {"到点", "未到", "阈值"} <= set(d8), f"{st8}｜{sorted(d8)[:5]}")
+
+        # ⑳ 82 坏语料：**不许拖死连接**（返回码 0 = 连接被断，正是要防的那种）
+        (nd / "dup.md").write_text(
+            "\n".join(["---", 'id: "p1"', 'type: "论文"', "---", "", "x", ""]),
+            encoding="utf-8")
+        st9, b9, _ = _req("GET", "/demo/run", {"plugin": "keyset"})
+        ok("★ [agent] 82 坏语料：/run **500 + 说清是「重复的 id」**（以前是断连 ⇒ 返回 0）",
+           st9 == 500 and "重复的 id" in b9, f"返回码 {st9}｜{b9[:70]}")
+        st10, b10, _ = _req("GET", "/demo/ask", {"require": "type=论文"})
+        ok("★ [agent] 82 坏语料：/ask 同样 500（不是断连），报文指明原因",
+           st10 == 500 and "重复的 id" in b10, f"返回码 {st10}｜{b10[:70]}")
+
+        # ⑳ 83 readyz 不许说谎：失败之后必须 503 并指名
+        st11, b11, _ = _req("GET", "/readyz")
+        d11 = _json.loads(b11) if st11 in (200, 503) else {}
+        ok("★ [agent] 83 坏语料之后 /readyz ⇒ **503** 且列出是哪个租户（不是 200 敷衍）",
+           st11 == 503 and "demo" in (d11.get("已知装载失败") or {}),
+           f"{st11}｜已知装载失败 {list(d11.get('已知装载失败') or {})}")
+
+        # ⑳ 84 修好之后自己回来（不用重启、不用手动清状态）
+        (nd / "dup.md").unlink()
+        st12, _, _ = _req("GET", "/demo/run", {"plugin": "keyset"})
+        st13, _, _ = _req("GET", "/readyz")
+        ok("★ [agent] 84 修好之后自己回到 200 / ready（不用重启，也不用手动清故障表）",
+           st12 == 200 and st13 == 200, f"run {st12}｜readyz {st13}")
+    finally:
+        (serve.Handler.root, serve.Handler.store, serve.Handler.quota,
+         serve.Handler.quiet, serve.FAULTS) = saved
+        srv.shutdown()
+        srv.server_close()
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_clock() -> None:
+    """★ 内部时钟（`ldv/core/clock.py`）+ 时间推的 k（2026-10-29）。
+
+    这一组要防的**不是**「时钟会不会走」——那是 `datetime` 的事；
+    要防的是**接线接错**：k 从时间推之后，`到点 / 未到` 的**集合**有没有被悄悄改掉。
+    所以最后一条是**反向对照**：同样的 k，两条路（人手给 K / 时钟推）必须逐字相同；
+    只有一个来源不同时，才允许它们不同。
+    """
+    import shutil
+    from datetime import datetime, timedelta
+
+    from ldv.checks._fixtures import load, make_keyset_root
+    from ldv.core import agenda as AG
+    from ldv.core import clock as CLK
+
+    loaded = load()
+    if loaded is None:
+        PASS.append("★ [时钟]（**跳过**：语料读不到）")
+        return
+    nodes, _e, _d = loaded
+    kern = make_keyset_root(nodes)()
+    base = datetime(2026, 10, 29, 9, 0, 0)
+    tmp = Path(tempfile.mkdtemp(prefix="ldv-clk-"))
+    store = tmp / "nodes"
+    store.mkdir(parents=True, exist_ok=True)
+    try:
+        # ㊾ 冻结 ⇒ now() 恒定（不随时间走）
+        with CLK.frozen(base):
+            a, b = CLK.now(), CLK.now()
+        ok("★ [时钟] ㊾ 冻结后 now() 恒定（同一时刻取两次相等）",
+           a == b == base, f"{a} vs {b}")
+
+        # ㊿ 年龄口径：前进 1 天 ⇒ age_days 正好 +1
+        d0 = CLK.age_days(base, base)
+        d1 = CLK.age_days(base, base + timedelta(days=1))
+        ok("★ [时钟] ㊿ age_days 以天为单位且可加（+1 天 ⇒ +1.0）",
+           abs(d1 - d0 - 1.0) < 1e-9, f"{d0} → {d1}")
+
+        # 51 没有基线 ⇒ k=0（不许假装闲过）
+        ok("★ [时钟] 51 账本没有 seen ⇒ k=0（没有基线就不假装闲过）",
+           AG.idle_rounds(store, now=base) == 0,
+           f"k={AG.idle_rounds(store, now=base)}")
+
+        # 埋基线后：30 分钟 ⇒ k=1，90 分钟 ⇒ k=3
+        AG.append_record(store, kind="seen", keys=["__x__"], now=base)
+        k30 = AG.idle_rounds(store, now=base + timedelta(minutes=30))
+        k90 = AG.idle_rounds(store, now=base + timedelta(minutes=90))
+        ok("★ [时钟] 52 由时间推 k：30 分钟 ⇒ 1，90 分钟 ⇒ 3",
+           (k30, k90) == (1, 3), f"k30={k30} k90={k90}")
+
+        # 53 上限：快进 10 天也只到 IDLE_CAP（门槛不许无限降）
+        kbig = AG.idle_rounds(store, now=base + timedelta(days=10))
+        # ⚠️ 断言名**不用 f-string**：静态扫描把它记成「动态标签」，
+        #    而「动态标签数」是冻结的（保证 ③）—— 多一个就红。
+        ok("★ [时钟] 53 上限生效：快进 10 天 ⇒ k 顶到 IDLE_CAP（不无限降门槛）",
+           kbig == AG.IDLE_CAP, f"k={kbig} cap={AG.IDLE_CAP}")
+
+        # 54 时钟回拨 ⇒ k=0（不推成负数、也不假装闲）
+        kback = AG.idle_rounds(store, now=base - timedelta(days=1))
+        ok("★ [时钟] 54 时钟回拨 ⇒ k=0（不推负、不假装闲）",
+           kback == 0, f"k={kback}")
+
+        # 55 tick 会把「摆出来的」记进账本，且 ts 用的是时钟那一刻
+        n_before = len(AG.agenda_path(store).read_text(encoding="utf-8").splitlines())
+        with CLK.frozen(base + timedelta(minutes=30)):
+            out = AG.tick(kern, store)
+        lines = AG.agenda_path(store).read_text(encoding="utf-8").splitlines()
+        last = json.loads(lines[-1]) if len(lines) > n_before else {}
+        ok("★ [时钟] 55 tick 记 `seen`：账本 +1 行，ts = 时钟那一刻，k 落在记录里",
+           len(lines) > n_before and last.get("kind") == "seen"
+           and last.get("ts") == (base + timedelta(minutes=30)).isoformat(timespec="seconds")
+           and last.get("k") == 1,
+           f"末行 {last}")
+
+        # 56 ★ 反向对照：同一 k，两条路（人手给 K / 时钟推）⇒ 集合逐字相同
+        # ⚠️ 账本落在 `nodes_dir.parent` ⇒ 两条对照必须**各自的父目录**，
+        #    否则会共用同一个 `agenda.jsonl`（第一版就是这么红的：k 被前一条 tick 抬高了）
+        store2 = tmp / "b" / "nodes"
+        store2.mkdir(parents=True, exist_ok=True)
+        AG.append_record(store2, kind="seen", keys=["__x__"], now=base)
+        with CLK.frozen(base + timedelta(minutes=90)):
+            via_clock = AG.tick(kern, store2, record=False)
+        via_hand = AG.agenda(kern, k=3)
+        sig = lambda o: ([r["键"] for r in o["到点"]], [r["键"] for r in o["未到"]],
+                         o["阈值"])
+        ok("★ [时钟] 56 反向对照：k=3 由时钟推 与 由人手给，到点/未到/阈值 逐字相同",
+           sig(via_clock) == sig(via_hand), f"{sig(via_clock)} vs {sig(via_hand)}")
+
+        # 57 reset 之后回到系统时钟（不是还冻着）
+        CLK.reset()
+        gap = abs((CLK.now() - datetime.now()).total_seconds())
+        ok("★ [时钟] 57 reset 后回到系统时钟（与 datetime.now 差 < 5 秒）",
+           gap < 5, f"差 {gap:.1f}s")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def main() -> int:
     for fn in (test_tri, test_loader, test_kernel, test_exposure_model, test_selfopt,
                test_sequence, test_flows, test_emergence, test_divergence,
@@ -11092,6 +11702,7 @@ def main() -> int:
                test_versioning,
                test_reusable_build, test_lock_scope,
                test_service_shell, test_service_failure_paths,
+               test_service_p1, test_service_agent_http,
                test_incremental_random, test_service_consumption,
                test_derived_rollback, test_b_known_answers, test_guarantee_matrix,
                test_predicates,
@@ -11110,6 +11721,7 @@ def main() -> int:
                test_session,
                test_combine_budget,
                test_predicate_naming,
+               test_clock,
                test_dimension_values,
                test_version_spots,
                test_agenda,

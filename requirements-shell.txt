@@ -1,0 +1,9 @@
+# 服务壳（`serve*.py`）的第三方依赖清单。
+#
+# ⚠️ 内核 `ldv/` **仍然零依赖**（`docs/服务化设计.md` §0 约束①）：这个文件只管壳。
+# ⚠️ 只有 `/metrics` 的 Prometheus 文本出口需要它；**没装也能跑** ——
+#    `serve.prometheus_text()` 会返回 `None`，`/metrics` 退化成 JSON 并在正文写明原因。
+#    所以「装不上」不会让服务起不来，只是出口不标准。
+#
+# 安装：python -m pip install -r requirements-shell.txt
+prometheus-client==0.26.0

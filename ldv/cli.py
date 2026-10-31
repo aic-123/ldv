@@ -647,6 +647,57 @@ def agenda_report(*, k: int = 0, days: float | None = None) -> tuple[bool, str]:
     return True, "\n".join(lines)
 
 
+def agenda_tick_report(*, idle_minutes: float = 0.0) -> tuple[bool, str]:
+    """`--agenda-tick`：**宿主一句话都没说**，让系统自己走一格。**纯诊断，不碰仓库里的账本**。
+
+    与 `--agenda K` 的差别只有一处：**K 从哪来**。
+      · `--agenda K`      —— K 由人/宿主给（「我闲了 K 轮」）；
+      · `--agenda-tick`   —— K 由**内部时钟**推：距上次「看到待办」过了多少个
+        `IDLE_PERIOD_MIN`（30 分钟），夹在 `[0, IDLE_CAP]`（6）之间。
+
+    ⚠️ 账本写在**临时目录**里：诊断不许改动语料旁的 `agenda.jsonl`。
+    ⚠️ `--idle-minutes N` 是**演示**（把「现在」快进 N 分钟），不是生产能力 ——
+       它借的是 `--days` 那个先例：想看阈值怎么松，就得先造出「时间过去了」。
+    """
+    import tempfile
+    from datetime import timedelta
+    from pathlib import Path
+
+    from .checks._fixtures import load, make_keyset_root
+    from .core import agenda as _ag
+    from .core import clock as _clk
+
+    loaded = load()
+    if loaded is None:
+        return False, "语料读不到（`_data/` 不在？）—— 议程需要能加载的材料"
+    nodes, _edges, _d = loaded
+    kern = make_keyset_root(nodes)()
+
+    store = Path(tempfile.mkdtemp(prefix="ldv-tick-")) / "nodes"
+    store.mkdir(parents=True, exist_ok=True)
+    base = _clk.now()
+    # 埋一个基线：没有「上次看到待办」的时刻，k 恒为 0（那正是「没有基线就不假装闲过」）
+    _ag.append_record(store, kind="seen", keys=["__baseline__"], now=base)
+
+    with _clk.frozen(base + timedelta(minutes=idle_minutes)):
+        out = _ag.tick(kern, store)
+
+    lines = [f"内部时钟：k={out['空闲轮次']}｜阈值 τ={out['阈值']}",
+             f"到点 {len(out['到点'])} 条｜未到 {len(out['未到'])} 条"
+             f"｜老化兜底 {len(out['老化兜底'])} 条"]
+    if out["到点"]:
+        for r in out["到点"][:8]:
+            lines.append(f"  · [{r['档位']}] {r['键']}  激活={r['激活']} "
+                         f"次数={r['出现次数']} 首次={r['首次']}")
+    else:
+        lines.append("  （这一档门槛下没有到点的 —— 不是「没有问题」，是「还没轮到」）")
+    ck = out.get("时钟") or {}
+    lines.append(f"时钟：k 来源={ck.get('k 来源')}｜周期 {ck.get('周期（分钟）')} 分钟"
+                 f"｜闲置 {ck.get('闲置（分钟）')} 分钟｜上限 {ck.get('上限')}")
+    lines.append("⚠️ 到点 ≠ 必须做；本入口只决定「什么时候报」，不改档位、不改答案集合。")
+    return True, "\n".join(lines)
+
+
 def main(argv: list[str]) -> int:
     args = argv[1:]
     # ★ **可选入口：建树计划**（2026-10-22，`--plan [轮数]`）。
@@ -659,6 +710,21 @@ def main(argv: list[str]) -> int:
             _rounds = int(args[_i + 1])
         _ok, _text = plan_report(rounds=_rounds, snapshot="--snapshot" in args,
                                  until_done="--plan-all" in args)
+        print(_text)
+        print(f"\n退出码 {0 if _ok else 1}")
+        return 0 if _ok else 1
+    # ★ **可选入口：内部时钟走一格**（2026-10-29，`--agenda-tick`）。
+    #   与 `--agenda K` 同一形状（只诊断、不落盘、不进 A/B/D），差别是 K 由时间推。
+    if "--agenda-tick" in args:
+        _mins = 0.0
+        if "--idle-minutes" in args:
+            _j = args.index("--idle-minutes")
+            if _j + 1 < len(args):
+                try:
+                    _mins = float(args[_j + 1])
+                except ValueError:
+                    _mins = 0.0
+        _ok, _text = agenda_tick_report(idle_minutes=_mins)
         print(_text)
         print(f"\n退出码 {0 if _ok else 1}")
         return 0 if _ok else 1

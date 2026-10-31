@@ -118,12 +118,26 @@ def default_corpus() -> str:
 
 
 class App:
-    def __init__(self, corpus: str | None = None, *, usage_now=None) -> None:
+    def __init__(self, corpus: str | None = None, *, root=None,
+                 usage_now=None) -> None:
+        """`corpus` 按**名字**找语料（走 `LDV_CORPUS` + 候选链）；
+        `root` 直接给**目录**（服务壳走这条：它已经知道租户在哪，不该再靠环境变量）。
+
+        ⚠️ `corpus` 那条路会**改进程环境变量** `LDV_CORPUS`（2026-10-20 起就是这样）。
+           单进程单语料时没问题，但一个进程服务多个租户时，两个并发请求会互相覆盖 ——
+           而「覆盖」的表现是**安静地读错语料**，不是报错。`root=` 就是为此加的：
+           它一个环境变量都不碰。P1 的 `/ask` 走 `root=`。
+        """
         import os
-        if corpus:
-            os.environ["LDV_CORPUS"] = corpus
-        from ldv.checks._fixtures import find_corpus
-        root = find_corpus()
+        if root is not None:
+            root = Path(root)
+            if not root.is_dir():
+                raise SystemExit(f"语料目录不存在：{root}")
+        else:
+            if corpus:
+                os.environ["LDV_CORPUS"] = corpus
+            from ldv.checks._fixtures import find_corpus
+            root = find_corpus()
         if root is None:
             raise SystemExit("找不到语料（用 --corpus 指定，或设 LDV_CORPUS）")
         t0 = time.time()
@@ -548,6 +562,19 @@ class App:
             return {"ok": False, "error": f"不认识的字段 {extra} —— 只认 {list(FIELDS)}"}
         req = frozenset(spec.get("require") or ())
         forb = frozenset(spec.get("forbid") or ())
+        # ★ **空库要单独说**（2026-10-29 端到端抓到）：一个刚建好、还没喂材料的库，
+        #   `all_keys` 是空集 ⇒ 下面那条「拼错的键」判据会把**任何**问题都判成
+        #   「这些键在语料里不存在……可能是拼错了」，而 `suggest` 又给不出相近的。
+        #   于是第一次问一个新库，用户看到的是「你打错了」——
+        #   真正的原因（**这里还没有材料**）一个字都没说。
+        #   ⚠️ 与「超出结构」仍然分开：那个说的是「结构里没这个维度」，这个说的是
+        #      「连结构都还没有」。两种状态要能分辨，否则人会去改一个本来没错的参数。
+        if not self.nodes:
+            return {"ok": False, "empty_corpus": True, "plugin": plugin,
+                    "requirement": {"require": sorted(req), "forbid": sorted(forb)},
+                    "out_of_structure": False,
+                    "error": "这个库还是空的（0 项）：**还没有材料可问**，不是键写错了",
+                    "hint": "先往 `<语料>/nodes/` 放节点（一节点一个 `.md`），再问一次。"}
         # ★ 拼错的键要**当场拒收**，不能静默返回 0 条 ——
         #   「键写错了」与「材料里真没有」在界面上长得一模一样。
         unknown = sorted(k for k in (req | forb) if k not in self.all_keys)
