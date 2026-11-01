@@ -1,0 +1,13 @@
+==============================================================================
+接入验证｜语料 ext-wiki-vote｜查询 ['influence=≥100']
+==============================================================================
+
+① 从零开始（先清空正式 + 缓冲）
+Traceback (most recent call last):
+  File "C:\Users\19253\WorkBuddy\ldv\repo\evidence\_probe_usage_wiring.py", line 140, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "C:\Users\19253\WorkBuddy\ldv\repo\evidence\_probe_usage_wiring.py", line 63, in main
+    f"ordered_by = {r0.get('ordered_by')}｜{r0['n_answer']} 项 / {r0['n_branches']} 支")
+                                            ~~^^^^^^^^^^^^
+KeyError: 'n_answer'

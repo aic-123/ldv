@@ -1,0 +1,22 @@
+被测：C:\Users\19253\WorkBuddy\ldv\repo｜git HEAD 由外层记录｜Python 3.13.14
+usage_store sha256 由外层记录；NOW=2026-11-01T12:00:00
+[B1] PASS 读数={"aged": {}, "load": 0, "stage_ok": true}
+[B2] PASS 读数={"n_batches": 1, "overwrote": true, "shown": ["D3"]}
+[B3] PASS 读数={"cap": {"evicted": 0, "n": 50}, "cap+1": {"evicted": 1, "n": 50}, "cap-1": {"evicted": 0, "n": 49}}
+[B4] PASS 读数={"extra": [], "missing": [], "remain_n": 50, "want_n": 50}
+[B5] PASS 读数={"drop1": ["c07865d0.md"], "drop2": ["c07865d0.md"]}
+[B6] PASS 读数={"outcomes": [1.0, 1.0, 1.0], "records": 3, "remaining_seq": [2, 1, 0], "stage_left": 0}
+[D2] PASS 读数={"D1": 2.0, "D2": 0.001953125, "expect_D2": 0.001953125, "ratio": 1024.0}
+[D3] PASS 读数={"decay_weight_empty": 1.0, "no_at_count": 1}
+[D4] PASS 读数={"future": 1.0, "illegal": 1.0, "raised": null}
+[D5] PASS 读数={"-30d hl=30": {"err": 0.0, "got": 0.5, "want": 0.5}, "-60d": {"err": 0.0, "got": 0.25, "want": 0.25}, "-90d": {"err": 0.0, "got": 0.125, "want": 0.125}, "-90d hl=0": {"err": 0.0, "got": 1.0, "want": 1.0}, "now": {"err": 0.0, "got": 1.0, "want": 1.0}}
+[D6] PASS 读数={"files": ["86f7e437-D1.md", "e9d71f5e-D2.md"], "identical": true, "n_files": 2}
+[D7] PASS 读数={"expect": -0.001953125, "value": -0.001953125}
+[X1] PASS 读数={"A": "D7", "B": "D39", "aged_records": 1, "ans_equal": true, "ordered_by": ["default", "usage"], "posA": 1, "posB": 0, "recorded": [true, true], "root": "C:\\Users\\19253\\AppData\\Local\\Temp\\m0-x1-pnif240w\\_data\\x1", "tA": 0.0009765625, "tB": 2.0}
+[X2] PASS 读数={"D": "D7", "D_in_nodes": true, "E": "D39", "aged_records": 1, "n_branches": [39, 39], "posD": 1, "posE": 0, "root": "C:\\Users\\19253\\AppData\\Local\\Temp\\m0-x2-p7fxir0s\\_data\\x2", "tD": 7.888609052210118e-31, "tE": 2.0}
+[X3] PASS 读数={"aged": {}, "batches": 1, "outcomes": [1.0], "records_after_100": 0, "records_after_promote": 1, "root": "C:\\Users\\19253\\AppData\\Local\\Temp\\m0-x3-8wkw9dlt\\_data\\x3"}
+[X4] FAIL 读数={"after_rebuild": ["D54", "D17", "D19"], "diff_across_session": false, "first_after_drill": ["D54", "D17", "D19"], "first_before": ["D7", "D39", "D43"], "root": "C:\\Users\\19253\\AppData\\Local\\Temp\\m0-x4-6zht2poo\\_data\\x4", "same_in_session": false}
+
+=== 汇总：16 条，PASS 15，FAIL 1 ===
+FAIL: X4
+耗时 111.9s

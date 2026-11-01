@@ -1,0 +1,25 @@
+被测 C:\Users\19253\WorkBuddy\ldv\repo｜Python 3.13.14｜NOW=2026-11-01T12:00:00
+[W1] PASS 读数={"n_answer": 4037, "n_branches": 39, "ordered_by": "default"}
+[W2] PASS 读数={"batches": 1, "n_branches": 39, "n_shown": 39}
+[W3] PASS 读数={"ordered_by": "default", "records": 0, "usage_loaded": 0}
+[W4] PASS 读数={"note": "已记录（下钻 = 有用）；这批还剩 38 支待看", "recorded": true, "records": 1, "stage_left": 38}
+[W5] PASS 读数={"after": {"fp": "9a2067a61d123f74", "n_keys": 37, "n_nodes": 4037}, "before": {"fp": "9a2067a61d123f74", "n_keys": 37, "n_nodes": 4037}, "tree_equal": true}
+[W6] PASS 读数={"ordered_by": "usage", "tendency_n": 1, "usage_loaded": 1}
+[W7] PASS 读数={"answer_equal": true, "n_answer": [4037, 4037], "n_branches": [39, 39]}
+[W8] PASS 读数={"why": "已有同一 (qfp, did) 的记录 —— 只追加，不覆写"}
+[W9] PASS 读数={"why": "这一支不在这次查询的展示里，不记"}
+[W10] PASS 读数={"deleted": 1, "ordered_by": "default", "staged": 1}
+[F6] PASS 读数={"did": "D7", "fresh": 1.0, "old": 0.0009765625, "records": 1, "usage_loaded": 1}
+[F7] PASS 读数={"answer_equal": true, "n_answer": [4037, 4037], "n_branches": [39, 39]}
+[X4R] PASS 读数={"ans_equal": true, "changed_in_session": true, "drilled": "D54", "o1_first3": ["D7", "D39", "D43"], "o2_first3": ["D54", "D17", "D19"], "o3_first": ["D54"], "ordered_by": "usage", "persisted": true, "recorded": true, "tendency_after": 20.0}
+[BR-A] PASS 读数={"candidates": 2, "nodes": 155, "over_budget": 0, "reject_rate": 1.0, "rejected": 2, "used": 0, "语料覆盖": "1/6（arxiv-taxonomy）"}
+[BR-B] PASS 读数={"after": 175, "base": 155, "committed": 20, "during": 155, "rejected": 0, "staged": 20}
+[BR-C1] PASS 读数={"已提交": [], "拒收": [], "说明": "缓冲区为空"}
+[BR-C2] PASS 读数={"committed": 0, "reason_files": 10, "rejected": 10}
+[BR-C3] PASS 读数={"after": 255, "base": 155, "committed": 100}
+[BR-D1] PASS 读数={"hit": 0, "n": 175, "reread": 175}
+[BR-D2] PASS 读数={"hit": 175, "reread": 0}
+[BR-D3] PASS 读数={"hit": 175, "n": 176, "reread": 1}
+
+=== 汇总：21 条，PASS 21，FAIL 0 ===
+FAIL: 无
