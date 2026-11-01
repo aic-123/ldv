@@ -1,0 +1,14 @@
+方向 101｜倾向 8 个｜keep_t 22｜keep_s 35
+字数 full 14802｜folded 3073｜shuffled 3918
+倾向排序 top: ['D90', 'D89', 'D55', 'D39', 'D62', 'D61', 'D59', 'D57']
+  D1v2 inst0 left=folded pick=摘要2 win=False
+  D1v2 inst1 left=other pick=摘要1 win=False
+  D1v2 inst2 left=folded pick=摘要2 win=False
+  D1v2 inst3 left=other pick=摘要1 win=False
+  D1v2 inst4 left=folded pick=摘要2 win=False
+  D2v2 inst0 left=folded pick=摘要2 win=False
+  D2v2 inst1 left=other pick=摘要1 win=False
+  D2v2 inst2 left=folded pick=摘要2 win=False
+  D2v2 inst3 left=other pick=摘要1 win=False
+  D2v2 inst4 left=folded pick=摘要2 win=False
+{"D1_folded_wins": 0, "D2_folded_wins": 0, "K": 8, "n_dirs": 101, "keep_t": 22, "keep_s": 35, "chars": [14802, 3073, 3918]}

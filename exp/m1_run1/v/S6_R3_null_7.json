@@ -1,0 +1,19 @@
+{
+ "task": "S6",
+ "role": "R3",
+ "arm": "null",
+ "instance": 7,
+ "prompt_sha256": "98d2b48d032ab9dc309b8a447a03fdd71b6698984142b2aa516354ae96b671aa",
+ "answer": "建这份结构的人最看重“证据状态（evidence_status）”，尤其是“同行评审”这一层级——它被反复用作分类的首要切分维度，且覆盖了绝大多数条目（3017+23+10+1+2+1+147）。其次是“类型（type）”的细分（article/review/conference-paper 等），而“来源种类（source.kind）”多作为补充或排除条件出现。\n\n{\"most_important\": \"证据状态（尤其是否同行评审）是分类的首要维度，被视为最重要的区分依据。\", \"evidence\": [\"每个分支几乎都以 evidence_status 开头或作为核心限定条件\", \"同行评审相关分支覆盖了绝大多数条目（如 3017 项、147 项、23 项等）\", \"source.kind 多出现在排除项（¬）或次级限定中，而非首要切分\"], \"verdict\": \"有倾向\"}",
+ "json": {
+  "most_important": "证据状态（尤其是否同行评审）是分类的首要维度，被视为最重要的区分依据。",
+  "evidence": [
+   "每个分支几乎都以 evidence_status 开头或作为核心限定条件",
+   "同行评审相关分支覆盖了绝大多数条目（如 3017 项、147 项、23 项等）",
+   "source.kind 多出现在排除项（¬）或次级限定中，而非首要切分"
+  ],
+  "verdict": "有倾向"
+ },
+ "no_tendency": false,
+ "has_evidence": true
+}

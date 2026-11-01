@@ -1,0 +1,11 @@
+检索：require=[]（全部方向）｜以下是这个库的 10 个方向
+1. era=2020以前 ∧ evidence_status=仓储 ∧ type=review ∧ ¬(evidence_status=同行评审 ∨ type=article) ｜ 2 项 ｜ 使用 1 次 ｜ 最近 300 天前
+2. era=2020以前 ∧ type=article ∧ ¬(evidence_status=仓储 ∨ evidence_status=未知 ∨ source.kind=journal) ｜ 6 项 ｜ 使用 1 次 ｜ 最近 300 天前
+3. era=2020以前 ∧ evidence_status=未知 ∧ type=article ∧ ¬(evidence_status=仓储 ∨ source.kind=journal) ｜ 8 项 ｜ 使用 1 次 ｜ 最近 300 天前
+4. evidence_status=同行评审 ∧ type=article ∧ ¬(era=2020以前) ｜ 214 项 ｜ 使用 1 次 ｜ 最近 300 天前
+5. era=2020以前 ∧ evidence_status=同行评审 ∧ type=review ∧ ¬(type=article) ｜ 537 项 ｜ 使用 1 次 ｜ 最近 300 天前
+6. evidence_status=仓储 ∧ type=article ∧ ¬(era=2020以前 ∨ evidence_status=同行评审) ｜ 5 项 ｜ 使用 1 次 ｜ 最近 300 天前
+7. era=2020以前 ∧ source.kind=journal ∧ type=article ｜ 2803 项 ｜ 使用 1 次 ｜ 最近 0 天前
+8. type=article ∧ ¬(era=2020以前 ∨ evidence_status=仓储 ∨ evidence_status=同行评审) ｜ 2 项 ｜ 使用 1 次 ｜ 最近 300 天前
+9. era=2020以前 ∧ type=review ∧ ¬(evidence_status=仓储 ∨ evidence_status=同行评审 ∨ type=article) ｜ 1 项 ｜ 使用 1 次 ｜ 最近 300 天前
+10. era=2020以前 ∧ evidence_status=仓储 ∧ type=article ∧ ¬(source.kind=journal) ｜ 30 项 ｜ 使用 1 次 ｜ 最近 300 天前

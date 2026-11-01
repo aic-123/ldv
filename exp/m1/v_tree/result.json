@@ -1,0 +1,490 @@
+{
+ "summary": {
+  "A_tree_A_tasks": {
+   "n_tasks": 5,
+   "n_valid": 3,
+   "real_rate": 0.867,
+   "null_rate": 0.933
+  },
+  "A_tree_B_tasks": {
+   "n_tasks": 5,
+   "n_valid": 0,
+   "real_rate": null,
+   "null_rate": null
+  },
+  "B_tree_B_tasks": {
+   "n_tasks": 5,
+   "n_valid": 2,
+   "real_rate": 1.0,
+   "null_rate": 0.9
+  },
+  "B_tree_A_tasks": {
+   "n_tasks": 5,
+   "n_valid": 2,
+   "real_rate": 1.0,
+   "null_rate": 1.0
+  }
+ },
+ "detail": [
+  {
+   "tree": "A",
+   "rows": [
+    {
+     "task": "2020 年及以后发表的综述（review）",
+     "require": [
+      "era=2020及以后",
+      "type=review"
+     ],
+     "n_target": 35,
+     "best_ratio": 1.0,
+     "valid": true,
+     "instances": [
+      {
+       "inst": 0,
+       "pick": 11,
+       "correct_no": 11,
+       "hit": true
+      },
+      {
+       "inst": 1,
+       "pick": 7,
+       "correct_no": 7,
+       "hit": true
+      },
+      {
+       "inst": 2,
+       "pick": 9,
+       "correct_no": 9,
+       "hit": true
+      },
+      {
+       "inst": 3,
+       "pick": 11,
+       "correct_no": 11,
+       "hit": true
+      },
+      {
+       "inst": 4,
+       "pick": 7,
+       "correct_no": 7,
+       "hit": true
+      }
+     ],
+     "real_rate": 1.0,
+     "null_rate": 1.0
+    },
+    {
+     "task": "2020 年及以后发表的期刊论文（article）",
+     "require": [
+      "era=2020及以后",
+      "type=article"
+     ],
+     "n_target": 221,
+     "best_ratio": 0.968,
+     "valid": true,
+     "instances": [
+      {
+       "inst": 0,
+       "pick": 9,
+       "correct_no": 9,
+       "hit": true
+      },
+      {
+       "inst": 1,
+       "pick": 2,
+       "correct_no": 2,
+       "hit": true
+      },
+      {
+       "inst": 2,
+       "pick": 2,
+       "correct_no": 2,
+       "hit": true
+      },
+      {
+       "inst": 3,
+       "pick": 7,
+       "correct_no": 7,
+       "hit": true
+      },
+      {
+       "inst": 4,
+       "pick": 12,
+       "correct_no": 12,
+       "hit": true
+      }
+     ],
+     "real_rate": 1.0,
+     "null_rate": 1.0
+    },
+    {
+     "task": "2020 年以前发表的综述",
+     "require": [
+      "era=2020以前",
+      "type=review"
+     ],
+     "n_target": 540,
+     "best_ratio": 0.0,
+     "valid": false
+    },
+    {
+     "task": "2020 年及以后、同行评审的材料",
+     "require": [
+      "era=2020及以后",
+      "evidence_status=同行评审"
+     ],
+     "n_target": 287,
+     "best_ratio": 0.746,
+     "valid": true,
+     "instances": [
+      {
+       "inst": 0,
+       "pick": 1,
+       "correct_no": 9,
+       "hit": false
+      },
+      {
+       "inst": 1,
+       "pick": 2,
+       "correct_no": 2,
+       "hit": true
+      },
+      {
+       "inst": 2,
+       "pick": 11,
+       "correct_no": 2,
+       "hit": false
+      },
+      {
+       "inst": 3,
+       "pick": 7,
+       "correct_no": 7,
+       "hit": true
+      },
+      {
+       "inst": 4,
+       "pick": 12,
+       "correct_no": 12,
+       "hit": true
+      }
+     ],
+     "real_rate": 0.6,
+     "null_rate": 0.8
+    },
+    {
+     "task": "2020 年以前发表的会议论文",
+     "require": [
+      "era=2020以前",
+      "type=conference-paper"
+     ],
+     "n_target": 144,
+     "best_ratio": 0.0,
+     "valid": false
+    }
+   ],
+   "task_class": "A"
+  },
+  {
+   "tree": "A",
+   "rows": [
+    {
+     "task": "期刊上的论文（article, source.kind=journal）",
+     "require": [
+      "type=article",
+      "source.kind=journal"
+     ],
+     "n_target": 3017,
+     "best_ratio": 0.071,
+     "valid": false
+    },
+    {
+     "task": "同行评审的综述",
+     "require": [
+      "type=review",
+      "evidence_status=同行评审"
+     ],
+     "n_target": 572,
+     "best_ratio": 0.061,
+     "valid": false
+    },
+    {
+     "task": "同行评审的会议论文",
+     "require": [
+      "type=conference-paper",
+      "evidence_status=同行评审"
+     ],
+     "n_target": 170,
+     "best_ratio": 0.153,
+     "valid": false
+    },
+    {
+     "task": "预印本（preprint）",
+     "require": [
+      "type=preprint"
+     ],
+     "n_target": 152,
+     "best_ratio": 0.118,
+     "valid": false
+    },
+    {
+     "task": "来自仓储（非期刊）的论文",
+     "require": [
+      "type=article",
+      "evidence_status=仓储"
+     ],
+     "n_target": 35,
+     "best_ratio": 0.143,
+     "valid": false
+    }
+   ],
+   "task_class": "B"
+  },
+  {
+   "tree": "B",
+   "rows": [
+    {
+     "task": "期刊上的论文（article, source.kind=journal）",
+     "require": [
+      "type=article",
+      "source.kind=journal"
+     ],
+     "n_target": 3017,
+     "best_ratio": 0.929,
+     "valid": true,
+     "instances": [
+      {
+       "inst": 0,
+       "pick": 4,
+       "correct_no": 4,
+       "hit": true
+      },
+      {
+       "inst": 1,
+       "pick": 4,
+       "correct_no": 4,
+       "hit": true
+      },
+      {
+       "inst": 2,
+       "pick": 3,
+       "correct_no": 3,
+       "hit": true
+      },
+      {
+       "inst": 3,
+       "pick": 7,
+       "correct_no": 7,
+       "hit": true
+      },
+      {
+       "inst": 4,
+       "pick": 2,
+       "correct_no": 2,
+       "hit": true
+      }
+     ],
+     "real_rate": 1.0,
+     "null_rate": 1.0
+    },
+    {
+     "task": "同行评审的综述",
+     "require": [
+      "type=review",
+      "evidence_status=同行评审"
+     ],
+     "n_target": 572,
+     "best_ratio": 0.0,
+     "valid": false
+    },
+    {
+     "task": "同行评审的会议论文",
+     "require": [
+      "type=conference-paper",
+      "evidence_status=同行评审"
+     ],
+     "n_target": 170,
+     "best_ratio": 0.0,
+     "valid": false
+    },
+    {
+     "task": "预印本（preprint）",
+     "require": [
+      "type=preprint"
+     ],
+     "n_target": 152,
+     "best_ratio": 0.0,
+     "valid": false
+    },
+    {
+     "task": "来自仓储（非期刊）的论文",
+     "require": [
+      "type=article",
+      "evidence_status=仓储"
+     ],
+     "n_target": 35,
+     "best_ratio": 0.857,
+     "valid": true,
+     "instances": [
+      {
+       "inst": 0,
+       "pick": 6,
+       "correct_no": 6,
+       "hit": true
+      },
+      {
+       "inst": 1,
+       "pick": 1,
+       "correct_no": 1,
+       "hit": true
+      },
+      {
+       "inst": 2,
+       "pick": 1,
+       "correct_no": 1,
+       "hit": true
+      },
+      {
+       "inst": 3,
+       "pick": 3,
+       "correct_no": 3,
+       "hit": true
+      },
+      {
+       "inst": 4,
+       "pick": 1,
+       "correct_no": 1,
+       "hit": true
+      }
+     ],
+     "real_rate": 1.0,
+     "null_rate": 0.8
+    }
+   ],
+   "task_class": "B"
+  },
+  {
+   "tree": "B",
+   "rows": [
+    {
+     "task": "2020 年及以后发表的综述（review）",
+     "require": [
+      "era=2020及以后",
+      "type=review"
+     ],
+     "n_target": 35,
+     "best_ratio": 0.0,
+     "valid": false
+    },
+    {
+     "task": "2020 年及以后发表的期刊论文（article）",
+     "require": [
+      "era=2020及以后",
+      "type=article"
+     ],
+     "n_target": 221,
+     "best_ratio": 0.968,
+     "valid": true,
+     "instances": [
+      {
+       "inst": 0,
+       "pick": 7,
+       "correct_no": 7,
+       "hit": true
+      },
+      {
+       "inst": 1,
+       "pick": 3,
+       "correct_no": 3,
+       "hit": true
+      },
+      {
+       "inst": 2,
+       "pick": 4,
+       "correct_no": 4,
+       "hit": true
+      },
+      {
+       "inst": 3,
+       "pick": 2,
+       "correct_no": 2,
+       "hit": true
+      },
+      {
+       "inst": 4,
+       "pick": 6,
+       "correct_no": 6,
+       "hit": true
+      }
+     ],
+     "real_rate": 1.0,
+     "null_rate": 1.0
+    },
+    {
+     "task": "2020 年以前发表的综述",
+     "require": [
+      "era=2020以前",
+      "type=review"
+     ],
+     "n_target": 540,
+     "best_ratio": 0.0,
+     "valid": false
+    },
+    {
+     "task": "2020 年及以后、同行评审的材料",
+     "require": [
+      "era=2020及以后",
+      "evidence_status=同行评审"
+     ],
+     "n_target": 287,
+     "best_ratio": 0.746,
+     "valid": true,
+     "instances": [
+      {
+       "inst": 0,
+       "pick": 7,
+       "correct_no": 7,
+       "hit": true
+      },
+      {
+       "inst": 1,
+       "pick": 3,
+       "correct_no": 3,
+       "hit": true
+      },
+      {
+       "inst": 2,
+       "pick": 4,
+       "correct_no": 4,
+       "hit": true
+      },
+      {
+       "inst": 3,
+       "pick": 2,
+       "correct_no": 2,
+       "hit": true
+      },
+      {
+       "inst": 4,
+       "pick": 6,
+       "correct_no": 6,
+       "hit": true
+      }
+     ],
+     "real_rate": 1.0,
+     "null_rate": 1.0
+    },
+    {
+     "task": "2020 年以前发表的会议论文",
+     "require": [
+      "era=2020以前",
+      "type=conference-paper"
+     ],
+     "n_target": 144,
+     "best_ratio": 0.0,
+     "valid": false
+    }
+   ],
+   "task_class": "A"
+  }
+ ]
+}

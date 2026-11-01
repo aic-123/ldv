@@ -1,0 +1,14 @@
+{
+ "task": "D2v2",
+ "instance": 1,
+ "left": "other",
+ "right": "folded",
+ "pick": "摘要1",
+ "folded_wins": false,
+ "prompt_sha256": "ddadb78b3f769c12aec06c931b6378eaae07d31b4fbd80e616fe447f266f7f9f",
+ "answer": "两份摘要的差别主要在于：摘要1先按 `type=article` 与 `¬type=article` 做了大分叉，并在 article 分支下继续展开；摘要2则几乎完全沿着“不断排除已列出的类别”这一条链机械地往下钻，分支更单一、更像按固定规则逐项剥离。摘要1在顶层就做了更有判断性的取舍（先抓 article 与非 article 的主干），而摘要2更像把剩余项逐个列尽。  \n因此摘要1更像人组织的，摘要2更像机械逐个列出。\n\n{\"human\": \"摘要1\", \"reason\": \"摘要1先按 article/非 article 做主干分叉，体现了有取舍的组织判断；摘要2基本沿单一排除链逐层罗列剩余类别，分支方式更机械。\"}",
+ "json": {
+  "human": "摘要1",
+  "reason": "摘要1先按 article/非 article 做主干分叉，体现了有取舍的组织判断；摘要2基本沿单一排除链逐层罗列剩余类别，分支方式更机械。"
+ }
+}

@@ -1,0 +1,227 @@
+{
+ "P1_F1_real_review": 0,
+ "P2_F1_fake_article": 5,
+ "P3_F2_real_review": 0,
+ "P4_F2_fake_article": 5,
+ "of": 5,
+ "A": "D11",
+ "B": "D7",
+ "n_drilled": 6,
+ "ordered_by": "usage",
+ "bodies": {
+  "F1_real": "检索：require=[]（全部方向）｜按使用历史排序\n1. type=book-chapter ∧ ¬(era=2020以前 ∨ evidence_status=同行评审 ∨ type=article ∨ type=preprint ∨ type=review) ｜ 9 项 ｜ 从未使用\n2. source.kind=ebook platform ∧ ¬(era=2020以前 ∨ evidence_status=同行评审 ∨ type=article ∨ type=book-chapter ∨ type=preprint ∨ type=review) ｜ 7 项 ｜ 从未使用\n3. type=conference-paper ∧ ¬(era=2020以前 ∨ evidence_status=同行评审 ∨ source.kind=ebook platform ∨ type=article ∨ type=book-chapter ∨ type=preprint ∨ type=review) ｜ 1 项 ｜ 从未使用\n4. （全部） ∧ ¬(era=2020以前 ∨ evidence_status=同行评审 ∨ source.kind=ebook platform ∨ type=article ∨ type=book-chapter ∨ type=conference-paper ∨ type=preprint ∨ type=review) ｜ 1 项 ｜ 从未使用\n5. era=2020以前 ∧ evidence_status=同行评审 ∧ type=review ∧ ¬(type=article) ｜ 537 项 ｜ 从未使用\n6. era=2020以前 ∧ source.kind=journal ∧ type=article ｜ 2803 项 ｜ 从未使用\n7. type=article ∧ ¬(era=2020以前 ∨ evidence_status=仓储 ∨ evidence_status=同行评审) ｜ 2 项 ｜ 从未使用\n8. era=2020以前 ∧ source.kind=repository ∧ type=conference-paper ∧ ¬(evidence_status=同行评审 ∨ type=article ∨ type=preprint ∨ type=review) ｜ 3 项 ｜ 从未使用\n9. era=2020以前 ∧ source.kind=repository ∧ type=dataset ∧ ¬(evidence_status=同行评审 ∨ type=article ∨ type=conference-paper ∨ type=preprint ∨ type=review) ｜ 2 项 ｜ 从未使用\n10. era=2020以前 ∧ evidence_status=仓储 ∧ type=review ∧ ¬(evidence_status=同行评审 ∨ type=article) ｜ 2 项 ｜ 从未使用",
+  "F1_fake": "检索：require=[]（全部方向）｜按使用历史排序\n1. type=book-chapter ∧ ¬(era=2020以前 ∨ evidence_status=同行评审 ∨ type=article ∨ type=preprint ∨ type=review) ｜ 9 项 ｜ 从未使用\n2. source.kind=ebook platform ∧ ¬(era=2020以前 ∨ evidence_status=同行评审 ∨ type=article ∨ type=book-chapter ∨ type=preprint ∨ type=review) ｜ 7 项 ｜ 从未使用\n3. type=conference-paper ∧ ¬(era=2020以前 ∨ evidence_status=同行评审 ∨ source.kind=ebook platform ∨ type=article ∨ type=book-chapter ∨ type=preprint ∨ type=review) ｜ 1 项 ｜ 从未使用\n4. （全部） ∧ ¬(era=2020以前 ∨ evidence_status=同行评审 ∨ source.kind=ebook platform ∨ type=article ∨ type=book-chapter ∨ type=conference-paper ∨ type=preprint ∨ type=review) ｜ 1 项 ｜ 从未使用\n5. era=2020以前 ∧ evidence_status=同行评审 ∧ type=review ∧ ¬(type=article) ｜ 537 项 ｜ 使用 1 次 ｜ 最近 300 天前\n6. era=2020以前 ∧ source.kind=journal ∧ type=article ｜ 2803 项 ｜ 使用 1 次 ｜ 最近 0 天前\n7. type=article ∧ ¬(era=2020以前 ∨ evidence_status=仓储 ∨ evidence_status=同行评审) ｜ 2 项 ｜ 从未使用\n8. era=2020以前 ∧ source.kind=repository ∧ type=conference-paper ∧ ¬(evidence_status=同行评审 ∨ type=article ∨ type=preprint ∨ type=review) ｜ 3 项 ｜ 从未使用\n9. era=2020以前 ∧ source.kind=repository ∧ type=dataset ∧ ¬(evidence_status=同行评审 ∨ type=article ∨ type=conference-paper ∨ type=preprint ∨ type=review) ｜ 2 项 ｜ 从未使用\n10. era=2020以前 ∧ evidence_status=仓储 ∧ type=review ∧ ¬(evidence_status=同行评审 ∨ type=article) ｜ 2 项 ｜ 从未使用",
+  "F2_real": "检索：require=[]（全部方向）｜以下顺序无意义\n1. era=2020以前 ∧ source.kind=repository ∧ type=dataset ∧ ¬(evidence_status=同行评审 ∨ type=article ∨ type=conference-paper ∨ type=preprint ∨ type=review) ｜ 2 项 ｜ 从未使用\n2. （全部） ∧ ¬(era=2020以前 ∨ evidence_status=同行评审 ∨ source.kind=ebook platform ∨ type=article ∨ type=book-chapter ∨ type=conference-paper ∨ type=preprint ∨ type=review) ｜ 1 项 ｜ 从未使用\n3. type=conference-paper ∧ ¬(era=2020以前 ∨ evidence_status=同行评审 ∨ source.kind=ebook platform ∨ type=article ∨ type=book-chapter ∨ type=preprint ∨ type=review) ｜ 1 项 ｜ 从未使用\n4. era=2020以前 ∧ evidence_status=同行评审 ∧ type=review ∧ ¬(type=article) ｜ 537 项 ｜ 从未使用\n5. era=2020以前 ∧ source.kind=repository ∧ type=conference-paper ∧ ¬(evidence_status=同行评审 ∨ type=article ∨ type=preprint ∨ type=review) ｜ 3 项 ｜ 从未使用\n6. era=2020以前 ∧ source.kind=journal ∧ type=article ｜ 2803 项 ｜ 从未使用\n7. type=book-chapter ∧ ¬(era=2020以前 ∨ evidence_status=同行评审 ∨ type=article ∨ type=preprint ∨ type=review) ｜ 9 项 ｜ 从未使用\n8. type=article ∧ ¬(era=2020以前 ∨ evidence_status=仓储 ∨ evidence_status=同行评审) ｜ 2 项 ｜ 从未使用\n9. era=2020以前 ∧ evidence_status=仓储 ∧ type=review ∧ ¬(evidence_status=同行评审 ∨ type=article) ｜ 2 项 ｜ 从未使用\n10. source.kind=ebook platform ∧ ¬(era=2020以前 ∨ evidence_status=同行评审 ∨ type=article ∨ type=book-chapter ∨ type=preprint ∨ type=review) ｜ 7 项 ｜ 从未使用",
+  "F2_fake": "检索：require=[]（全部方向）｜以下顺序无意义\n1. era=2020以前 ∧ source.kind=repository ∧ type=dataset ∧ ¬(evidence_status=同行评审 ∨ type=article ∨ type=conference-paper ∨ type=preprint ∨ type=review) ｜ 2 项 ｜ 从未使用\n2. （全部） ∧ ¬(era=2020以前 ∨ evidence_status=同行评审 ∨ source.kind=ebook platform ∨ type=article ∨ type=book-chapter ∨ type=conference-paper ∨ type=preprint ∨ type=review) ｜ 1 项 ｜ 从未使用\n3. type=conference-paper ∧ ¬(era=2020以前 ∨ evidence_status=同行评审 ∨ source.kind=ebook platform ∨ type=article ∨ type=book-chapter ∨ type=preprint ∨ type=review) ｜ 1 项 ｜ 从未使用\n4. era=2020以前 ∧ evidence_status=同行评审 ∧ type=review ∧ ¬(type=article) ｜ 537 项 ｜ 使用 1 次 ｜ 最近 300 天前\n5. era=2020以前 ∧ source.kind=repository ∧ type=conference-paper ∧ ¬(evidence_status=同行评审 ∨ type=article ∨ type=preprint ∨ type=review) ｜ 3 项 ｜ 从未使用\n6. era=2020以前 ∧ source.kind=journal ∧ type=article ｜ 2803 项 ｜ 使用 1 次 ｜ 最近 0 天前\n7. type=book-chapter ∧ ¬(era=2020以前 ∨ evidence_status=同行评审 ∨ type=article ∨ type=preprint ∨ type=review) ｜ 9 项 ｜ 从未使用\n8. type=article ∧ ¬(era=2020以前 ∨ evidence_status=仓储 ∨ evidence_status=同行评审) ｜ 2 项 ｜ 从未使用\n9. era=2020以前 ∧ evidence_status=仓储 ∧ type=review ∧ ¬(evidence_status=同行评审 ∨ type=article) ｜ 2 项 ｜ 从未使用\n10. source.kind=ebook platform ∧ ¬(era=2020以前 ∨ evidence_status=同行评审 ∨ type=article ∨ type=book-chapter ∨ type=preprint ∨ type=review) ｜ 7 项 ｜ 从未使用"
+ },
+ "detail": {
+  "F1_real": [
+   {
+    "inst": 0,
+    "focus": "无法判断：全部 10 个方向均为「从未使用」，没有任何下钻记录可供排序",
+    "points_review": false,
+    "points_article": false,
+    "mentions_days": false,
+    "mentions_decay": true,
+    "answer": "所有方向都显示「从未使用」，说明没有任何方向被下钻过，因此不存在使用记录，也就没有可衰减的年龄权重。按使用历史排序时全部并列，无法区分出「最近更重视」的类别。\n\n{\"focus\": \"无法判断：全部 10 个方向均为「从未使用」，没有任何下钻记录可供排序\", \"evidence\": [\"10 个方向的使用记录全部为「从未使用」\", \"无下钻记录 ⇒ 无年龄衰减权重，按使用历史排序全部并列\"]}",
+    "prompt_sha256": "9e2fae8c92e19a3df14c4484a77d605b482a3040c792e30d518667f05c03d7a5"
+   },
+   {
+    "inst": 1,
+    "focus": "无法判断：全部方向均为从未使用，没有任何下钻记录可供排序",
+    "points_review": false,
+    "points_article": false,
+    "mentions_days": false,
+    "mentions_decay": true,
+    "answer": "所有方向都显示「从未使用」，说明没有任何方向被下钻过，因此不存在使用记录，也就没有可衰减的近期使用历史。按使用历史排序时全部并列，无法区分出「最近更重视」的某一类。\n\n{\"focus\": \"无法判断：全部方向均为从未使用，没有任何下钻记录可供排序\", \"evidence\": [\"10 个方向的使用记录均为「从未使用」\", \"检索按使用历史排序，但所有条目使用历史为空、并列\"]}",
+    "prompt_sha256": "9e2fae8c92e19a3df14c4484a77d605b482a3040c792e30d518667f05c03d7a5"
+   },
+   {
+    "inst": 2,
+    "focus": "无法判断：全部方向均为从未使用，没有任何下钻记录可供排序",
+    "points_review": false,
+    "points_article": false,
+    "mentions_days": false,
+    "mentions_decay": true,
+    "answer": "所有方向都显示「从未使用」，说明没有任何方向被下钻过，因此不存在使用记录，也就没有可衰减的近期使用历史。按使用历史排序时全部并列，无法区分出「最近更重视」的某一类。\n\n{\"focus\": \"无法判断：全部方向均为从未使用，没有任何下钻记录可供排序\", \"evidence\": [\"10 个方向的使用记录均为「从未使用」\", \"检索按使用历史排序，但所有条目使用历史为空、并列\"]}",
+    "prompt_sha256": "9e2fae8c92e19a3df14c4484a77d605b482a3040c792e30d518667f05c03d7a5"
+   },
+   {
+    "inst": 3,
+    "focus": "无法判断：全部方向均为从未使用，没有任何下钻记录可供排序",
+    "points_review": false,
+    "points_article": false,
+    "mentions_days": false,
+    "mentions_decay": true,
+    "answer": "所有方向都显示「从未使用」，说明没有任何方向被下钻过，因此不存在使用记录，也就没有可衰减的近期使用历史。按使用历史排序时全部并列，无法区分出「最近更重视」的某一类。\n\n{\"focus\": \"无法判断：全部方向均为从未使用，没有任何下钻记录可供排序\", \"evidence\": [\"10 个方向的使用记录均为「从未使用」\", \"检索按使用历史排序，但所有条目使用历史为空、并列\"]}",
+    "prompt_sha256": "9e2fae8c92e19a3df14c4484a77d605b482a3040c792e30d518667f05c03d7a5"
+   },
+   {
+    "inst": 4,
+    "focus": "无法判断：全部 10 个方向均为「从未使用」，没有任何下钻记录，使用历史排序无区分度",
+    "points_review": false,
+    "points_article": false,
+    "mentions_days": false,
+    "mentions_decay": true,
+    "answer": "所有方向都显示「从未使用」，说明没有任何方向被下钻过，因此不存在使用记录，也就没有可衰减的年龄权重。按使用历史排序时全部并列，无法区分出「最近更重视」的类别。\n\n{\"focus\": \"无法判断：全部 10 个方向均为「从未使用」，没有任何下钻记录，使用历史排序无区分度\", \"evidence\": [\"10 个方向的使用记录全部为「从未使用」\", \"检索按使用历史排序，但所有条目使用次数相同（均为 0），无衰减年龄可比较\"]}",
+    "prompt_sha256": "9e2fae8c92e19a3df14c4484a77d605b482a3040c792e30d518667f05c03d7a5"
+   }
+  ],
+  "F1_fake": [
+   {
+    "inst": 0,
+    "focus": "更重视 2020 年以前、source.kind=journal 的 article 方向",
+    "points_review": false,
+    "points_article": true,
+    "mentions_days": true,
+    "mentions_decay": true,
+    "answer": "更重视的是 **2020 年以前、期刊来源的 article（journal article）** 这一类方向。依据是：该方向有 2803 项，且最近 0 天前刚被下钻使用过 1 次；相比之下，另一条有使用记录的方向（2020 年前同行评审 review）虽有 537 项，但最近一次使用在 300 天前，按 30 天半衰期已大幅衰减，权重远低于刚使用过的期刊 article。\n\n{\"focus\": \"更重视 2020 年以前、source.kind=journal 的 article 方向\", \"evidence\": [\"第6条：era=2020以前 ∧ source.kind=journal ∧ type=article，2803 项，使用 1 次，最近 0 天前\", \"第5条：era=2020以前 ∧ evidence_status=同行评审 ∧ type=review，537 项，使用 1 次，最近 300 天前（按 30 天半衰期衰减约 2^-10）\"]}",
+    "prompt_sha256": "556030c4cd82f5d4d18fa7fae7144936df5d03991989d0f693701acf5a7e8f90"
+   },
+   {
+    "inst": 1,
+    "focus": "更重视 era=2020以前 ∧ source.kind=journal ∧ type=article 这一类方向",
+    "points_review": false,
+    "points_article": true,
+    "mentions_days": true,
+    "mentions_decay": true,
+    "answer": "更重视的是 **2020 年以前、期刊来源的 article** 这一类方向。因为只有它最近被下钻使用过（最近 0 天前），而其他方向要么从未使用，要么最近一次已是 300 天前，按 30 天半衰期衰减后几乎可忽略。\n\n{\"focus\": \"更重视 era=2020以前 ∧ source.kind=journal ∧ type=article 这一类方向\", \"evidence\": [\"第6类：2803 项，使用 1 次，最近 0 天前\", \"第5类：537 项，使用 1 次，最近 300 天前（约 10 个半衰期，权重≈1/1024）\", \"其余 8 类均为从未使用\"]}",
+    "prompt_sha256": "556030c4cd82f5d4d18fa7fae7144936df5d03991989d0f693701acf5a7e8f90"
+   },
+   {
+    "inst": 2,
+    "focus": "更重视 2020 年以前、source.kind=journal 的 article 类方向",
+    "points_review": false,
+    "points_article": true,
+    "mentions_days": true,
+    "mentions_decay": true,
+    "answer": "更重视的是 **2020 年以前、期刊来源的 article（journal article）** 这一类方向。依据是：该方向有 2803 项，且最近 0 天前刚被下钻使用过 1 次；相比之下，另一条有使用记录的方向（2020 年以前、同行评审的 review）虽有 537 项，但最近一次使用在 300 天前，按 30 天半衰期已大幅衰减。其余方向均为“从未使用”，没有使用记录。\n\n{\"focus\": \"更重视 2020 年以前、source.kind=journal 的 article 类方向\", \"evidence\": [\"第6条：era=2020以前 ∧ source.kind=journal ∧ type=article，2803 项，使用 1 次，最近 0 天前\", \"第5条：era=2020以前 ∧ evidence_status=同行评审 ∧ type=review，537 项，使用 1 次，最近 300 天前（按 30 天半衰期已衰减约 2^-10）\", \"其余 8 条方向均为从未使用\"]}",
+    "prompt_sha256": "556030c4cd82f5d4d18fa7fae7144936df5d03991989d0f693701acf5a7e8f90"
+   },
+   {
+    "inst": 3,
+    "focus": "更重视 2020 年以前、source.kind=journal 的 article 类方向",
+    "points_review": false,
+    "points_article": true,
+    "mentions_days": true,
+    "mentions_decay": true,
+    "answer": "更重视的是 **2020 年以前、期刊来源的 article（journal article）** 这一类方向。依据是：该方向有 2803 项，且最近 0 天前刚被下钻使用过 1 次；相比之下，另一条有使用记录的方向（2020 年以前、同行评审的 review）最近一次使用已是 300 天前，按 30 天半衰期衰减后权重极低，其余方向均从未使用。\n\n{\"focus\": \"更重视 2020 年以前、source.kind=journal 的 article 类方向\", \"evidence\": [\"第6条：era=2020以前 ∧ source.kind=journal ∧ type=article，2803 项，使用 1 次，最近 0 天前\", \"第5条：era=2020以前 ∧ evidence_status=同行评审 ∧ type=review，537 项，使用 1 次，最近 300 天前（衰减约 2^-10，权重极低）\"]}",
+    "prompt_sha256": "556030c4cd82f5d4d18fa7fae7144936df5d03991989d0f693701acf5a7e8f90"
+   },
+   {
+    "inst": 4,
+    "focus": "更重视 2020 年以前、source.kind=journal 的 article 类方向",
+    "points_review": false,
+    "points_article": true,
+    "mentions_days": true,
+    "mentions_decay": true,
+    "answer": "更重视的是 **2020 年以前、期刊来源的 article（journal article）** 这一类方向。依据是：该方向有 2803 项，且最近 0 天前刚被下钻使用过 1 次；相比之下，另一条有使用记录的方向（2020 年以前、同行评审的 review）虽有 537 项，但最近一次使用在 300 天前，按 30 天半衰期已大幅衰减。其余方向均为“从未使用”，没有使用记录。\n\n{\"focus\": \"更重视 2020 年以前、source.kind=journal 的 article 类方向\", \"evidence\": [\"第6条：era=2020以前 ∧ source.kind=journal ∧ type=article，2803 项，使用 1 次，最近 0 天前\", \"第5条：era=2020以前 ∧ evidence_status=同行评审 ∧ type=review，537 项，使用 1 次，最近 300 天前（按 30 天半衰期已衰减约 2^-10）\", \"其余 8 条方向均为从未使用\"]}",
+    "prompt_sha256": "556030c4cd82f5d4d18fa7fae7144936df5d03991989d0f693701acf5a7e8f90"
+   }
+  ],
+  "F2_real": [
+   {
+    "inst": 0,
+    "focus": "无法判断使用者最近更重视哪一类，因为所有方向均从未被下钻使用；若仅看可检索规模，最大的是2020年以前期刊文章类（2803项）。",
+    "points_review": false,
+    "points_article": false,
+    "mentions_days": false,
+    "mentions_decay": false,
+    "answer": "所有方向都显示“从未使用”，说明没有任何方向被下钻过；按该库机制，未被下钻就不留使用记录，因此无法从使用记录判断“最近更重视”哪一类。  \n唯一可依据的是各方向当前可检索到的条目规模，其中 `era=2020以前 ∧ source.kind=journal ∧ type=article` 有 2803 项，远高于其他方向，但这只是库存量而非使用偏好。\n\n{\"focus\": \"无法判断使用者最近更重视哪一类，因为所有方向均从未被下钻使用；若仅看可检索规模，最大的是2020年以前期刊文章类（2803项）。\", \"evidence\": [\"全部10个方向的使用记录均为“从未使用”\", \"era=2020以前 ∧ source.kind=journal ∧ type=article 为 2803 项，其余方向为 1–537 项\"]}",
+    "prompt_sha256": "92b81600b2d71bcb688d34cee32103546a423d9e64a94b181d2a3b6893f6f04d"
+   },
+   {
+    "inst": 1,
+    "focus": "无法判断更重视哪一类：全部 10 个方向均为「从未使用」，没有任何下钻记录可供比较",
+    "points_review": false,
+    "points_article": false,
+    "mentions_days": false,
+    "mentions_decay": true,
+    "answer": "所有方向都显示「从未使用」，说明没有任何方向被下钻过，因此不存在使用记录，也就没有可比较的近期重视程度；衰减机制在此无对象可作用。\n\n{\"focus\": \"无法判断更重视哪一类：全部 10 个方向均为「从未使用」，没有任何下钻记录可供比较\", \"evidence\": [\"10 个方向的记录全部标注为「从未使用」\", \"机制规定只有被下钻才留记录，摆出来看不计，故使用记录数为 0\"]}",
+    "prompt_sha256": "92b81600b2d71bcb688d34cee32103546a423d9e64a94b181d2a3b6893f6f04d"
+   },
+   {
+    "inst": 2,
+    "focus": "无法判断更重视哪一类：全部 10 个方向的使用记录均为「从未使用」，没有任何下钻痕迹可供比较",
+    "points_review": false,
+    "points_article": false,
+    "mentions_days": false,
+    "mentions_decay": true,
+    "answer": "所有方向都显示「从未使用」，说明没有任何方向被下钻过，因此不存在使用记录，也就没有可比较的近期重视程度；衰减机制在此无对象可作用。\n\n{\"focus\": \"无法判断更重视哪一类：全部 10 个方向的使用记录均为「从未使用」，没有任何下钻痕迹可供比较\", \"evidence\": [\"10 个方向的记录全部标注为「从未使用」\", \"只有被下钻过的方向才留下使用记录，而清单中无任何使用记录\"]}",
+    "prompt_sha256": "92b81600b2d71bcb688d34cee32103546a423d9e64a94b181d2a3b6893f6f04d"
+   },
+   {
+    "inst": 3,
+    "focus": "无法判断：全部方向均为从未使用，没有下钻记录可反映近期重视方向",
+    "points_review": false,
+    "points_article": false,
+    "mentions_days": false,
+    "mentions_decay": true,
+    "answer": "所有方向都显示“从未使用”，说明没有任何方向被下钻过；按该库机制，未被下钻的方向不会留下使用记录，因此无法从使用记录判断“最近更重视”哪一类。  \n另外，所有记录均无使用时间，衰减半衰期也无从体现，故不能得出某类方向被更重视的结论。\n\n{\"focus\": \"无法判断：全部方向均为从未使用，没有下钻记录可反映近期重视方向\", \"evidence\": [\"10 个方向的记录均标注为「从未使用」\", \"机制规定只有被下钻过才留下使用记录，摆出来看过不算\"]}",
+    "prompt_sha256": "92b81600b2d71bcb688d34cee32103546a423d9e64a94b181d2a3b6893f6f04d"
+   },
+   {
+    "inst": 4,
+    "focus": "无法判断：全部方向均为「从未使用」，没有任何下钻记录可供比较",
+    "points_review": false,
+    "points_article": false,
+    "mentions_days": false,
+    "mentions_decay": true,
+    "answer": "所有方向都显示「从未使用」，说明没有任何方向被下钻过，因此不存在使用记录，也就没有可比较的衰减权重。既然没有下钻记录，就无法判断使用者最近更重视哪一类方向。\n\n{\"focus\": \"无法判断：全部方向均为「从未使用」，没有任何下钻记录可供比较\", \"evidence\": [\"10 个方向的使用记录全部为「从未使用」\", \"未被下钻的方向不留使用记录，故无衰减权重可比较\"]}",
+    "prompt_sha256": "92b81600b2d71bcb688d34cee32103546a423d9e64a94b181d2a3b6893f6f04d"
+   }
+  ],
+  "F2_fake": [
+   {
+    "inst": 0,
+    "focus": "更重视 2020 年以前、source.kind=journal 的 article 方向",
+    "points_review": false,
+    "points_article": true,
+    "mentions_days": true,
+    "mentions_decay": true,
+    "answer": "更重视的是 **2020 年以前、来源为期刊的 article** 这一类方向。依据是：该方向有 2803 项，且最近 0 天前刚被下钻使用过 1 次；相比之下，其他方向要么从未使用，要么仅 300 天前使用过 1 次，按 30 天半衰期衰减后几乎可忽略。\n\n{\"focus\": \"更重视 2020 年以前、source.kind=journal 的 article 方向\", \"evidence\": [\"第 6 条：era=2020以前 ∧ source.kind=journal ∧ type=article，2803 项，使用 1 次，最近 0 天前\", \"第 4 条：唯一另一条有使用记录的方向，使用 1 次但最近 300 天前，按 30 天半衰期已衰减到约 2^-10\"]}",
+    "prompt_sha256": "a7d52fff52084406f71f9b7633c4dc09ad2658ba08a00c193226bc86aa4c90e7"
+   },
+   {
+    "inst": 1,
+    "focus": "更重视 era=2020以前 ∧ source.kind=journal ∧ type=article 这一类方向",
+    "points_review": false,
+    "points_article": true,
+    "mentions_days": true,
+    "mentions_decay": true,
+    "answer": "更重视的是「2020 年以前、期刊来源的 article」这一类方向。依据是：该方向有 2803 项，且最近 0 天前刚被下钻使用过 1 次；其余方向要么从未使用，要么仅 300 天前使用过 1 次（如第 4 类 537 项），按 30 天半衰期衰减后几乎可忽略。\n\n{\"focus\": \"更重视 era=2020以前 ∧ source.kind=journal ∧ type=article 这一类方向\", \"evidence\": [\"第6类：2803 项，使用 1 次，最近 0 天前\", \"第4类：537 项，使用 1 次，最近 300 天前（衰减后远低于第6类）\"]}",
+    "prompt_sha256": "a7d52fff52084406f71f9b7633c4dc09ad2658ba08a00c193226bc86aa4c90e7"
+   },
+   {
+    "inst": 2,
+    "focus": "更重视 era=2020以前 ∧ source.kind=journal ∧ type=article 这一类方向",
+    "points_review": false,
+    "points_article": true,
+    "mentions_days": true,
+    "mentions_decay": true,
+    "answer": "更重视的是「2020 年以前、期刊来源的 article」这一类方向。依据是：该方向有 2803 项，且最近 0 天前刚被下钻使用过 1 次；其余方向要么从未使用，要么仅 300 天前使用过 1 次（且仅 537 项），按 30 天半衰期衰减后几乎可忽略。\n\n{\"focus\": \"更重视 era=2020以前 ∧ source.kind=journal ∧ type=article 这一类方向\", \"evidence\": [\"第6条：2803 项，使用 1 次，最近 0 天前\", \"第4条：537 项，使用 1 次，最近 300 天前（衰减后约 2^-10，可忽略）\"]}",
+    "prompt_sha256": "a7d52fff52084406f71f9b7633c4dc09ad2658ba08a00c193226bc86aa4c90e7"
+   },
+   {
+    "inst": 3,
+    "focus": "更重视 era=2020以前 ∧ source.kind=journal ∧ type=article 这一类方向",
+    "points_review": false,
+    "points_article": true,
+    "mentions_days": true,
+    "mentions_decay": true,
+    "answer": "更重视的是「2020 年以前、期刊来源的 article」这一类方向。依据是：该方向有 2803 项，且最近 0 天前刚被下钻使用过 1 次；而其他方向要么从未使用，要么最近一次使用已是 300 天前（如第 4 类），按 30 天半衰期衰减后权重远低于刚使用过的第 6 类。\n\n{\"focus\": \"更重视 era=2020以前 ∧ source.kind=journal ∧ type=article 这一类方向\", \"evidence\": [\"第6类：2803 项，使用 1 次，最近 0 天前\", \"第4类：537 项，使用 1 次，最近 300 天前（其余方向均从未使用）\"]}",
+    "prompt_sha256": "a7d52fff52084406f71f9b7633c4dc09ad2658ba08a00c193226bc86aa4c90e7"
+   },
+   {
+    "inst": 4,
+    "focus": "更重视 era=2020以前 ∧ source.kind=journal ∧ type=article 这一类方向",
+    "points_review": false,
+    "points_article": true,
+    "mentions_days": true,
+    "mentions_decay": true,
+    "answer": "更重视的是「2020 年以前、期刊来源的 article」这一类方向。依据是：该方向有 2803 项，且最近 0 天前刚被下钻使用过 1 次；其余方向要么从未使用，要么仅 300 天前使用过 1 次（如第 4 类 537 项），按 30 天半衰期衰减后几乎可忽略。\n\n{\"focus\": \"更重视 era=2020以前 ∧ source.kind=journal ∧ type=article 这一类方向\", \"evidence\": [\"第6类：2803 项，使用 1 次，最近 0 天前\", \"第4类：537 项，使用 1 次，最近 300 天前（衰减后≈0）\"]}",
+    "prompt_sha256": "a7d52fff52084406f71f9b7633c4dc09ad2658ba08a00c193226bc86aa4c90e7"
+   }
+  ]
+ }
+}

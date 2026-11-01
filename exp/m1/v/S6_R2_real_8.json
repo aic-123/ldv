@@ -1,0 +1,18 @@
+{
+ "task": "S6",
+ "role": "R2",
+ "arm": "real",
+ "instance": 8,
+ "prompt_sha256": "5d204b8d3ac1b3d8a8523ff87e954a9ce07fbedb70d2c00f69b207a93e23e140",
+ "answer": "建这份结构的人最看重“来源类型（source.kind）与文献类型（type）的组合”，并以此作为第一层切分依据，同时把“evidence_status（仓储/同行评审）”作为次级区分维度。整体上，journal+article 被单独置于首位且数量压倒性（3017 项），说明其被视为最主流、最应优先识别的类别。\n\n{\"most_important\": \"来源类型与文献类型的组合（尤其是 journal + article）是分类的首要依据\", \"evidence\": [\"第一条即为 source.kind=journal ∧ type=article，且数量 3017 项远超其他所有分支\", \"各分支普遍以 source.kind 和 type 的合取作为主条件，evidence_status 多作为附加或次级条件出现\"], \"verdict\": \"有倾向\"}",
+ "json": {
+  "most_important": "来源类型与文献类型的组合（尤其是 journal + article）是分类的首要依据",
+  "evidence": [
+   "第一条即为 source.kind=journal ∧ type=article，且数量 3017 项远超其他所有分支",
+   "各分支普遍以 source.kind 和 type 的合取作为主条件，evidence_status 多作为附加或次级条件出现"
+  ],
+  "verdict": "有倾向"
+ },
+ "no_tendency": false,
+ "has_evidence": true
+}

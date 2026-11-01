@@ -1,0 +1,18 @@
+{
+ "task": "S6",
+ "role": "R2",
+ "arm": "null",
+ "instance": 9,
+ "prompt_sha256": "9d3a7dc016a4f755a1a85cc0332a0018c86c2fa1682f55150600535f5a5ffa41",
+ "answer": "从这份结构看，建它的人最在意的是**证据来源与证据状态（是否同行评审/是否仓储）的区分**，并把它放在类型（article/review/conference-paper 等）之前作为首要切分维度。整个层级几乎都先按 evidence_status 和 source.kind 分流，再谈 type，说明“证据从哪来、可不可信”比“是什么文体”更被看重。\n\n{\"most_important\": \"证据来源与证据状态（同行评审/仓储/期刊/会议）优先于文献类型，是分类的首要维度。\", \"evidence\": [\"顶层分支以 source.kind=journal、evidence_status=仓储、evidence_status=同行评审 等来源/状态条件开头，type 只作为附加条件\", \"多个分支用 ¬(evidence_status=仓储 ∨ evidence_status=同行评审 ∨ source.kind=journal) 这类来源/状态否定式来兜底，而非以 type 为主轴\"], \"verdict\": \"有倾向\"}",
+ "json": {
+  "most_important": "证据来源与证据状态（同行评审/仓储/期刊/会议）优先于文献类型，是分类的首要维度。",
+  "evidence": [
+   "顶层分支以 source.kind=journal、evidence_status=仓储、evidence_status=同行评审 等来源/状态条件开头，type 只作为附加条件",
+   "多个分支用 ¬(evidence_status=仓储 ∨ evidence_status=同行评审 ∨ source.kind=journal) 这类来源/状态否定式来兜底，而非以 type 为主轴"
+  ],
+  "verdict": "有倾向"
+ },
+ "no_tendency": false,
+ "has_evidence": true
+}

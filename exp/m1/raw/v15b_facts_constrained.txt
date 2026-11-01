@@ -1,0 +1,18 @@
+=== 呈现件（V11 的 F2_real，顺序已打乱）===
+检索：require=[]（全部方向）｜以下顺序无意义
+1. era=2020以前 ∧ source.kind=repository ∧ type=dataset ∧ ¬(evidence_status=同行评审 ∨ type=article ∨ type=conference-paper ∨ type=preprint ∨ type=review) ｜ 2 项 ｜ 从未使用
+2. type=conference-paper ∧ ¬(era=2020以前 ∨ evidence_status=同行评审 ∨ source.kind=ebook platform ∨ type=article ∨ type=book-chapter ∨ type=preprint ∨ type=review) ｜ 1 项 ｜ 使用 1 次 ｜ 最近 300 天前
+3. source.kind=ebook platform ∧ ¬(era=2020以前 ∨ evidence_status=同行评审 ∨ type=article ∨ type=book-chapter ∨ type=preprint ∨ type=review) ｜ 7 项 ｜ 使用 1 次 ｜ 最近 300 天前
+4. （全部） ∧ ¬(era=2020以前 ∨ evidence_status=同行评审 ∨ source.kind=ebook platform ∨ type=article ∨ type=book-chapter ∨ type=conference-paper ∨ type=preprint ∨ type=review) ｜ 1 项 ｜ 使用 1 次 ｜ 最近 300 天前
+5. era=2020以前 ∧ source.kind=repository ∧ type=conference-paper ∧ ¬(evidence_status=同行评审 ∨ type=article ∨ type=preprint ∨ type=review) ｜ 3 项 ｜ 从未使用
+6. era=2020以前 ∧ source.kind=journal ∧ type=article ｜ 2803 项 ｜ 使用 1 次 ｜ 最近 300 天前
+7. era=2020以前 ∧ evidence_status=同行评审 ∧ type=review ∧ ¬(type=article) ｜ 537 项 ｜ 使用 1 次 ｜ 最近 0 天前
+8. type=article ∧ ¬(era=2020以前 ∨ evidence_status=仓储 ∨ evidence_status=同行评审) ｜ 2 项 ｜ 从未使用
+9. era=2020以前 ∧ evidence_status=仓储 ∧ type=review ∧ ¬(evidence_status=同行评审 ∨ type=article) ｜ 2 项 ｜ 从未使用
+10. type=book-chapter ∧ ¬(era=2020以前 ∨ evidence_status=同行评审 ∨ type=article ∨ type=preprint ∨ type=review) ｜ 9 项 ｜ 使用 1 次 ｜ 最近 300 天前
+  T4 inst0 unable=True review=False answer='unable'
+  T4 inst1 unable=True review=False answer='unable'
+  T4 inst2 unable=True review=False answer='unable'
+  T4 inst3 unable=True review=False answer='unable'
+  T4 inst4 unable=True review=False answer='unable'
+{"C4_T4_review": 0, "T4_unable": 5, "of": 5}

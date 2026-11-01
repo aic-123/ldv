@@ -1,0 +1,8 @@
+方向 101｜chain 14802 字｜fanout 61876 字
+信息等价性：chain=101 行/成员集一致=True｜fanout=101 行/成员集一致=True
+  D3 inst0 left=fanout pick=摘要2 fanout_win=False
+  D3 inst1 left=chain pick=摘要1 fanout_win=False
+  D3 inst2 left=fanout pick=摘要2 fanout_win=False
+  D3 inst3 left=chain pick=摘要1 fanout_win=False
+  D3 inst4 left=fanout pick=摘要2 fanout_win=False
+{"D3_fanout_wins": 0, "of": 5, "chars": [14802, 61876], "info_equal": true}

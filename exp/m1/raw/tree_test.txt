@@ -1,0 +1,22 @@
+A 树分支 17｜B 树分支 7
+  [A树×A类] 2020 年及以后发表的综述（review）   valid=True best=1.00 real=1.0 null=1.0
+  [A树×A类] 2020 年及以后发表的期刊论文（article valid=True best=0.97 real=1.0 null=1.0
+  [A树×A类] 2020 年以前发表的综述            valid=False best=0.00 real=None null=None
+  [A树×A类] 2020 年及以后、同行评审的材料        valid=True best=0.75 real=0.6 null=0.8
+  [A树×A类] 2020 年以前发表的会议论文          valid=False best=0.00 real=None null=None
+  [A树×B类] 期刊上的论文（article, source.k valid=False best=0.07 real=None null=None
+  [A树×B类] 同行评审的综述                  valid=False best=0.06 real=None null=None
+  [A树×B类] 同行评审的会议论文                valid=False best=0.15 real=None null=None
+  [A树×B类] 预印本（preprint）            valid=False best=0.12 real=None null=None
+  [A树×B类] 来自仓储（非期刊）的论文             valid=False best=0.14 real=None null=None
+  [B树×B类] 期刊上的论文（article, source.k valid=True best=0.93 real=1.0 null=1.0
+  [B树×B类] 同行评审的综述                  valid=False best=0.00 real=None null=None
+  [B树×B类] 同行评审的会议论文                valid=False best=0.00 real=None null=None
+  [B树×B类] 预印本（preprint）            valid=False best=0.00 real=None null=None
+  [B树×B类] 来自仓储（非期刊）的论文             valid=True best=0.86 real=1.0 null=0.8
+  [B树×A类] 2020 年及以后发表的综述（review）   valid=False best=0.00 real=None null=None
+  [B树×A类] 2020 年及以后发表的期刊论文（article valid=True best=0.97 real=1.0 null=1.0
+  [B树×A类] 2020 年以前发表的综述            valid=False best=0.00 real=None null=None
+  [B树×A类] 2020 年及以后、同行评审的材料        valid=True best=0.75 real=1.0 null=1.0
+  [B树×A类] 2020 年以前发表的会议论文          valid=False best=0.00 real=None null=None
+{"A_tree_A_tasks": {"n_tasks": 5, "n_valid": 3, "real_rate": 0.867, "null_rate": 0.933}, "A_tree_B_tasks": {"n_tasks": 5, "n_valid": 0, "real_rate": null, "null_rate": null}, "B_tree_B_tasks": {"n_tasks": 5, "n_valid": 2, "real_rate": 1.0, "null_rate": 0.9}, "B_tree_A_tasks": {"n_tasks": 5, "n_valid": 2, "real_rate": 1.0, "null_rate": 1.0}}

@@ -1,0 +1,999 @@
+{
+ "sig": "b10ef21e375f2c8c",
+ "tree": {
+  "方向数": 63,
+  "层数": 13,
+  "最大叶": 2331
+ },
+ "dirs": [
+  {
+   "did": "D0",
+   "rank": 1,
+   "parent": null,
+   "req": [],
+   "forb": [],
+   "members": 3000
+  },
+  {
+   "did": "D1",
+   "rank": 2,
+   "parent": "D0",
+   "req": [
+    "type=article"
+   ],
+   "forb": [],
+   "members": 2360
+  },
+  {
+   "did": "D2",
+   "rank": 2,
+   "parent": "D0",
+   "req": [],
+   "forb": [
+    "type=article"
+   ],
+   "members": 640
+  },
+  {
+   "did": "D3",
+   "rank": 3,
+   "parent": "D2",
+   "req": [
+    "type=review"
+   ],
+   "forb": [
+    "type=article"
+   ],
+   "members": 466
+  },
+  {
+   "did": "D4",
+   "rank": 3,
+   "parent": "D2",
+   "req": [],
+   "forb": [
+    "type=article",
+    "type=review"
+   ],
+   "members": 174
+  },
+  {
+   "did": "D5",
+   "rank": 4,
+   "parent": "D3",
+   "req": [
+    "evidence_status=同行评审",
+    "type=review"
+   ],
+   "forb": [
+    "type=article"
+   ],
+   "members": 464
+  },
+  {
+   "did": "D6",
+   "rank": 4,
+   "parent": "D3",
+   "req": [
+    "type=review"
+   ],
+   "forb": [
+    "evidence_status=同行评审",
+    "type=article"
+   ],
+   "members": 2
+  },
+  {
+   "did": "D7",
+   "rank": 3,
+   "parent": "D1",
+   "req": [
+    "source.kind=journal",
+    "type=article"
+   ],
+   "forb": [],
+   "members": 2331
+  },
+  {
+   "did": "D8",
+   "rank": 3,
+   "parent": "D1",
+   "req": [
+    "type=article"
+   ],
+   "forb": [
+    "source.kind=journal"
+   ],
+   "members": 29
+  },
+  {
+   "did": "D9",
+   "rank": 4,
+   "parent": "D4",
+   "req": [
+    "evidence_status=同行评审"
+   ],
+   "forb": [
+    "type=article",
+    "type=review"
+   ],
+   "members": 89
+  },
+  {
+   "did": "D10",
+   "rank": 4,
+   "parent": "D4",
+   "req": [],
+   "forb": [
+    "evidence_status=同行评审",
+    "type=article",
+    "type=review"
+   ],
+   "members": 85
+  },
+  {
+   "did": "D11",
+   "rank": 5,
+   "parent": "D10",
+   "req": [
+    "type=preprint"
+   ],
+   "forb": [
+    "evidence_status=同行评审",
+    "type=article",
+    "type=review"
+   ],
+   "members": 61
+  },
+  {
+   "did": "D12",
+   "rank": 5,
+   "parent": "D10",
+   "req": [],
+   "forb": [
+    "evidence_status=同行评审",
+    "type=article",
+    "type=preprint",
+    "type=review"
+   ],
+   "members": 24
+  },
+  {
+   "did": "D13",
+   "rank": 6,
+   "parent": "D12",
+   "req": [
+    "source.kind=ebook platform"
+   ],
+   "forb": [
+    "evidence_status=同行评审",
+    "type=article",
+    "type=preprint",
+    "type=review"
+   ],
+   "members": 14
+  },
+  {
+   "did": "D14",
+   "rank": 6,
+   "parent": "D12",
+   "req": [],
+   "forb": [
+    "evidence_status=同行评审",
+    "source.kind=ebook platform",
+    "type=article",
+    "type=preprint",
+    "type=review"
+   ],
+   "members": 10
+  },
+  {
+   "did": "D15",
+   "rank": 7,
+   "parent": "D14",
+   "req": [
+    "evidence_status=仓储"
+   ],
+   "forb": [
+    "evidence_status=同行评审",
+    "source.kind=ebook platform",
+    "type=article",
+    "type=preprint",
+    "type=review"
+   ],
+   "members": 5
+  },
+  {
+   "did": "D16",
+   "rank": 7,
+   "parent": "D14",
+   "req": [],
+   "forb": [
+    "evidence_status=仓储",
+    "evidence_status=同行评审",
+    "source.kind=ebook platform",
+    "type=article",
+    "type=preprint",
+    "type=review"
+   ],
+   "members": 5
+  },
+  {
+   "did": "D17",
+   "rank": 8,
+   "parent": "D15",
+   "req": [
+    "evidence_status=仓储",
+    "type=conference-paper"
+   ],
+   "forb": [
+    "evidence_status=同行评审",
+    "source.kind=ebook platform",
+    "type=article",
+    "type=preprint",
+    "type=review"
+   ],
+   "members": 2
+  },
+  {
+   "did": "D18",
+   "rank": 8,
+   "parent": "D15",
+   "req": [
+    "evidence_status=仓储"
+   ],
+   "forb": [
+    "evidence_status=同行评审",
+    "source.kind=ebook platform",
+    "type=article",
+    "type=conference-paper",
+    "type=preprint",
+    "type=review"
+   ],
+   "members": 3
+  },
+  {
+   "did": "D19",
+   "rank": 9,
+   "parent": "D18",
+   "req": [
+    "evidence_status=仓储",
+    "type=book-chapter"
+   ],
+   "forb": [
+    "evidence_status=同行评审",
+    "source.kind=ebook platform",
+    "type=article",
+    "type=conference-paper",
+    "type=preprint",
+    "type=review"
+   ],
+   "members": 1
+  },
+  {
+   "did": "D20",
+   "rank": 9,
+   "parent": "D18",
+   "req": [
+    "evidence_status=仓储"
+   ],
+   "forb": [
+    "evidence_status=同行评审",
+    "source.kind=ebook platform",
+    "type=article",
+    "type=book-chapter",
+    "type=conference-paper",
+    "type=preprint",
+    "type=review"
+   ],
+   "members": 2
+  },
+  {
+   "did": "D21",
+   "rank": 10,
+   "parent": "D20",
+   "req": [
+    "evidence_status=仓储",
+    "type=dataset"
+   ],
+   "forb": [
+    "evidence_status=同行评审",
+    "source.kind=ebook platform",
+    "type=article",
+    "type=book-chapter",
+    "type=conference-paper",
+    "type=preprint",
+    "type=review"
+   ],
+   "members": 1
+  },
+  {
+   "did": "D22",
+   "rank": 10,
+   "parent": "D20",
+   "req": [
+    "evidence_status=仓储"
+   ],
+   "forb": [
+    "evidence_status=同行评审",
+    "source.kind=ebook platform",
+    "type=article",
+    "type=book-chapter",
+    "type=conference-paper",
+    "type=dataset",
+    "type=preprint",
+    "type=review"
+   ],
+   "members": 1
+  },
+  {
+   "did": "D23",
+   "rank": 5,
+   "parent": "D6",
+   "req": [
+    "evidence_status=仓储",
+    "type=review"
+   ],
+   "forb": [
+    "evidence_status=同行评审",
+    "type=article"
+   ],
+   "members": 1
+  },
+  {
+   "did": "D24",
+   "rank": 5,
+   "parent": "D6",
+   "req": [
+    "type=review"
+   ],
+   "forb": [
+    "evidence_status=仓储",
+    "evidence_status=同行评审",
+    "type=article"
+   ],
+   "members": 1
+  },
+  {
+   "did": "D25",
+   "rank": 5,
+   "parent": "D9",
+   "req": [
+    "evidence_status=同行评审",
+    "source.kind=conference"
+   ],
+   "forb": [
+    "type=article",
+    "type=review"
+   ],
+   "members": 61
+  },
+  {
+   "did": "D26",
+   "rank": 5,
+   "parent": "D9",
+   "req": [
+    "evidence_status=同行评审"
+   ],
+   "forb": [
+    "source.kind=conference",
+    "type=article",
+    "type=review"
+   ],
+   "members": 28
+  },
+  {
+   "did": "D27",
+   "rank": 6,
+   "parent": "D25",
+   "req": [
+    "evidence_status=同行评审",
+    "source.kind=conference",
+    "type=conference-abstract"
+   ],
+   "forb": [
+    "type=article",
+    "type=review"
+   ],
+   "members": 1
+  },
+  {
+   "did": "D28",
+   "rank": 6,
+   "parent": "D25",
+   "req": [
+    "evidence_status=同行评审",
+    "source.kind=conference"
+   ],
+   "forb": [
+    "type=article",
+    "type=conference-abstract",
+    "type=review"
+   ],
+   "members": 60
+  },
+  {
+   "did": "D29",
+   "rank": 6,
+   "parent": "D26",
+   "req": [
+    "evidence_status=同行评审",
+    "source.kind=book series"
+   ],
+   "forb": [
+    "source.kind=conference",
+    "type=article",
+    "type=review"
+   ],
+   "members": 13
+  },
+  {
+   "did": "D30",
+   "rank": 6,
+   "parent": "D26",
+   "req": [
+    "evidence_status=同行评审"
+   ],
+   "forb": [
+    "source.kind=book series",
+    "source.kind=conference",
+    "type=article",
+    "type=review"
+   ],
+   "members": 15
+  },
+  {
+   "did": "D31",
+   "rank": 7,
+   "parent": "D29",
+   "req": [
+    "evidence_status=同行评审",
+    "source.kind=book series",
+    "type=conference-paper"
+   ],
+   "forb": [
+    "source.kind=conference",
+    "type=article",
+    "type=review"
+   ],
+   "members": 10
+  },
+  {
+   "did": "D32",
+   "rank": 7,
+   "parent": "D29",
+   "req": [
+    "evidence_status=同行评审",
+    "source.kind=book series"
+   ],
+   "forb": [
+    "source.kind=conference",
+    "type=article",
+    "type=conference-paper",
+    "type=review"
+   ],
+   "members": 3
+  },
+  {
+   "did": "D33",
+   "rank": 8,
+   "parent": "D32",
+   "req": [
+    "evidence_status=同行评审",
+    "source.kind=book series",
+    "type=book-chapter"
+   ],
+   "forb": [
+    "source.kind=conference",
+    "type=article",
+    "type=conference-paper",
+    "type=review"
+   ],
+   "members": 2
+  },
+  {
+   "did": "D34",
+   "rank": 8,
+   "parent": "D32",
+   "req": [
+    "evidence_status=同行评审",
+    "source.kind=book series"
+   ],
+   "forb": [
+    "source.kind=conference",
+    "type=article",
+    "type=book-chapter",
+    "type=conference-paper",
+    "type=review"
+   ],
+   "members": 1
+  },
+  {
+   "did": "D35",
+   "rank": 7,
+   "parent": "D13",
+   "req": [
+    "source.kind=ebook platform",
+    "type=book"
+   ],
+   "forb": [
+    "evidence_status=同行评审",
+    "type=article",
+    "type=preprint",
+    "type=review"
+   ],
+   "members": 7
+  },
+  {
+   "did": "D36",
+   "rank": 7,
+   "parent": "D13",
+   "req": [
+    "source.kind=ebook platform"
+   ],
+   "forb": [
+    "evidence_status=同行评审",
+    "type=article",
+    "type=book",
+    "type=preprint",
+    "type=review"
+   ],
+   "members": 7
+  },
+  {
+   "did": "D37",
+   "rank": 8,
+   "parent": "D16",
+   "req": [
+    "type=book"
+   ],
+   "forb": [
+    "evidence_status=仓储",
+    "evidence_status=同行评审",
+    "source.kind=ebook platform",
+    "type=article",
+    "type=preprint",
+    "type=review"
+   ],
+   "members": 2
+  },
+  {
+   "did": "D38",
+   "rank": 8,
+   "parent": "D16",
+   "req": [],
+   "forb": [
+    "evidence_status=仓储",
+    "evidence_status=同行评审",
+    "source.kind=ebook platform",
+    "type=article",
+    "type=book",
+    "type=preprint",
+    "type=review"
+   ],
+   "members": 3
+  },
+  {
+   "did": "D39",
+   "rank": 4,
+   "parent": "D8",
+   "req": [
+    "evidence_status=仓储",
+    "type=article"
+   ],
+   "forb": [
+    "source.kind=journal"
+   ],
+   "members": 22
+  },
+  {
+   "did": "D40",
+   "rank": 4,
+   "parent": "D8",
+   "req": [
+    "type=article"
+   ],
+   "forb": [
+    "evidence_status=仓储",
+    "source.kind=journal"
+   ],
+   "members": 7
+  },
+  {
+   "did": "D41",
+   "rank": 6,
+   "parent": "D11",
+   "req": [
+    "evidence_status=仓储",
+    "type=preprint"
+   ],
+   "forb": [
+    "evidence_status=同行评审",
+    "type=article",
+    "type=review"
+   ],
+   "members": 60
+  },
+  {
+   "did": "D42",
+   "rank": 6,
+   "parent": "D11",
+   "req": [
+    "type=preprint"
+   ],
+   "forb": [
+    "evidence_status=仓储",
+    "evidence_status=同行评审",
+    "type=article",
+    "type=review"
+   ],
+   "members": 1
+  },
+  {
+   "did": "D43",
+   "rank": 5,
+   "parent": "D40",
+   "req": [
+    "evidence_status=未知",
+    "type=article"
+   ],
+   "forb": [
+    "evidence_status=仓储",
+    "source.kind=journal"
+   ],
+   "members": 6
+  },
+  {
+   "did": "D44",
+   "rank": 5,
+   "parent": "D40",
+   "req": [
+    "type=article"
+   ],
+   "forb": [
+    "evidence_status=仓储",
+    "evidence_status=未知",
+    "source.kind=journal"
+   ],
+   "members": 1
+  },
+  {
+   "did": "D45",
+   "rank": 9,
+   "parent": "D38",
+   "req": [
+    "type=conference-paper"
+   ],
+   "forb": [
+    "evidence_status=仓储",
+    "evidence_status=同行评审",
+    "source.kind=ebook platform",
+    "type=article",
+    "type=book",
+    "type=preprint",
+    "type=review"
+   ],
+   "members": 1
+  },
+  {
+   "did": "D46",
+   "rank": 9,
+   "parent": "D38",
+   "req": [],
+   "forb": [
+    "evidence_status=仓储",
+    "evidence_status=同行评审",
+    "source.kind=ebook platform",
+    "type=article",
+    "type=book",
+    "type=conference-paper",
+    "type=preprint",
+    "type=review"
+   ],
+   "members": 2
+  },
+  {
+   "did": "D47",
+   "rank": 10,
+   "parent": "D46",
+   "req": [
+    "type=dataset"
+   ],
+   "forb": [
+    "evidence_status=仓储",
+    "evidence_status=同行评审",
+    "source.kind=ebook platform",
+    "type=article",
+    "type=book",
+    "type=conference-paper",
+    "type=preprint",
+    "type=review"
+   ],
+   "members": 1
+  },
+  {
+   "did": "D48",
+   "rank": 10,
+   "parent": "D46",
+   "req": [],
+   "forb": [
+    "evidence_status=仓储",
+    "evidence_status=同行评审",
+    "source.kind=ebook platform",
+    "type=article",
+    "type=book",
+    "type=conference-paper",
+    "type=dataset",
+    "type=preprint",
+    "type=review"
+   ],
+   "members": 1
+  },
+  {
+   "did": "D49",
+   "rank": 7,
+   "parent": "D30",
+   "req": [
+    "evidence_status=同行评审",
+    "type=editorial"
+   ],
+   "forb": [
+    "source.kind=book series",
+    "source.kind=conference",
+    "type=article",
+    "type=review"
+   ],
+   "members": 7
+  },
+  {
+   "did": "D50",
+   "rank": 7,
+   "parent": "D30",
+   "req": [
+    "evidence_status=同行评审"
+   ],
+   "forb": [
+    "source.kind=book series",
+    "source.kind=conference",
+    "type=article",
+    "type=editorial",
+    "type=review"
+   ],
+   "members": 8
+  },
+  {
+   "did": "D51",
+   "rank": 8,
+   "parent": "D50",
+   "req": [
+    "evidence_status=同行评审",
+    "type=book-review"
+   ],
+   "forb": [
+    "source.kind=book series",
+    "source.kind=conference",
+    "type=article",
+    "type=editorial",
+    "type=review"
+   ],
+   "members": 2
+  },
+  {
+   "did": "D52",
+   "rank": 8,
+   "parent": "D50",
+   "req": [
+    "evidence_status=同行评审"
+   ],
+   "forb": [
+    "source.kind=book series",
+    "source.kind=conference",
+    "type=article",
+    "type=book-review",
+    "type=editorial",
+    "type=review"
+   ],
+   "members": 6
+  },
+  {
+   "did": "D53",
+   "rank": 9,
+   "parent": "D52",
+   "req": [
+    "evidence_status=同行评审",
+    "type=book-chapter"
+   ],
+   "forb": [
+    "source.kind=book series",
+    "source.kind=conference",
+    "type=article",
+    "type=book-review",
+    "type=editorial",
+    "type=review"
+   ],
+   "members": 1
+  },
+  {
+   "did": "D54",
+   "rank": 9,
+   "parent": "D52",
+   "req": [
+    "evidence_status=同行评审"
+   ],
+   "forb": [
+    "source.kind=book series",
+    "source.kind=conference",
+    "type=article",
+    "type=book-chapter",
+    "type=book-review",
+    "type=editorial",
+    "type=review"
+   ],
+   "members": 5
+  },
+  {
+   "did": "D55",
+   "rank": 10,
+   "parent": "D54",
+   "req": [
+    "evidence_status=同行评审",
+    "type=conference-abstract"
+   ],
+   "forb": [
+    "source.kind=book series",
+    "source.kind=conference",
+    "type=article",
+    "type=book-chapter",
+    "type=book-review",
+    "type=editorial",
+    "type=review"
+   ],
+   "members": 1
+  },
+  {
+   "did": "D56",
+   "rank": 10,
+   "parent": "D54",
+   "req": [
+    "evidence_status=同行评审"
+   ],
+   "forb": [
+    "source.kind=book series",
+    "source.kind=conference",
+    "type=article",
+    "type=book-chapter",
+    "type=book-review",
+    "type=conference-abstract",
+    "type=editorial",
+    "type=review"
+   ],
+   "members": 4
+  },
+  {
+   "did": "D57",
+   "rank": 11,
+   "parent": "D56",
+   "req": [
+    "evidence_status=同行评审",
+    "type=data-paper"
+   ],
+   "forb": [
+    "source.kind=book series",
+    "source.kind=conference",
+    "type=article",
+    "type=book-chapter",
+    "type=book-review",
+    "type=conference-abstract",
+    "type=editorial",
+    "type=review"
+   ],
+   "members": 1
+  },
+  {
+   "did": "D58",
+   "rank": 11,
+   "parent": "D56",
+   "req": [
+    "evidence_status=同行评审"
+   ],
+   "forb": [
+    "source.kind=book series",
+    "source.kind=conference",
+    "type=article",
+    "type=book-chapter",
+    "type=book-review",
+    "type=conference-abstract",
+    "type=data-paper",
+    "type=editorial",
+    "type=review"
+   ],
+   "members": 3
+  },
+  {
+   "did": "D59",
+   "rank": 12,
+   "parent": "D58",
+   "req": [
+    "evidence_status=同行评审",
+    "type=erratum"
+   ],
+   "forb": [
+    "source.kind=book series",
+    "source.kind=conference",
+    "type=article",
+    "type=book-chapter",
+    "type=book-review",
+    "type=conference-abstract",
+    "type=data-paper",
+    "type=editorial",
+    "type=review"
+   ],
+   "members": 1
+  },
+  {
+   "did": "D60",
+   "rank": 12,
+   "parent": "D58",
+   "req": [
+    "evidence_status=同行评审"
+   ],
+   "forb": [
+    "source.kind=book series",
+    "source.kind=conference",
+    "type=article",
+    "type=book-chapter",
+    "type=book-review",
+    "type=conference-abstract",
+    "type=data-paper",
+    "type=editorial",
+    "type=erratum",
+    "type=review"
+   ],
+   "members": 2
+  },
+  {
+   "did": "D61",
+   "rank": 13,
+   "parent": "D60",
+   "req": [
+    "evidence_status=同行评审",
+    "type=reference-entry"
+   ],
+   "forb": [
+    "source.kind=book series",
+    "source.kind=conference",
+    "type=article",
+    "type=book-chapter",
+    "type=book-review",
+    "type=conference-abstract",
+    "type=data-paper",
+    "type=editorial",
+    "type=erratum",
+    "type=review"
+   ],
+   "members": 1
+  },
+  {
+   "did": "D62",
+   "rank": 13,
+   "parent": "D60",
+   "req": [
+    "evidence_status=同行评审"
+   ],
+   "forb": [
+    "source.kind=book series",
+    "source.kind=conference",
+    "type=article",
+    "type=book-chapter",
+    "type=book-review",
+    "type=conference-abstract",
+    "type=data-paper",
+    "type=editorial",
+    "type=erratum",
+    "type=reference-entry",
+    "type=review"
+   ],
+   "members": 1
+  }
+ ]
+}

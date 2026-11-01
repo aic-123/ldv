@@ -1,0 +1,16 @@
+{
+ "task": "V1-full",
+ "instance": 4,
+ "order": [
+  "era",
+  "type"
+ ],
+ "prompt_sha256": "97e8955be8c160ad03fa3efe1d13b0cd9535b90fe744213d4fa6588a5c904542",
+ "answer": "摘要1 的顶层分支主要按 type（article/review/conference-paper/preprint/book-chapter 等）和 evidence_status/source.kind 划分，没有以 era 作为首要切分维度，因此是按文献类型组织的。摘要2 的顶层分支首先按 era=2020以前 与 ¬(era=2020以前) 切分，再在各时间分支内细分类型，因此是按发表时间组织的。\n\n{\"time\": \"摘要2\", \"type\": \"摘要1\", \"basis\": \"摘要2 顶层先按 era=2020以前 与否切分，摘要1 顶层先按 type/evidence_status 等文献类型维度切分。\"}",
+ "json": {
+  "time": "摘要2",
+  "type": "摘要1",
+  "basis": "摘要2 顶层先按 era=2020以前 与否切分，摘要1 顶层先按 type/evidence_status 等文献类型维度切分。"
+ },
+ "correct": false
+}

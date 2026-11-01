@@ -1,0 +1,103 @@
+{
+ "A_pass": 6,
+ "A_total": 6,
+ "verdict": "对外接口守住",
+ "detail": [
+  {
+   "id": "A5",
+   "pass": true,
+   "read": {
+    "n_tendency": 0,
+    "ordered_by": "default",
+    "n_staged_batches": 1
+   },
+   "expect": "曝光不进倾向"
+  },
+  {
+   "id": "A6",
+   "pass": true,
+   "read": {
+    "identical": true
+   },
+   "expect": "篡改返回值不影响内部状态"
+  },
+  {
+   "id": "A1",
+   "pass": true,
+   "read": {
+    "did": "D1",
+    "recorded": false,
+    "note": "这一支不在这次查询的展示里，不记"
+   },
+   "expect": "不在 shown 的不许 promote"
+  },
+  {
+   "id": "A2",
+   "pass": true,
+   "read": {
+    "did": "D7",
+    "first": true,
+    "second": false,
+    "note2": "已有同一 (qfp, did) 的记录 —— 只追加，不覆写"
+   },
+   "expect": "同 (qfp,did) 不叠加"
+  },
+  {
+   "id": "A3",
+   "pass": true,
+   "read": {
+    "params": [
+     "self",
+     "did",
+     "req",
+     "forb",
+     "verdict",
+     "actor"
+    ],
+    "forbidden_hits": []
+   },
+   "expect": "drill 不接受时间/强度参数"
+  },
+  {
+   "id": "A4",
+   "pass": true,
+   "read": {
+    "ok": false,
+    "error": "判错（verdict=wrong）只能外部授予：actor='agent' 不是 human。agent 可以提议，但不"
+   },
+   "expect": "agent 不能判错"
+  },
+  {
+   "id": "B1",
+   "pass": true,
+   "read": {
+    "accepted": true,
+    "value": 0.0,
+    "normal_same_age_would_be": 2.0,
+    "note": "工具层接受外部 at ⇒ 可伪造；serve*.py 未暴露 append"
+   },
+   "expect": "记录（不判 FAIL）"
+  },
+  {
+   "id": "B2",
+   "pass": true,
+   "read": {
+    "default_hl_30": 0.0,
+    "hl_1e5": 1.868635,
+    "ratio": 2.0989944728908614e+98,
+    "note": "ageed_tendency 接受 half_life_days ⇒ 可外部改遗忘速度；entry 不传它"
+   },
+   "expect": "记录（不判 FAIL）"
+  },
+  {
+   "id": "B3",
+   "pass": true,
+   "read": {
+    "files": 2,
+    "identical": true,
+    "note": "usage_now 只改读侧；账本逐字不变"
+   },
+   "expect": "读侧时间不改账本"
+  }
+ ]
+}

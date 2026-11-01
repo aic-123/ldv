@@ -1,0 +1,33 @@
+{
+ "task": "V2",
+ "instance": 1,
+ "arm": "real",
+ "order": [
+  "only",
+  "distractor",
+  "ab"
+ ],
+ "labels": {
+  "only": "一",
+  "distractor": "二",
+  "ab": "三"
+ },
+ "prompt_sha256": "5417fc557d54082718b7584f2d6d0933dbc0ceba8f49df7be9277353bac8c105",
+ "answer": "依据：摘要一与摘要三的条目结构高度对应（同样的 12 行骨架、同样的谓词组合顺序），只是各行的计数不同；摘要二的骨架明显不同（例如多出 conference-paper 与 conference-abstract 的拆分方式、book 而非 book-chapter 等），因此一和三为同一材料的前后版本。比较计数可见摘要三在 journal/article、仓储 article、会议论文等行上数值更大，且把摘要一中缺失的“同行评审 article”独立成行，说明摘要三是后来的版本。\n\n{\"pair\": [\"一\", \"三\"], \"later\": \"三\", \"incremental\": [\"article 类证据覆盖扩大（journal/article、仓储 article、同行评审 article 均新增独立计数）\", \"会议论文/会议摘要的细分与计数扩充\", \"review 类中仓储 review 与同行评审 review 的分布调整\"]}",
+ "json": {
+  "pair": [
+   "一",
+   "三"
+  ],
+  "later": "三",
+  "incremental": [
+   "article 类证据覆盖扩大（journal/article、仓储 article、同行评审 article 均新增独立计数）",
+   "会议论文/会议摘要的细分与计数扩充",
+   "review 类中仓储 review 与同行评审 review 的分布调整"
+  ]
+ },
+ "pair_correct": true,
+ "later_correct": true,
+ "distractor_not_later": true,
+ "n_incremental": 3
+}

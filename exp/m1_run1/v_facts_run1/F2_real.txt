@@ -1,0 +1,11 @@
+检索：require=[]（全部方向）｜以下顺序无意义
+1. era=2020以前 ∧ source.kind=repository ∧ type=dataset ∧ ¬(evidence_status=同行评审 ∨ type=article ∨ type=conference-paper ∨ type=preprint ∨ type=review) ｜ 2 项 ｜ 从未使用
+2. （全部） ∧ ¬(era=2020以前 ∨ evidence_status=同行评审 ∨ source.kind=ebook platform ∨ type=article ∨ type=book-chapter ∨ type=conference-paper ∨ type=preprint ∨ type=review) ｜ 1 项 ｜ 从未使用
+3. type=conference-paper ∧ ¬(era=2020以前 ∨ evidence_status=同行评审 ∨ source.kind=ebook platform ∨ type=article ∨ type=book-chapter ∨ type=preprint ∨ type=review) ｜ 1 项 ｜ 从未使用
+4. era=2020以前 ∧ evidence_status=同行评审 ∧ type=review ∧ ¬(type=article) ｜ 537 项 ｜ 从未使用
+5. era=2020以前 ∧ source.kind=repository ∧ type=conference-paper ∧ ¬(evidence_status=同行评审 ∨ type=article ∨ type=preprint ∨ type=review) ｜ 3 项 ｜ 从未使用
+6. era=2020以前 ∧ source.kind=journal ∧ type=article ｜ 2803 项 ｜ 从未使用
+7. type=book-chapter ∧ ¬(era=2020以前 ∨ evidence_status=同行评审 ∨ type=article ∨ type=preprint ∨ type=review) ｜ 9 项 ｜ 从未使用
+8. type=article ∧ ¬(era=2020以前 ∨ evidence_status=仓储 ∨ evidence_status=同行评审) ｜ 2 项 ｜ 从未使用
+9. era=2020以前 ∧ evidence_status=仓储 ∧ type=review ∧ ¬(evidence_status=同行评审 ∨ type=article) ｜ 2 项 ｜ 从未使用
+10. source.kind=ebook platform ∧ ¬(era=2020以前 ∨ evidence_status=同行评审 ∨ type=article ∨ type=book-chapter ∨ type=preprint ∨ type=review) ｜ 7 项 ｜ 从未使用

@@ -1,0 +1,17 @@
+{
+ "task": "V1B",
+ "instance": 0,
+ "arm": "null",
+ "order": [
+  "era_small",
+  "era_full"
+ ],
+ "prompt_sha256": "0ebbd35f8b89a057e95eadf6a7c6f7506550a4f4fd4a3d6c57e0e66fd2499504",
+ "answer": "摘要1的每个分支都先按 `era=2020及以后` / `era=2020以前` 划分，时间条件是首要分组维度，因此是按发表时间组织的。摘要2的每个分支都先按 `type=article` / `type=review` / `type=conference-paper` 等文献类型划分，时间条件只是排除项，因此是按文献类型组织的。\n\n{\"time\": \"摘要1\", \"type\": \"摘要2\", \"basis\": \"摘要1以era时间条件作为首要分组维度，摘要2以type文献类型作为首要分组维度。\"}",
+ "json": {
+  "time": "摘要1",
+  "type": "摘要2",
+  "basis": "摘要1以era时间条件作为首要分组维度，摘要2以type文献类型作为首要分组维度。"
+ },
+ "note": "两份同意图（都是 era）⇒ 正确率应≈50%"
+}

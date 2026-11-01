@@ -1,0 +1,14 @@
+{
+ "task": "D1v2",
+ "instance": 1,
+ "left": "other",
+ "right": "folded",
+ "pick": "摘要1",
+ "folded_wins": false,
+ "prompt_sha256": "6755e04e16a023e9cb83430e87e49ae7e4802d16ebd8c4bfc59ed809d2624c44",
+ "answer": "摘要1更像人组织的：它先按 type=article / review / 其他这条“主干”展开，并在 article 下优先用 era、source.kind、evidence_status 等更有解释力的维度分层，明显有取舍和判断。摘要2则基本沿着“不断把剩余项用 ¬ 排除”的机械路径往下钻，像是在把未分类残余逐条列尽，缺少人类会做的重点重组。  \n\n{\"human\": \"摘要1\", \"reason\": \"摘要1有明确的主干分类和优先维度，像按判断组织；摘要2主要是连续排除剩余项，机械逐层列尽。\"}",
+ "json": {
+  "human": "摘要1",
+  "reason": "摘要1有明确的主干分类和优先维度，像按判断组织；摘要2主要是连续排除剩余项，机械逐层列尽。"
+ }
+}

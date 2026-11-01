@@ -1,0 +1,7 @@
+全量：era 树 17 方向 / 2169 字；type 树 7 方向 / 576 字
+  inst0 order=['type', 'era'] time=摘要1 correct=False basis=摘要1以era=2020以前作为主要切分轴，摘要2以type=article/review等文献类型作为主要切分轴。
+  inst1 order=['type', 'era'] time=摘要1 correct=False basis=摘要1首层以era=2020以前为主切分，摘要2首层以type=article/review等文献类型依次切分。
+  inst2 order=['type', 'era'] time=摘要1 correct=False basis=摘要1首层以era=2020以前优先切分，摘要2首层以type=article/review等文献类型依次切分。
+  inst3 order=['era', 'type'] time=摘要2 correct=False basis=摘要2 顶层先按 era=2020以前 分组，摘要1 顶层先按 type/evidence_status 分组且 era
+  inst4 order=['era', 'type'] time=摘要2 correct=False basis=摘要2 顶层先按 era=2020以前 与否切分，摘要1 顶层先按 type/evidence_status 等文献类型
+{"n_correct": 0, "of": 5, "picked_first": 3, "rows_era": 17, "rows_type": 7, "note": "全量摘要诊断（PREREG V3）"}

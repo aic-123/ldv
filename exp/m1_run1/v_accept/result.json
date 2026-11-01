@@ -1,0 +1,83 @@
+{
+ "pass": 9,
+ "total": 9,
+ "verdict": "attention 验收通过",
+ "detail": [
+  {
+   "id": "A-2",
+   "pass": true,
+   "read": {
+    "basis": "default",
+    "rows": 0,
+    "ordered_by": "default",
+    "hl": 30.0
+   }
+  },
+  {
+   "id": "I4",
+   "pass": true,
+   "read": {
+    "basis": "default",
+    "n": 0
+   }
+  },
+  {
+   "id": "I1",
+   "pass": true,
+   "read": {
+    "row_positions": [
+     0,
+     1
+    ]
+   }
+  },
+  {
+   "id": "I2",
+   "pass": true,
+   "read": {
+    "n_rows": 2,
+    "n_nodes": 39
+   }
+  },
+  {
+   "id": "I3",
+   "pass": true,
+   "read": {
+    "n_with_records": 2,
+    "len_rows": 2,
+    "branches_hidden": 0
+   }
+  },
+  {
+   "id": "A-4",
+   "pass": true,
+   "read": {
+    "identical": true
+   }
+  },
+  {
+   "id": "I5",
+   "pass": true,
+   "read": {
+    "dynamic_identical": true,
+    "read_sites": []
+   }
+  },
+  {
+   "id": "A-3",
+   "pass": true,
+   "read": {
+    "why": "(收)",
+    "banned_checked": true
+   }
+  },
+  {
+   "id": "A-5",
+   "pass": true,
+   "read": {
+    "exit": 0,
+    "summary": "{\"A_pass\": 6, \"A_total\": 6, \"verdict\": \"对外接口守住\"}"
+   }
+  }
+ ]
+}

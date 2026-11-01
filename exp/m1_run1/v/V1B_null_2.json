@@ -1,0 +1,17 @@
+{
+ "task": "V1B",
+ "instance": 2,
+ "arm": "null",
+ "order": [
+  "era_full",
+  "era_small"
+ ],
+ "prompt_sha256": "0321fedc645a253f853c6d725a77a6932dc80e15ac1b3fc068f68f0914c3be6b",
+ "answer": "依据：摘要1的顶层划分几乎都围绕 type（article/review/conference-paper/preprint 等）和 evidence_status 展开，era 只作为排除条件出现，明显是按文献类型组织。摘要2的顶层划分以 era=2020及以后 / ¬(era=2020以前) 作为主要切分轴，先按时间分块再细分类型，明显是按发表时间组织。\n\n{\"time\": \"摘要2\", \"type\": \"摘要1\", \"basis\": \"摘要1以type/evidence_status为主切分轴，摘要2以era（2020前后）为主切分轴。\"}",
+ "json": {
+  "time": "摘要2",
+  "type": "摘要1",
+  "basis": "摘要1以type/evidence_status为主切分轴，摘要2以era（2020前后）为主切分轴。"
+ },
+ "note": "两份同意图（都是 era）⇒ 正确率应≈50%"
+}

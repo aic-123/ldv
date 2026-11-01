@@ -1,0 +1,113 @@
+{
+ "A": "D11",
+ "B": "D7",
+ "tend": {
+  "D11": 0.0009765625,
+  "D7": 8.0
+ },
+ "ordered_by": "usage",
+ "pos": {
+  "D11": 1,
+  "D7": 0
+ },
+ "real_body": "检索：require=[]（全部方向）｜按使用历史排序（ordered_by=usage）\n1. era=2020以前 ∧ evidence_status=同行评审 ∧ type=review ∧ ¬(type=article) ｜ 537 项 ｜ 倾向 8.0000\n2. era=2020以前 ∧ source.kind=journal ∧ type=article ｜ 2803 项 ｜ 倾向 0.0010\n3. type=article ∧ ¬(era=2020以前 ∨ evidence_status=仓储 ∨ evidence_status=同行评审) ｜ 2 项 ｜ 倾向 0.0000\n4. era=2020以前 ∧ source.kind=repository ∧ type=conference-paper ∧ ¬(evidence_status=同行评审 ∨ type=article ∨ type=preprint ∨ type=review) ｜ 3 项 ｜ 倾向 0.0000\n5. era=2020以前 ∧ source.kind=repository ∧ type=dataset ∧ ¬(evidence_status=同行评审 ∨ type=article ∨ type=conference-paper ∨ type=preprint ∨ type=review) ｜ 2 项 ｜ 倾向 0.0000\n6. era=2020以前 ∧ evidence_status=仓储 ∧ type=review ∧ ¬(evidence_status=同行评审 ∨ type=article) ｜ 2 项 ｜ 倾向 0.0000\n7. era=2020以前 ∧ type=review ∧ ¬(evidence_status=仓储 ∨ evidence_status=同行评审 ∨ type=article) ｜ 1 项 ｜ 倾向 0.0000\n8. era=2020以前 ∧ evidence_status=同行评审 ∧ source.kind=conference ∧ type=conference-abstract ∧ ¬(type=article ∨ type=review) ｜ 1 项 ｜ 倾向 0.0000\n9. era=2020以前 ∧ evidence_status=同行评审 ∧ source.kind=conference ∧ ¬(type=article ∨ type=conference-abstract ∨ type=review) ｜ 121 项 ｜ 倾向 0.0000\n10. evidence_status=同行评审 ∧ source.kind=book series ∧ type=conference-paper ∧ ¬(era=2020以前 ∨ source.kind=conference ∨ type=article ∨ type=review) ｜ 4 项 ｜ 倾向 0.0000",
+ "fake_body": "检索：require=[]（全部方向）｜按使用历史排序（ordered_by=usage）\n1. era=2020以前 ∧ type=review ∧ ¬(evidence_status=仓储 ∨ evidence_status=同行评审 ∨ type=article) ｜ 1 项 ｜ 倾向 8.0000\n2. evidence_status=同行评审 ∧ source.kind=book series ∧ type=conference-paper ∧ ¬(era=2020以前 ∨ source.kind=conference ∨ type=article ∨ type=review) ｜ 4 项 ｜ 倾向 0.0010\n3. era=2020以前 ∧ evidence_status=同行评审 ∧ type=review ∧ ¬(type=article) ｜ 537 项 ｜ 倾向 0.0000\n4. era=2020以前 ∧ source.kind=journal ∧ type=article ｜ 2803 项 ｜ 倾向 0.0000\n5. type=article ∧ ¬(era=2020以前 ∨ evidence_status=仓储 ∨ evidence_status=同行评审) ｜ 2 项 ｜ 倾向 0.0000\n6. era=2020以前 ∧ source.kind=repository ∧ type=conference-paper ∧ ¬(evidence_status=同行评审 ∨ type=article ∨ type=preprint ∨ type=review) ｜ 3 项 ｜ 倾向 0.0000\n7. era=2020以前 ∧ source.kind=repository ∧ type=dataset ∧ ¬(evidence_status=同行评审 ∨ type=article ∨ type=conference-paper ∨ type=preprint ∨ type=review) ｜ 2 项 ｜ 倾向 0.0000\n8. era=2020以前 ∧ evidence_status=仓储 ∧ type=review ∧ ¬(evidence_status=同行评审 ∨ type=article) ｜ 2 项 ｜ 倾向 0.0000\n9. era=2020以前 ∧ evidence_status=同行评审 ∧ source.kind=conference ∧ type=conference-abstract ∧ ¬(type=article ∨ type=review) ｜ 1 项 ｜ 倾向 0.0000\n10. era=2020以前 ∧ evidence_status=同行评审 ∧ source.kind=conference ∧ ¬(type=article ∨ type=conference-abstract ∨ type=review) ｜ 121 项 ｜ 倾向 0.0000",
+ "W1_real_points_review": 5,
+ "W2_fake_points_review": 5,
+ "detail": {
+  "real": [
+   {
+    "inst": 0,
+    "mentions_review": true,
+    "focus": "更重视 2020 年以前、同行评审的综述（review）类方向",
+    "points_review": true,
+    "cites_order": true,
+    "answer": "使用者最近更重视 **2020 年以前、同行评审的综述（review）类文献**。依据是：该方向在按使用历史排序中排第 1，且倾向值高达 8.0000，远超其他所有方向（第 2 名仅 0.0010，其余多为 0.0000），说明下钻累积的证据强度集中在这一类。\n\n{\"focus\": \"更重视 2020 年以前、同行评审的综述（review）类方向\", \"evidence\": [\"第 1 条方向 era=2020以前 ∧ evidence_status=同行评审 ∧ type=review 排在使用历史首位，倾向值 8.0000\", \"其余方向倾向值均极低：第 2 条为 0.0010，第 3–10 条多为 0.0000\"]}",
+    "prompt_sha256": "3160026088341aa3d1b0c1a2e3a75001d0603b88e9500ac2d6e73c92ac85d477"
+   },
+   {
+    "inst": 1,
+    "mentions_review": true,
+    "focus": "2020年以前、同行评审的综述（review）类文献方向",
+    "points_review": true,
+    "cites_order": true,
+    "answer": "使用者最近更重视「2020年以前、同行评审的综述（review）类文献」这一方向。依据是：该方向在按使用历史排序中位列第1，且倾向值高达8.0000，远超其他所有方向（第2名仅0.0010，其余均为0.0000），说明它被反复下钻、累积证据最强。\n\n{\"focus\": \"2020年以前、同行评审的综述（review）类文献方向\", \"evidence\": [\"第1条：era=2020以前 ∧ evidence_status=同行评审 ∧ type=review，537项，倾向8.0000，排序第1\", \"第2条倾向仅0.0010，第3至10条倾向均为0.0000，与第1条差距悬殊\"]}",
+    "prompt_sha256": "3160026088341aa3d1b0c1a2e3a75001d0603b88e9500ac2d6e73c92ac85d477"
+   },
+   {
+    "inst": 2,
+    "mentions_review": true,
+    "focus": "更重视 2020 年以前、同行评审的综述（review）类方向",
+    "points_review": true,
+    "cites_order": true,
+    "answer": "使用者最近更重视 **2020 年以前、同行评审的综述（review）类文献**。依据是：该方向在按使用历史排序中排第 1，且倾向值高达 8.0000，远超其余方向（第 2 名仅 0.0010，其余多为 0.0000），说明下钻累积的证据强度集中在这一类。\n\n{\"focus\": \"更重视 2020 年以前、同行评审的综述（review）类方向\", \"evidence\": [\"第 1 条：era=2020以前 ∧ evidence_status=同行评审 ∧ type=review，537 项，倾向 8.0000，排序第 1\", \"第 2 条：era=2020以前 ∧ source.kind=journal ∧ type=article，2803 项，倾向仅 0.0010；其余方向倾向多为 0.0000\"]}",
+    "prompt_sha256": "3160026088341aa3d1b0c1a2e3a75001d0603b88e9500ac2d6e73c92ac85d477"
+   },
+   {
+    "inst": 3,
+    "mentions_review": true,
+    "focus": "更重视 2020 年以前、同行评审的综述（review）类方向",
+    "points_review": true,
+    "cites_order": true,
+    "answer": "使用者最近更重视 **2020 年以前、同行评审的综述（review）类文献**。依据是检索按使用历史排序，排第 1 的方向正是「era=2020以前 ∧ evidence_status=同行评审 ∧ type=review」，且其倾向值高达 8.0000，远超第 2 名的 0.0010，其余方向均为 0.0000，说明该方向被反复下钻、证据累积最强。\n\n{\"focus\": \"更重视 2020 年以前、同行评审的综述（review）类方向\", \"evidence\": [\"排序第1的方向 era=2020以前 ∧ evidence_status=同行评审 ∧ type=review 倾向值 8.0000，远高于其他方向\", \"第2名 era=2020以前 ∧ source.kind=journal ∧ type=article 倾向仅 0.0010，其余方向均为 0.0000\"]}",
+    "prompt_sha256": "3160026088341aa3d1b0c1a2e3a75001d0603b88e9500ac2d6e73c92ac85d477"
+   },
+   {
+    "inst": 4,
+    "mentions_review": true,
+    "focus": "2020年以前、同行评审的综述（review）类文献方向",
+    "points_review": true,
+    "cites_order": true,
+    "answer": "使用者最近更重视「2020年以前、同行评审的综述（review）类文献」这一方向。依据是：该方向在按使用历史排序中位列第1，且倾向值高达8.0000，远超其他所有方向（第2名仅0.0010，其余均为0.0000），说明它被反复下钻、累积证据最强。\n\n{\"focus\": \"2020年以前、同行评审的综述（review）类文献方向\", \"evidence\": [\"第1条：era=2020以前 ∧ evidence_status=同行评审 ∧ type=review，537项，倾向8.0000，排序第1\", \"第2条倾向仅0.0010，第3至10条倾向均为0.0000，与第1条差距悬殊\"]}",
+    "prompt_sha256": "3160026088341aa3d1b0c1a2e3a75001d0603b88e9500ac2d6e73c92ac85d477"
+   }
+  ],
+  "fake": [
+   {
+    "inst": 0,
+    "mentions_review": true,
+    "focus": "更重视 2020年以前 ∧ type=review ∧ 非仓储/非同行评审/非article 的综述方向",
+    "points_review": true,
+    "cites_order": true,
+    "answer": "使用者最近更重视 **2020年以前、非仓储/非同行评审的综述类文献**（即第1条方向）。依据是：按使用历史排序时它排在第1位，且倾向值高达 8.0000，远超其余所有方向（第2条仅 0.0010，其余均为 0.0000），说明该方向被反复下钻、累积证据最强。\n\n{\"focus\": \"更重视 2020年以前 ∧ type=review ∧ 非仓储/非同行评审/非article 的综述方向\", \"evidence\": [\"第1条方向倾向值 8.0000，为全库最高，且按使用历史排序位列第1\", \"其余方向倾向值最高仅 0.0010（第2条），第3-10条均为 0.0000，差距悬殊\"]}",
+    "prompt_sha256": "26f1d64b52ec7dff2c7fd04bc67e1c24a4fd2179e72188796f5ea55267d35f12"
+   },
+   {
+    "inst": 1,
+    "mentions_review": true,
+    "focus": "更重视 2020年以前、排除仓储与同行评审及article的综述类（review）方向",
+    "points_review": true,
+    "cites_order": true,
+    "answer": "使用者最近更重视 **2020年以前、非仓储/非同行评审/非article的综述（review）** 这一类方向。依据是：该方向倾向值高达 8.0000，远超其他所有方向（其余最高仅 0.0010，多数为 0.0000），且检索按使用历史排序时它排在第 1 位，说明它是被反复下钻、累积证据最强的方向。\n\n{\"focus\": \"更重视 2020年以前、排除仓储与同行评审及article的综述类（review）方向\", \"evidence\": [\"第1条方向倾向值 8.0000，为全库最高\", \"其余方向倾向值最高仅 0.0010（第2条），第3-10条均为 0.0000\", \"检索按 usage 排序，该方向位列第 1\"]}",
+    "prompt_sha256": "26f1d64b52ec7dff2c7fd04bc67e1c24a4fd2179e72188796f5ea55267d35f12"
+   },
+   {
+    "inst": 2,
+    "mentions_review": true,
+    "focus": "更重视 2020年以前、排除仓储与同行评审及article的 review 类方向",
+    "points_review": true,
+    "cites_order": true,
+    "answer": "使用者最近更重视 **2020年以前、非仓储/非同行评审/非article 的 review 类文献**（即第1条方向）。依据是：该方向倾向值高达 8.0000，远超其余所有方向（第2条仅 0.0010，其余均为 0.0000），且检索按使用历史排序时它排在第1位，说明这是被反复下钻、累积证据最强的方向。\n\n{\"focus\": \"更重视 2020年以前、排除仓储与同行评审及article的 review 类方向\", \"evidence\": [\"第1条方向倾向值 8.0000，为全库最高\", \"第2条倾向仅 0.0010，第3-10条均为 0.0000，与第1条差距悬殊\", \"检索按 usage 排序，该方向位列第1\"]}",
+    "prompt_sha256": "26f1d64b52ec7dff2c7fd04bc67e1c24a4fd2179e72188796f5ea55267d35f12"
+   },
+   {
+    "inst": 3,
+    "mentions_review": true,
+    "focus": "更重视 2020年以前、排除仓储与同行评审及 article 的 review 类方向",
+    "points_review": true,
+    "cites_order": true,
+    "answer": "使用者最近更重视 **2020年以前、非仓储/非同行评审/非article的综述（review）** 这一类方向。依据是：该方向倾向值高达 8.0000，远超其他所有方向（其余最高仅 0.0010，多数为 0.0000），且检索按使用历史排序时它排在第 1 位，说明它是被反复下钻、累积证据最强的方向。\n\n{\"focus\": \"更重视 2020年以前、排除仓储与同行评审及 article 的 review 类方向\", \"evidence\": [\"第1条方向倾向值 8.0000，为全库最高\", \"其余方向倾向值最高仅 0.0010，多数为 0.0000\", \"按使用历史排序时该方向位列第 1\"]}",
+    "prompt_sha256": "26f1d64b52ec7dff2c7fd04bc67e1c24a4fd2179e72188796f5ea55267d35f12"
+   },
+   {
+    "inst": 4,
+    "mentions_review": true,
+    "focus": "更重视 2020年以前、排除仓储与同行评审及article的综述类（review）方向",
+    "points_review": true,
+    "cites_order": true,
+    "answer": "使用者最近更重视 **2020年以前、非仓储/非同行评审/非article的综述（review）** 这一类方向。依据是：该方向倾向值高达 8.0000，远超其他所有方向（其余最高仅 0.0010，多数为 0.0000），且排序按使用历史（usage）排列时它位列第一，说明近期下钻累积的证据强度集中在这一类上。\n\n{\"focus\": \"更重视 2020年以前、排除仓储与同行评审及article的综述类（review）方向\", \"evidence\": [\"第1条方向倾向值 8.0000，为全库最高\", \"其余方向倾向值最高仅 0.0010（第2条），第3条起均为 0.0000\", \"检索按使用历史排序，该方向位列第1\"]}",
+    "prompt_sha256": "26f1d64b52ec7dff2c7fd04bc67e1c24a4fd2179e72188796f5ea55267d35f12"
+   }
+  ]
+ }
+}

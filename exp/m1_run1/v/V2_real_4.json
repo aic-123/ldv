@@ -1,0 +1,33 @@
+{
+ "task": "V2",
+ "instance": 4,
+ "arm": "real",
+ "order": [
+  "ab",
+  "distractor",
+  "only"
+ ],
+ "labels": {
+  "ab": "一",
+  "distractor": "二",
+  "only": "三"
+ },
+ "prompt_sha256": "7239bd64f597c5a479e8721d1923be83bfd885d3e23fe5336a8bf180d8556408",
+ "answer": "依据：摘要一与摘要二的条目结构、谓词组合和排序几乎完全一致，仅各项计数不同，属于同一材料的前后版本；摘要三的谓词集合与分类骨架明显不同（如出现 evidence_status=未知、book-chapter 等），不是同一版本序列。摘要二相比摘要一，计数分布发生重排，且新增/细化了会议类与丛书类下的类型区分（如 conference-abstract、book 等条目计数变化），说明其是在摘要一基础上的后续整理。\n\n{\"pair\": [\"一\", \"二\"], \"later\": \"二\", \"incremental\": [\"会议类来源下类型细分（conference-paper/conference-abstract）的计数重分配\", \"丛书类来源下类型细分（conference-paper/book）的计数调整\", \"article 类中证据状态与来源组合的计数重排\"]}",
+ "json": {
+  "pair": [
+   "一",
+   "二"
+  ],
+  "later": "二",
+  "incremental": [
+   "会议类来源下类型细分（conference-paper/conference-abstract）的计数重分配",
+   "丛书类来源下类型细分（conference-paper/book）的计数调整",
+   "article 类中证据状态与来源组合的计数重排"
+  ]
+ },
+ "pair_correct": false,
+ "later_correct": false,
+ "distractor_not_later": false,
+ "n_incremental": 3
+}

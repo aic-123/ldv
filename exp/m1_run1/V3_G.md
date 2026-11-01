@@ -1,0 +1,26 @@
+# 结构摘要 二
+
+- （全部） ｜ 4037 项
+  - type=article ｜ 3068 项
+    - evidence_status=同行评审 ｜ 3023 项
+    - evidence_status=仓储 ｜ 35 项
+  - type=review ｜ 575 项
+    - evidence_status=同行评审 ｜ 572 项
+    - evidence_status=仓储 ｜ 2 项
+  - type=conference-paper ｜ 175 项
+    - evidence_status=同行评审 ｜ 170 项
+    - evidence_status=仓储 ｜ 4 项
+  - type=preprint ｜ 152 项
+    - evidence_status=仓储 ｜ 150 项
+    - evidence_status=未知 ｜ 2 项
+  - type=book ｜ 15 项
+    - evidence_status=仓储 ｜ 11 项
+    - evidence_status=同行评审 ｜ 2 项
+  - type=book-chapter ｜ 15 项
+    - evidence_status=仓储 ｜ 12 项
+    - evidence_status=同行评审 ｜ 3 项
+  - type=editorial ｜ 9 项
+    - evidence_status=同行评审 ｜ 9 项
+  - type=reference-entry ｜ 7 项
+    - evidence_status=同行评审 ｜ 6 项
+    - evidence_status=仓储 ｜ 1 项

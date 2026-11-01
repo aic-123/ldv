@@ -1,0 +1,19 @@
+{
+ "task": "S6",
+ "role": "R2",
+ "arm": "null",
+ "instance": 9,
+ "prompt_sha256": "9d3a7dc016a4f755a1a85cc0332a0018c86c2fa1682f55150600535f5a5ffa41",
+ "answer": "从结构看，建它的人最看重的是**证据来源与证据状态（是否同行评审/仓储）**，其次才是文献类型（article/review/conference-paper 等）。整个分类几乎都先按 evidence_status 和 source.kind 切分，type 只是次级条件，说明来源可靠性/评审状态是首要区分维度。\n\n{\"most_important\": \"证据状态与来源类型（是否同行评审、是否仓储、来源是期刊/会议/丛书）比文献类型更重要\", \"evidence\": [\"所有分支都以 evidence_status 或 source.kind 作为首要切分条件，type 仅作为附加约束\", \"最大类目是 evidence_status=同行评审 ∧ type=article（3017 项），说明评审状态是核心组织轴\", \"type=article 单独成类的分支都附带 ¬(evidence_status=仓储 ∨ evidence_status=同行评审 ∨ source.kind=journal) 等来源/状态排除条件\"], \"verdict\": \"有倾向\"}",
+ "json": {
+  "most_important": "证据状态与来源类型（是否同行评审、是否仓储、来源是期刊/会议/丛书）比文献类型更重要",
+  "evidence": [
+   "所有分支都以 evidence_status 或 source.kind 作为首要切分条件，type 仅作为附加约束",
+   "最大类目是 evidence_status=同行评审 ∧ type=article（3017 项），说明评审状态是核心组织轴",
+   "type=article 单独成类的分支都附带 ¬(evidence_status=仓储 ∨ evidence_status=同行评审 ∨ source.kind=journal) 等来源/状态排除条件"
+  ],
+  "verdict": "有倾向"
+ },
+ "no_tendency": false,
+ "has_evidence": true
+}

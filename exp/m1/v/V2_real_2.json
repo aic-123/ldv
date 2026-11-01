@@ -1,0 +1,33 @@
+{
+ "task": "V2",
+ "instance": 2,
+ "arm": "real",
+ "order": [
+  "only",
+  "ab",
+  "distractor"
+ ],
+ "labels": {
+  "only": "一",
+  "ab": "二",
+  "distractor": "三"
+ },
+ "prompt_sha256": "12874b8c7cc928c8fd78bd942ec171da38966b60cd7955226572b465ff43b6b8",
+ "answer": "依据：摘要一与摘要二在结构上高度对应，条目类型和分组逻辑一致，只是计数和个别分类项发生变化；摘要三的计数明显错位（如 conference-abstract 达 3017 项），像是整理错误或不同批次，不能作为同一材料的前后版本。相比摘要一，摘要二在 journal article、review、conference-paper 等类别上数量增加，并新增/细化了 conference-paper 与 book 相关分类，说明其覆盖范围更完整、更晚。\n\n{\"pair\": [\"一\", \"二\"], \"later\": \"二\", \"incremental\": [\"article 类记录数量扩充\", \"review 类记录数量扩充\", \"conference-paper/book 等类型分类细化与补充\"]}",
+ "json": {
+  "pair": [
+   "一",
+   "二"
+  ],
+  "later": "二",
+  "incremental": [
+   "article 类记录数量扩充",
+   "review 类记录数量扩充",
+   "conference-paper/book 等类型分类细化与补充"
+  ]
+ },
+ "pair_correct": true,
+ "later_correct": true,
+ "distractor_not_later": true,
+ "n_incremental": 3
+}

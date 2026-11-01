@@ -1,0 +1,33 @@
+{
+ "task": "V2",
+ "instance": 0,
+ "arm": "real",
+ "order": [
+  "only",
+  "ab",
+  "distractor"
+ ],
+ "labels": {
+  "only": "一",
+  "ab": "二",
+  "distractor": "三"
+ },
+ "prompt_sha256": "12874b8c7cc928c8fd78bd942ec171da38966b60cd7955226572b465ff43b6b8",
+ "answer": "依据：摘要一与摘要二在条目结构上高度对应（同样的分类骨架，仅个别分支的取值/计数变化），而摘要三的计数明显错位、像是把不同分支的数字打乱，不能作为同一版本的连续演进。摘要二相比摘要一在多个分支上计数增大，并新增/细化了会议论文与图书类型的分支，说明摘要二是更晚的版本。\n\n{\"pair\": [\"一\", \"二\"], \"later\": \"二\", \"incremental\": [\"会议论文（conference-paper）覆盖增加\", \"期刊论文与综述数量增长\", \"图书/丛书类型分支细化\"]}",
+ "json": {
+  "pair": [
+   "一",
+   "二"
+  ],
+  "later": "二",
+  "incremental": [
+   "会议论文（conference-paper）覆盖增加",
+   "期刊论文与综述数量增长",
+   "图书/丛书类型分支细化"
+  ]
+ },
+ "pair_correct": true,
+ "later_correct": true,
+ "distractor_not_later": true,
+ "n_incremental": 3
+}

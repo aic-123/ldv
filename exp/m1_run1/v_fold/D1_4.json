@@ -1,0 +1,14 @@
+{
+ "task": "D1",
+ "instance": 4,
+ "left": "folded",
+ "right": "other",
+ "pick": "摘要2",
+ "folded_wins": false,
+ "prompt_sha256": "024132f887a8fc03cbd2e6667d3d30532349fc2c23d583bed0971e0c6d0e868f",
+ "answer": "摘要2更像人组织出来的：它从“全部 4037 项”开始，按 type、era、source.kind、evidence_status 等主要维度逐层做有意义的二分/排除，保留了可读的层级和数量关系，像是在按判断选择主要分类路径。摘要1则大量出现“（全部）∧¬(…)”和“另有 N 个方向，低倾向，可展开”的占位式罗列，更像机械枚举后把低倾向分支折叠掉，缺少人类会做的取舍与主线组织。\n\n{\"human\": \"摘要2\", \"reason\": \"摘要2有清晰的主分类主线（type→era→source.kind/evidence_status），层级和数量可读，像按判断取舍后组织；摘要1充斥占位式“另有N个方向”和大量否定式全量条件，更像机械逐个列出并折叠。\"}",
+ "json": {
+  "human": "摘要2",
+  "reason": "摘要2有清晰的主分类主线（type→era→source.kind/evidence_status），层级和数量可读，像按判断取舍后组织；摘要1充斥占位式“另有N个方向”和大量否定式全量条件，更像机械逐个列出并折叠。"
+ }
+}

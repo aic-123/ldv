@@ -1,0 +1,10 @@
+[A5] PASS {"n_tendency": 0, "ordered_by": "default", "n_staged_batches": 1}
+[A6] PASS {"identical": true}
+[A1] PASS {"did": "D1", "recorded": false, "note": "这一支不在这次查询的展示里，不记"}
+[A2] PASS {"did": "D7", "first": true, "second": false, "note2": "已有同一 (qfp, did) 的记录 —— 只追加，不覆写"}
+[A3] PASS {"params": ["self", "did", "req", "forb", "verdict", "actor"], "forbidden_hits": []}
+[A4] PASS {"ok": false, "error": "判错（verdict=wrong）只能外部授予：actor='agent' 不是 human。agent 可以提议，但不"}
+[B1] PASS {"accepted": true, "value": 0.0, "normal_same_age_would_be": 2.0, "note": "工具层接受外部 at ⇒ 可伪造；serve*.py 未暴露 append"}
+[B2] PASS {"default_hl_30": 0.0, "hl_1e5": 1.868635, "ratio": 2.0989944728908614e+98, "note": "ageed_tendency 接受 half_life_days ⇒ 可外部改遗忘速度；entry 不传它"}
+[B3] PASS {"files": 2, "identical": true, "note": "usage_now 只改读侧；账本逐字不变"}
+{"A_pass": 6, "A_total": 6, "verdict": "对外接口守住"}

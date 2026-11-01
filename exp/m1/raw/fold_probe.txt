@@ -1,0 +1,16 @@
+倾向 3 个方向，top: [('D55', 19.99999995838443), ('D89', 19.999999872767916), ('D90', 19.9999997881355)]
+方向 101；full 14802 字｜folded 1067 字｜shuffled 1448 字
+折叠保留（倾向）：['D55', 'D89', 'D90']
+折叠保留（随机）：['D18', 'D2', 'D45', 'D46', 'D51', 'D57', 'D73', 'D92']
+两组重合 0/8
+  D1 inst0 left=folded pick=摘要2 folded_win=False
+  D1 inst1 left=other pick=摘要1 folded_win=False
+  D1 inst2 left=folded pick=摘要2 folded_win=False
+  D1 inst3 left=other pick=摘要1 folded_win=False
+  D1 inst4 left=folded pick=摘要2 folded_win=False
+  D2 inst0 left=folded pick=摘要2 folded_win=False
+  D2 inst1 left=other pick=摘要1 folded_win=False
+  D2 inst2 left=folded pick=摘要2 folded_win=False
+  D2 inst3 left=other pick=摘要1 folded_win=False
+  D2 inst4 left=folded pick=摘要2 folded_win=False
+{"D1_folded_wins": {"wins": 0, "of": 5}, "D2_folded_wins": {"wins": 0, "of": 5}, "K": 8, "n_dirs": 101, "overlap_keep": 0}

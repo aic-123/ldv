@@ -1,0 +1,18 @@
+{
+ "task": "S6",
+ "role": "R2",
+ "arm": "null",
+ "instance": 7,
+ "prompt_sha256": "9d3a7dc016a4f755a1a85cc0332a0018c86c2fa1682f55150600535f5a5ffa41",
+ "answer": "从结构看，建它的人最重视“证据来源/证据状态（evidence_status 与 source.kind）”这一维度，把它作为最上层的首要划分依据，类型（article/review/conference-paper 等）则作为次级区分。整体呈现为以来源与证据等级优先、文献类型其次的分类倾向。\n\n{\"most_important\": \"证据来源与证据状态（是否仓储、是否同行评审、来源种类）是首要分类维度，文献类型次之。\", \"evidence\": [\"所有分支都以 evidence_status 或 source.kind 开头作为主切分条件，type 只作为后续补充条件\", \"最大分支是 evidence_status=同行评审 ∧ type=article（3017 项），说明按证据状态优先聚合，而非按 type 优先\"], \"verdict\": \"有倾向\"}",
+ "json": {
+  "most_important": "证据来源与证据状态（是否仓储、是否同行评审、来源种类）是首要分类维度，文献类型次之。",
+  "evidence": [
+   "所有分支都以 evidence_status 或 source.kind 开头作为主切分条件，type 只作为后续补充条件",
+   "最大分支是 evidence_status=同行评审 ∧ type=article（3017 项），说明按证据状态优先聚合，而非按 type 优先"
+  ],
+  "verdict": "有倾向"
+ },
+ "no_tendency": false,
+ "has_evidence": true
+}

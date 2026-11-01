@@ -1,0 +1,14 @@
+{
+ "task": "D2v2",
+ "instance": 3,
+ "left": "other",
+ "right": "folded",
+ "pick": "摘要1",
+ "folded_wins": false,
+ "prompt_sha256": "ddadb78b3f769c12aec06c931b6378eaae07d31b4fbd80e616fe447f266f7f9f",
+ "answer": "两份摘要的差异主要在“展开顺序”和“是否保留中间分支”：摘要1先按 type=article / 非 article 分成两大块，再在 article 分支下继续细分，同时保留了 review 等较粗但可读的中间层；摘要2则更像沿着一条“不断排除已列类别”的链一路往下钻，很多节点只是机械地把前一层排除项继续累加，且把 article 分支完全省略，显得更像按规则逐项枚举而非有取舍地组织。因此摘要1更像人组织的，摘要2更像机械逐个列出。\n\n{\"human\": \"摘要1\", \"reason\": \"摘要1先按 article/非 article 形成可读的主干，并保留 review 等中间层，体现出取舍和组织；摘要2则沿排除链机械下钻、层层累加否定条件，且省略 article 分支，更像规则枚举。\"}",
+ "json": {
+  "human": "摘要1",
+  "reason": "摘要1先按 article/非 article 形成可读的主干，并保留 review 等中间层，体现出取舍和组织；摘要2则沿排除链机械下钻、层层累加否定条件，且省略 article 分支，更像规则枚举。"
+ }
+}

@@ -1,0 +1,74 @@
+A(article)=D11 第7行｜B(review)=D7 第5行｜tiny=D100(2项) 第8行
+
+=== G1_real ===
+检索：require=[]（全部方向）｜以下是这个库的 10 个方向
+1. era=2020以前 ∧ evidence_status=仓储 ∧ type=review ∧ ¬(evidence_status=同行评审 ∨ type=article) ｜ 2 项 ｜ 使用 1 次 ｜ 最近 300 天前
+2. era=2020以前 ∧ type=article ∧ ¬(evidence_status=仓储 ∨ evidence_status=未知 ∨ source.kind=journal) ｜ 6 项 ｜ 使用 1 次 ｜ 最近 300 天前
+3. era=2020以前 ∧ evidence_status=未知 ∧ type=article ∧ ¬(evidence_status=仓储 ∨ source.kind=journal) ｜ 8 项 ｜ 使用 1 次 ｜ 最近 300 天前
+4. evidence_status=同行评审 ∧ type=article ∧ ¬(era=2020以前) ｜ 214 项 ｜ 使用 1 次 ｜ 最近 300 天前
+5. era=2020以前 ∧ evidence_status=同行评审 ∧ type=review ∧ ¬(type=article) ｜ 537 项 ｜ 使用 1 次 ｜ 最近 0 天前
+6. evidence_status=仓储 ∧ type=article ∧ ¬(era=2020以前 ∨ evidence_status=同行评审) ｜ 5 项 ｜ 使用 1 次 ｜ 最近 300 天前
+7. era=2020以前 ∧ source.kind=journal ∧ type=article ｜ 2803 项 ｜ 使用 1 次 ｜ 最近 300 天前
+8. type=article ∧ ¬(era=2020以前 ∨ evidence_status=仓储 ∨ evidence_status=同行评审) ｜ 2 项 ｜ 使用 1 次 ｜ 最近 300 天前
+9. era=2020以前 ∧ type=review ∧ ¬(evidence_status=仓储 ∨ evidence_status=同行评审 ∨ type=article) ｜ 1 项 ｜ 使用 1 次 ｜ 最近 300 天前
+10. era=2020以前 ∧ evidence_status=仓储 ∧ type=article ∧ ¬(source.kind=journal) ｜ 30 项 ｜ 使用 1 次 ｜ 最近 300 天前
+
+=== G2_flip ===
+检索：require=[]（全部方向）｜以下是这个库的 10 个方向
+1. era=2020以前 ∧ evidence_status=仓储 ∧ type=review ∧ ¬(evidence_status=同行评审 ∨ type=article) ｜ 2 项 ｜ 使用 1 次 ｜ 最近 300 天前
+2. era=2020以前 ∧ type=article ∧ ¬(evidence_status=仓储 ∨ evidence_status=未知 ∨ source.kind=journal) ｜ 6 项 ｜ 使用 1 次 ｜ 最近 300 天前
+3. era=2020以前 ∧ evidence_status=未知 ∧ type=article ∧ ¬(evidence_status=仓储 ∨ source.kind=journal) ｜ 8 项 ｜ 使用 1 次 ｜ 最近 300 天前
+4. evidence_status=同行评审 ∧ type=article ∧ ¬(era=2020以前) ｜ 214 项 ｜ 使用 1 次 ｜ 最近 300 天前
+5. era=2020以前 ∧ evidence_status=同行评审 ∧ type=review ∧ ¬(type=article) ｜ 537 项 ｜ 使用 1 次 ｜ 最近 300 天前
+6. evidence_status=仓储 ∧ type=article ∧ ¬(era=2020以前 ∨ evidence_status=同行评审) ｜ 5 项 ｜ 使用 1 次 ｜ 最近 300 天前
+7. era=2020以前 ∧ source.kind=journal ∧ type=article ｜ 2803 项 ｜ 使用 1 次 ｜ 最近 0 天前
+8. type=article ∧ ¬(era=2020以前 ∨ evidence_status=仓储 ∨ evidence_status=同行评审) ｜ 2 项 ｜ 使用 1 次 ｜ 最近 300 天前
+9. era=2020以前 ∧ type=review ∧ ¬(evidence_status=仓储 ∨ evidence_status=同行评审 ∨ type=article) ｜ 1 项 ｜ 使用 1 次 ｜ 最近 300 天前
+10. era=2020以前 ∧ evidence_status=仓储 ∧ type=article ∧ ¬(source.kind=journal) ｜ 30 项 ｜ 使用 1 次 ｜ 最近 300 天前
+
+=== G3_none ===
+检索：require=[]（全部方向）｜以下是这个库的 10 个方向
+1. era=2020以前 ∧ evidence_status=仓储 ∧ type=review ∧ ¬(evidence_status=同行评审 ∨ type=article) ｜ 2 项 ｜ 从未使用
+2. era=2020以前 ∧ type=article ∧ ¬(evidence_status=仓储 ∨ evidence_status=未知 ∨ source.kind=journal) ｜ 6 项 ｜ 从未使用
+3. era=2020以前 ∧ evidence_status=未知 ∧ type=article ∧ ¬(evidence_status=仓储 ∨ source.kind=journal) ｜ 8 项 ｜ 从未使用
+4. evidence_status=同行评审 ∧ type=article ∧ ¬(era=2020以前) ｜ 214 项 ｜ 从未使用
+5. era=2020以前 ∧ evidence_status=同行评审 ∧ type=review ∧ ¬(type=article) ｜ 537 项 ｜ 从未使用
+6. evidence_status=仓储 ∧ type=article ∧ ¬(era=2020以前 ∨ evidence_status=同行评审) ｜ 5 项 ｜ 从未使用
+7. era=2020以前 ∧ source.kind=journal ∧ type=article ｜ 2803 项 ｜ 从未使用
+8. type=article ∧ ¬(era=2020以前 ∨ evidence_status=仓储 ∨ evidence_status=同行评审) ｜ 2 项 ｜ 从未使用
+9. era=2020以前 ∧ type=review ∧ ¬(evidence_status=仓储 ∨ evidence_status=同行评审 ∨ type=article) ｜ 1 项 ｜ 从未使用
+10. era=2020以前 ∧ evidence_status=仓储 ∧ type=article ∧ ¬(source.kind=journal) ｜ 30 项 ｜ 从未使用
+
+=== G4_tiny ===
+检索：require=[]（全部方向）｜以下是这个库的 10 个方向
+1. era=2020以前 ∧ evidence_status=仓储 ∧ type=review ∧ ¬(evidence_status=同行评审 ∨ type=article) ｜ 2 项 ｜ 使用 1 次 ｜ 最近 300 天前
+2. era=2020以前 ∧ type=article ∧ ¬(evidence_status=仓储 ∨ evidence_status=未知 ∨ source.kind=journal) ｜ 6 项 ｜ 使用 1 次 ｜ 最近 300 天前
+3. era=2020以前 ∧ evidence_status=未知 ∧ type=article ∧ ¬(evidence_status=仓储 ∨ source.kind=journal) ｜ 8 项 ｜ 使用 1 次 ｜ 最近 300 天前
+4. evidence_status=同行评审 ∧ type=article ∧ ¬(era=2020以前) ｜ 214 项 ｜ 使用 1 次 ｜ 最近 300 天前
+5. era=2020以前 ∧ evidence_status=同行评审 ∧ type=review ∧ ¬(type=article) ｜ 537 项 ｜ 使用 1 次 ｜ 最近 300 天前
+6. evidence_status=仓储 ∧ type=article ∧ ¬(era=2020以前 ∨ evidence_status=同行评审) ｜ 5 项 ｜ 使用 1 次 ｜ 最近 300 天前
+7. era=2020以前 ∧ source.kind=journal ∧ type=article ｜ 2803 项 ｜ 使用 1 次 ｜ 最近 300 天前
+8. type=article ∧ ¬(era=2020以前 ∨ evidence_status=仓储 ∨ evidence_status=同行评审) ｜ 2 项 ｜ 使用 1 次 ｜ 最近 0 天前
+9. era=2020以前 ∧ type=review ∧ ¬(evidence_status=仓储 ∨ evidence_status=同行评审 ∨ type=article) ｜ 1 项 ｜ 使用 1 次 ｜ 最近 300 天前
+10. era=2020以前 ∧ evidence_status=仓储 ∧ type=article ∧ ¬(source.kind=journal) ｜ 30 项 ｜ 使用 1 次 ｜ 最近 300 天前
+  G1_real inst0 idx=5 chosen=review type=review reason='我会先选第 5 个方向：它是唯一最近被下钻过（0 天前）的方向，使用记录没有衰减，说明当前关注度最高；同时它有 537 '
+  G1_real inst1 idx=5 chosen=review type=review reason='我会先选第 5 个方向。它规模最大（537 项），且最近刚被下钻过（0 天前），使用记录没有衰减，说明它当前最活跃、最值'
+  G1_real inst2 idx=5 chosen=review type=review reason='我会先选第 5 项：它是唯一最近被下钻过的方向（0 天前，无衰减），且规模 537 项、属于同行评审的 review，覆'
+  G1_real inst3 idx=5 chosen=review type=review reason='我会先选第 5 个方向。它规模最大（537 项），且最近 0 天前刚被下钻过，使用记录没有衰减，说明它当前最活跃、最值得'
+  G1_real inst4 idx=5 chosen=review type=review reason='我会先选第 5 个方向。它规模最大（537 项），且最近 0 天前刚被下钻过，使用记录没有衰减，说明它当前最活跃、最值得'
+  G2_flip inst0 idx=7 chosen=article type=article reason='我会先选第 7 个方向：它规模最大（2803 项），且最近 0 天前刚被下钻过，使用记录没有衰减，说明它当前最活跃、最值'
+  G2_flip inst1 idx=7 chosen=article type=article reason='我会先选第 7 个方向。它规模最大（2803 项），且最近 0 天前刚被下钻过，使用记录没有衰减，说明它当前最活跃、最值'
+  G2_flip inst2 idx=7 chosen=article type=article reason='我会先选第 7 个方向：它规模最大（2803 项），且最近 0 天前刚被下钻过，使用记录没有衰减，说明它当前最活跃、最值'
+  G2_flip inst3 idx=7 chosen=article type=article reason='我会先选第 7 个方向。它规模最大（2803 项），且最近 0 天前刚被下钻过，使用记录没有衰减，说明它当前最活跃、最值'
+  G2_flip inst4 idx=7 chosen=article type=article reason='我会先选第 7 个方向。它规模最大（2803 项），且最近 0 天前刚被下钻过，使用记录没有衰减，说明它当前最活跃、最值'
+  G3_none inst0 idx=5 chosen=review type=review reason='先选第 5 个方向：它是清单里规模最大、且明确限定为“2020 年以前、同行评审、review”的方向，适合作为优先深入'
+  G3_none inst1 idx=5 chosen=review type=review reason='先选第 5 项：它是唯一规模大、主题明确（2020 年以前、同行评审的综述），且不与 article 类型重叠的方向，适'
+  G3_none inst2 idx=5 chosen=review type=review reason='先选第 5 个方向：它是清单里规模最大的综述方向（537 项），且条件明确、边界干净，适合作为优先下钻的入口；其余方向要'
+  G3_none inst3 idx=5 chosen=review type=review reason='先选第 5 个方向：它是清单里规模最大的综述方向（537 项），且条件明确、边界干净（2020 年以前、同行评审、综述、'
+  G3_none inst4 idx=5 chosen=review type=review reason='先选第 5 个方向：它是清单里规模最大的综述方向（537 项），且条件明确、边界干净，适合作为优先下钻的入口；其余方向要'
+  G4_tiny inst0 idx=8 chosen=tiny type=article reason='我会先选第 8 个方向。它虽然只有 2 项，但最近 0 天前刚被下钻过，使用记录没有衰减，说明这是当前最“热”的线索；其'
+  G4_tiny inst1 idx=8 chosen=tiny type=article reason='我会先选第 8 个方向。它最近刚被下钻过（0 天前，无衰减），说明当前检索语境与它最贴近；虽然只有 2 项，但“新近被实'
+  G4_tiny inst2 idx=8 chosen=tiny type=article reason='我会先选第 8 个方向。它最近刚被下钻过（0 天前，几乎无衰减），说明当前关注度最高；虽然只有 2 项，但“新近被深入过'
+  G4_tiny inst3 idx=8 chosen=tiny type=article reason='我会先选第 8 个方向。它虽然只有 2 项，但最近 0 天前刚被下钻过，使用记录没有衰减，说明它是当前最“热”的入口；其'
+  G4_tiny inst4 idx=8 chosen=tiny type=article reason='我会先选第 8 个方向。它虽然只有 2 项，但最近 0 天前刚被下钻过，使用记录没有衰减，说明它是当前最“热”的入口；其'
+{"Q1_G1_review": 5, "Q2_G2_article": 5, "Q3_G3_review(应<=2)": 5, "Q4_G4_tiny(应>=3)": 5, "G3_article(默认偏好)": 0, "of": 5, "pos": {"review": 5, "article": 7, "tiny": 8}, "members": {"review": 537, "article": 2803, "tiny": 2}, "rows": [{"i": 1, "did": "D25", "members": 2}, {"i": 2, "did": "D52", "members": 6}, {"i": 3, "did": "D51", "members": 8}, {"i": 4, "did": "D91", "members": 214}, {"i": 5, "did": "D7", "members": 537}, {"i": 6, "did": "D99", "members": 5}, {"i": 7, "did": "D11", "members": 2803}, {"i": 8, "did": "D100", "members": 2}, {"i": 9, "did": "D26", "members": 1}, {"i": 10, "did": "D45", "members": 30}]}

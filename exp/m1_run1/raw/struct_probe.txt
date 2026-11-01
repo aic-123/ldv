@@ -1,0 +1,31 @@
+被测 C:\Users\19253\WorkBuddy\ldv\repo｜Python 3.13.14｜意图 A=['era=2020及以后'] B=['type=article']
+── S1 可复现 ──
+[S1-A] PASS 读数={"dirs_identical": true, "distinct_sigs": 1, "fp": "fb94d42568f39bcd", "n_dirs": 77, "n_runs": 5, "tree": {"层数": 16, "方向数": 77, "最大叶": 3017}}
+[S1-B] PASS 读数={"after": {"fp": "89767e92db325d37", "n_keys": 39, "tree": {"层数": 16, "方向数": 101, "最大叶": 2803}}, "before": {"fp": "fb94d42568f39bcd", "n_keys": 37, "tree": {"层数": 16, "方向数": 77, "最大叶": 3017}}}
+[S1-B′] PASS 读数={"fp": "fb94d42568f39bcd", "note": "清单例子 LEAF_CAP 8→3 在本版对结构无影响（50→3 实测）", "same_as_baseline": true}
+── S2 独立 I ──
+[S2-A] PASS 读数={"dirs_identical": true, "fp": ["fb94d42568f39bcd", "fb94d42568f39bcd"]}
+[S2-B] PASS 读数={"dirs_identical": true, "fp": "fb94d42568f39bcd", "renamed": 4037}
+[S2-C] PASS 读数={"A_top_fields": {"era": 17, "evidence_status": 16, "source.kind": 10, "type": 17}, "B_top_fields": {"era": 7, "evidence_status": 6, "source.kind": 4, "type": 7}, "note": "见 S3-1；S2-C 的意义由 S3-1 的方向谓词对比承担"}
+── S3 独立 II（意图对齐）──
+[S3-1] PASS 读数={"A": [17, 332], "B": [7, 3068]}
+[S3-2] PASS 读数={"detail": [{"did": "D91", "fields": ["era", "evidence_status", "type"], "members": 214, "rank": 4}, {"did": "D99", "fields": ["era", "evidence_status", "type"], "members": 5, "rank": 5}, {"did": "D100", "fields": ["era", "evidence_status", "type"], "members": 2, "rank": 5}, {"did": "D6", "fields": ["era", "type"], "members": 35, "rank": 4}, {"did": "D95", "fields": ["era", "evidence_status", "source.kind", "type"], "members": 26, "rank": 7}, {"did": "D96", "fields": ["era", "evidence_status", "source.kind", "type"], "members": 1, "rank": 7}, {"did": "D37", "fields": ["era", "evidence_status", "source.kind", "type"], "members": 4, "rank": 8}, {"did": "D38", "fields": ["era", "evidence_status", "source.kind", "type"], "members": 2, "rank": 8}], "field_counts": {"era": 17, "evidence_status": 16, "source.kind": 10, "type": 17}, "n_answer": 332, "n_branches": 17, "n_top": 17}
+[S3-3] PASS 读数={"detail": [{"did": "D11", "fields": ["era", "source.kind", "type"], "members": 2803, "rank": 4}, {"did": "D45", "fields": ["era", "evidence_status", "source.kind", "type"], "members": 30, "rank": 5}, {"did": "D51", "fields": ["era", "evidence_status", "source.kind", "type"], "members": 8, "rank": 6}, {"did": "D52", "fields": ["era", "evidence_status", "source.kind", "type"], "members": 6, "rank": 6}, {"did": "D91", "fields": ["era", "evidence_status", "type"], "members": 214, "rank": 4}, {"did": "D99", "fields": ["era", "evidence_status", "type"], "members": 5, "rank": 5}, {"did": "D100", "fields": ["era", "evidence_status", "type"], "members": 2, "rank": 5}], "field_counts": {"era": 7, "evidence_status": 6, "source.kind": 4, "type": 7}, "n_answer": 3068, "n_branches": 7, "n_top": 7}
+[S3-4] FAIL 读数={"A_fields": {"era": 17, "evidence_status": 16, "source.kind": 10, "type": 17}, "A_has_type": 17, "B_fields": {"era": 7, "evidence_status": 6, "source.kind": 4, "type": 7}, "B_has_era": 7}
+[S3-5] PASS 读数={"leaf_median": [2, 2], "note": "两意图共用一棵全量树，层数由结构决定（不随 require 变）", "tree": {"层数": 16, "方向数": 101, "最大叶": 2803}}
+── S4 反 groupby ──
+[S4-1] PASS 读数={"n_combo": 74, "n_dirs": 77}
+[S4-2] PASS 读数={"best": {"did": "D21", "fields": ["evidence_status", "type"], "forb": ["evidence_status=同行评审", "type=article"], "max_jaccard": 0.0102, "members": 2, "n_items": 4, "rank": 5, "req": ["evidence_status=仓储", "type=review"]}}
+[S4-3] PASS 读数={"best": {"did": "D21", "fields": ["evidence_status", "type"], "forb": ["evidence_status=同行评审", "type=article"], "max_jaccard": 0.0102, "members": 2, "n_items": 4, "rank": 5, "req": ["evidence_status=仓储", "type=review"]}}
+[S4-附] PASS 读数={"avg_items": 7.03, "combo_ratio": 0.961, "max_rank": 16, "note": "记录项，不计判据"}
+── S5 可累积（真追加）──
+[S5-1] FAIL 读数={"missing": [[["evidence_status=仓储", "type=book-chapter"], ["evidence_status=同行评审", "source.kind=ebook platform", "type=article", "type=conference-paper", "type=preprint", "type=review"]], [["evidence_status=仓储"], ["evidence_status=同行评审", "source.kind=ebook platform", "type=article", "type=book-chapter", "type=conference-paper", "type=preprint", "type=review"]], [["evidence_status=仓储", "type=dataset"], ["evidence_status=同行评审", "source.kind=ebook platform", "type=article", "type=book-chapter", "type=conference-paper", "type=preprint", "type=review"]]], "n_new": 77, "n_old": 63}
+[S5-2] FAIL 读数={"n_shrunk": 21, "sample": [{"new": 0, "old": 1, "pred": [["evidence_status=仓储", "type=book-chapter"], ["evidence_status=同行评审", "source.kind=ebook platform", "type=article", "type=conference-paper", "type=preprint", "type=review"]]}, {"new": 0, "old": 2, "pred": [["evidence_status=仓储"], ["evidence_status=同行评审", "source.kind=ebook platform", "type=article", "type=book-chapter", "type=conference-paper", "type=preprint", "type=review"]]}, {"new": 0, "old": 1, "pred": [["evidence_status=仓储", "type=dataset"], ["evidence_status=同行评审", "source.kind=ebook platform", "type=article", "type=book-chapter", "type=conference-paper", "type=preprint", "type=review"]]}]}
+[S5-3] PASS 读数={"n_split": 38, "parent_missing": []}
+[S5-4] PASS 读数={"n_localized_to_B": 7, "n_new_dirs": 35, "sample": [[["source.kind=ebook platform"], ["evidence_status=同行评审", "type=article", "type=book", "type=book-chapter", "type=preprint", "type=review"]], [["evidence_status=仓储", "type=report"], ["evidence_status=同行评审", "source.kind=ebook platform", "type=article", "type=conference-paper", "type=dataset", "type=preprint", "type=review"]], [["type=other"], ["evidence_status=仓储", "evidence_status=同行评审", "source.kind=ebook platform", "type=article", "type=book", "type=conference-paper", "type=dataset", "type=preprint", "type=review"]]]}
+[S5-5] PASS 读数={"b_nodes": 1037, "covered": 1037, "n_nodes_AB": 4037, "ratio": 1.0}
+[S5-附] PASS 读数={"n_dirs": [63, 77], "n_nodes": [3000, 4037], "n_old_dirs": 63, "n_split_dirs": 38, "note": "必须如实报，不计判据", "sig_A": "b10ef21e375f2c8c", "sig_AB": "fb94d42568f39bcd", "split_ratio": 0.603}
+  导出 struct_A.json / struct_AB.json（63 / 77 方向）
+
+=== 汇总：21 条，PASS 18，FAIL 3 ===
+FAIL: S3-4, S5-1, S5-2

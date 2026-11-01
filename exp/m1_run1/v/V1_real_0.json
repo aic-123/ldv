@@ -1,0 +1,17 @@
+{
+ "task": "V1",
+ "instance": 0,
+ "arm": "real",
+ "order": [
+  "type",
+  "era"
+ ],
+ "prompt_sha256": "a01b2337fdce35114c1ca0ff0e32838610ce6d2b18b62a551e018309c85be42c",
+ "answer": "摘要1 的第一层几乎都围绕 `era=2020以前` 展开，先按时间切分，再在时间条件内细分来源与类型，因此更像按「发表时间」组织。  \n摘要2 的第一层主要围绕 `type=article / review / conference-paper / editorial...` 等文献类型展开，先按类型切分，因此更像按「文献类型」组织。\n\n{\"time\": \"摘要1\", \"type\": \"摘要2\", \"basis\": \"摘要1先以era=2020以前作为主切分条件，摘要2先以type=article/review等文献类型作为主切分条件。\"}",
+ "json": {
+  "time": "摘要1",
+  "type": "摘要2",
+  "basis": "摘要1先以era=2020以前作为主切分条件，摘要2先以type=article/review等文献类型作为主切分条件。"
+ },
+ "correct": false
+}

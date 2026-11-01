@@ -1,0 +1,160 @@
+{
+ "C1_T1_unable": 5,
+ "C2_T2_unable": 5,
+ "C3_T3_specific": 0,
+ "of": 5,
+ "verdict": "需按 PREREG 判读",
+ "detail": {
+  "T1": [
+   {
+    "answer": "unable",
+    "n_evidence": 0,
+    "unable": true,
+    "raw_has_unable": true,
+    "inst": 0,
+    "text": "{\"answer\": \"unable\", \"evidence\": [], \"reason\": \"两份摘要逐行内容完全相同，均未出现任何发表时间字段或时间排序线索，无法区分。\"}",
+    "prompt_sha": "5de0a30bb44249597242ea2f918e5eb552db1a6bacac535aae16724afe237a7e",
+    "left": "摘要1",
+    "note": "两份逐字相同"
+   },
+   {
+    "answer": "unable",
+    "n_evidence": 0,
+    "unable": true,
+    "raw_has_unable": true,
+    "inst": 1,
+    "text": "{\"answer\": \"unable\", \"evidence\": [], \"reason\": \"两份摘要的条目逐字相同，均未出现任何发表时间字段，无法区分。\"}",
+    "prompt_sha": "5de0a30bb44249597242ea2f918e5eb552db1a6bacac535aae16724afe237a7e",
+    "left": "摘要1",
+    "note": "两份逐字相同"
+   },
+   {
+    "answer": "unable",
+    "n_evidence": 2,
+    "unable": true,
+    "raw_has_unable": true,
+    "inst": 2,
+    "text": "{\"answer\": \"unable\", \"evidence\": [\"摘要1 第1行：source.kind=journal ∧ type=article ｜ 3017 项\", \"摘要2 第1行：source.kind=journal ∧ type=article ｜ 3017 项\"], \"reason\": \"两份摘要的条目逐行相同，均未出现任何时间字段或时间排序线索，无法区分哪份体现按发表时间组织。\"}",
+    "prompt_sha": "5de0a30bb44249597242ea2f918e5eb552db1a6bacac535aae16724afe237a7e",
+    "left": "摘要1",
+    "note": "两份逐字相同"
+   },
+   {
+    "answer": "unable",
+    "n_evidence": 2,
+    "unable": true,
+    "raw_has_unable": true,
+    "inst": 3,
+    "text": "{\"answer\": \"unable\", \"evidence\": [\"摘要1 第1行：source.kind=journal ∧ type=article ｜ 3017 项\", \"摘要2 第1行：source.kind=journal ∧ type=article ｜ 3017 项\"], \"reason\": \"两份摘要的条目逐行相同，均未出现任何时间字段或时间排序线索，无法区分哪份更能体现按发表时间组织。\"}",
+    "prompt_sha": "5de0a30bb44249597242ea2f918e5eb552db1a6bacac535aae16724afe237a7e",
+    "left": "摘要1",
+    "note": "两份逐字相同"
+   },
+   {
+    "answer": "unable",
+    "n_evidence": 2,
+    "unable": true,
+    "raw_has_unable": true,
+    "inst": 4,
+    "text": "{\"answer\": \"unable\", \"evidence\": [\"摘要1 第1行：source.kind=journal ∧ type=article ｜ 3017 项\", \"摘要2 第1行：source.kind=journal ∧ type=article ｜ 3017 项\"], \"reason\": \"两份摘要的条目逐行相同，均未出现任何时间字段或时间排序线索，无法区分哪份体现按发表时间组织。\"}",
+    "prompt_sha": "5de0a30bb44249597242ea2f918e5eb552db1a6bacac535aae16724afe237a7e",
+    "left": "摘要1",
+    "note": "两份逐字相同"
+   }
+  ],
+  "T2": [
+   {
+    "answer": "unable",
+    "n_evidence": 0,
+    "unable": true,
+    "raw_has_unable": true,
+    "inst": 0,
+    "text": "{\"answer\": \"unable\", \"evidence\": [], \"reason\": \"摘要仅给出一条来源类型统计（source.kind=journal ∧ type=article ｜ 3017 项），没有任何区分性证据表明建结构者重视什么，故按规则2输出 unable。\"}",
+    "prompt_sha": "cea65c2adfcb254cb883ccab99d4d60ac56ccb3d40578569c53072974e623682"
+   },
+   {
+    "answer": "unable",
+    "n_evidence": 0,
+    "unable": true,
+    "raw_has_unable": true,
+    "inst": 1,
+    "text": "{\"answer\": \"unable\", \"evidence\": [], \"reason\": \"摘要仅给出 source.kind=journal ∧ type=article ｜ 3017 项 这一条计数信息，没有任何能区分重视对象的证据，无法判断建结构者最重视什么。\"}",
+    "prompt_sha": "cea65c2adfcb254cb883ccab99d4d60ac56ccb3d40578569c53072974e623682"
+   },
+   {
+    "answer": "unable",
+    "n_evidence": 0,
+    "unable": true,
+    "raw_has_unable": true,
+    "inst": 2,
+    "text": "{\"answer\": \"unable\", \"evidence\": [], \"reason\": \"摘要仅给出单一计数项「source.kind=journal ∧ type=article ｜ 3017 项」，没有任何可区分重视对象的比较性证据，无法判断建结构者最重视什么。\"}",
+    "prompt_sha": "cea65c2adfcb254cb883ccab99d4d60ac56ccb3d40578569c53072974e623682"
+   },
+   {
+    "answer": "unable",
+    "n_evidence": 0,
+    "unable": true,
+    "raw_has_unable": true,
+    "inst": 3,
+    "text": "{\"answer\": \"unable\", \"evidence\": [], \"reason\": \"摘要仅给出一条计数项「source.kind=journal ∧ type=article ｜ 3017 项」，没有任何可区分「最重视什么」的对比性证据。\"}",
+    "prompt_sha": "cea65c2adfcb254cb883ccab99d4d60ac56ccb3d40578569c53072974e623682"
+   },
+   {
+    "answer": "unable",
+    "n_evidence": 0,
+    "unable": true,
+    "raw_has_unable": true,
+    "inst": 4,
+    "text": "{\"answer\": \"unable\", \"evidence\": [], \"reason\": \"摘要仅给出一条计数项（source.kind=journal ∧ type=article ｜ 3017 项），没有任何可区分重视对象的对比或取舍证据，无法判断建结构者最重视什么。\"}",
+    "prompt_sha": "cea65c2adfcb254cb883ccab99d4d60ac56ccb3d40578569c53072974e623682"
+   }
+  ],
+  "T3": [
+   {
+    "answer": "unable",
+    "n_evidence": 0,
+    "unable": true,
+    "raw_has_unable": true,
+    "inst": 0,
+    "text": "{\"answer\": \"unable\", \"evidence\": [], \"reason\": \"摘要仅列出各分类的项数，未提供任何能区分该结构建立者重视什么的逐字证据。\"}",
+    "prompt_sha": "44ebd239ea4e45e2c7b70b93048d1c0ef45e424a2c5acefcd2db8718488077d4"
+   },
+   {
+    "answer": "unable",
+    "n_evidence": 0,
+    "unable": true,
+    "raw_has_unable": true,
+    "inst": 1,
+    "text": "{\"answer\": \"unable\", \"evidence\": [], \"reason\": \"摘要仅列出各互斥分支的计数，未出现任何关于建结构者偏好或重视对象的逐字表述，无法找到区分性证据。\"}",
+    "prompt_sha": "44ebd239ea4e45e2c7b70b93048d1c0ef45e424a2c5acefcd2db8718488077d4"
+   },
+   {
+    "answer": "unable",
+    "n_evidence": 0,
+    "unable": true,
+    "raw_has_unable": true,
+    "inst": 2,
+    "text": "{\"answer\": \"unable\", \"evidence\": [], \"reason\": \"摘要仅列出各互斥分支的计数，未提供任何能区分「最重视什么」的逐字表述，无法据此判断。\"}",
+    "prompt_sha": "44ebd239ea4e45e2c7b70b93048d1c0ef45e424a2c5acefcd2db8718488077d4"
+   },
+   {
+    "answer": "unable",
+    "n_evidence": 0,
+    "unable": true,
+    "raw_has_unable": true,
+    "inst": 3,
+    "text": "{\"answer\": \"unable\", \"evidence\": [], \"reason\": \"摘要仅列出各分类的计数与条件，未提供任何能区分「最重视什么」的陈述，无法据此判断建结构者的偏好。\"}",
+    "prompt_sha": "44ebd239ea4e45e2c7b70b93048d1c0ef45e424a2c5acefcd2db8718488077d4"
+   },
+   {
+    "answer": "unable",
+    "n_evidence": 0,
+    "unable": true,
+    "raw_has_unable": true,
+    "inst": 4,
+    "text": "{\"answer\": \"unable\", \"evidence\": [], \"reason\": \"摘要仅列出各分类的计数与条件，未提供任何能区分该结构建立者重视什么的逐字证据。\"}",
+    "prompt_sha": "44ebd239ea4e45e2c7b70b93048d1c0ef45e424a2c5acefcd2db8718488077d4"
+   }
+  ]
+ }
+}

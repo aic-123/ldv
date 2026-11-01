@@ -1,0 +1,14 @@
+{
+ "task": "D1v2",
+ "instance": 1,
+ "left": "other",
+ "right": "folded",
+ "pick": "摘要1",
+ "folded_wins": false,
+ "prompt_sha256": "6755e04e16a023e9cb83430e87e49ae7e4802d16ebd8c4bfc59ed809d2624c44",
+ "answer": "两份摘要中，**摘要 1 更像人组织的**，摘要 2 更像机械地逐个列出。\n\n理由：摘要 1 先按 `type=article` / `type=review` / 其他这类“主要类型”做顶层切分，再在各大类内部按 `era`、`evidence_status`、`source.kind` 等逐层细化，明显有“先抓主干、再补细节”的取舍和判断；摘要 2 则基本沿着否定条件一路往下钻，把大量小类堆成一条很深的链，像是按固定规则把剩余项逐个枚举出来，缺少人类组织时会有的主次安排。\n\n{\"human\": \"摘要1\", \"reason\": \"摘要1先按主要类型（article/review/其他）做顶层切分，再在类内按era、evidence_status、source.kind逐层细化，体现了先抓主干再补细节的取舍；摘要2则沿否定条件一路下钻，把剩余小类机械地串成深链，更像按规则逐个枚举。\"}",
+ "json": {
+  "human": "摘要1",
+  "reason": "摘要1先按主要类型（article/review/其他）做顶层切分，再在类内按era、evidence_status、source.kind逐层细化，体现了先抓主干再补细节的取舍；摘要2则沿否定条件一路下钻，把剩余小类机械地串成深链，更像按规则逐个枚举。"
+ }
+}

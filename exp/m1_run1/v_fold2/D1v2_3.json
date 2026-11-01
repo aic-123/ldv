@@ -1,0 +1,14 @@
+{
+ "task": "D1v2",
+ "instance": 3,
+ "left": "other",
+ "right": "folded",
+ "pick": "摘要1",
+ "folded_wins": false,
+ "prompt_sha256": "6755e04e16a023e9cb83430e87e49ae7e4802d16ebd8c4bfc59ed809d2624c44",
+ "answer": "两份摘要都包含大量“¬(...)”式的排除条件，但摘要1在顶层先按 type=article / review / 其他做主干切分，再在 article 下按 era、source.kind、evidence_status 逐层展开，且保留了多个并列分支（如 article 下 2020 前后、review 下 2020 前后、非 article/review 下同行评审与非同行评审），更像是有取舍地沿主要维度组织；摘要2则基本是一条“排除链”一路向下，把大量小类挂在同一条否定条件不断加长的路径上，分支极少，更像机械地按排除条件逐个列出。因此摘要1更像人组织的。\n\n{\"human\": \"摘要1\", \"reason\": \"摘要1先按 type 主干切分并在各分支下按 era/source.kind/evidence_status 展开，保留多个并列分支，体现取舍与判断；摘要2主要是单条不断加长的排除链，分支极少，更像机械逐项列出。\"}",
+ "json": {
+  "human": "摘要1",
+  "reason": "摘要1先按 type 主干切分并在各分支下按 era/source.kind/evidence_status 展开，保留多个并列分支，体现取舍与判断；摘要2主要是单条不断加长的排除链，分支极少，更像机械逐项列出。"
+ }
+}

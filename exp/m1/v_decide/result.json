@@ -1,0 +1,306 @@
+{
+ "Q1_G1_review": 5,
+ "Q2_G2_article": 5,
+ "Q3_G3_review(应<=2)": 5,
+ "Q4_G4_tiny(应>=3)": 5,
+ "G3_article(默认偏好)": 0,
+ "of": 5,
+ "pos": {
+  "review": 5,
+  "article": 7,
+  "tiny": 8
+ },
+ "members": {
+  "review": 537,
+  "article": 2803,
+  "tiny": 2
+ },
+ "rows": [
+  {
+   "i": 1,
+   "did": "D25",
+   "members": 2
+  },
+  {
+   "i": 2,
+   "did": "D52",
+   "members": 6
+  },
+  {
+   "i": 3,
+   "did": "D51",
+   "members": 8
+  },
+  {
+   "i": 4,
+   "did": "D91",
+   "members": 214
+  },
+  {
+   "i": 5,
+   "did": "D7",
+   "members": 537
+  },
+  {
+   "i": 6,
+   "did": "D99",
+   "members": 5
+  },
+  {
+   "i": 7,
+   "did": "D11",
+   "members": 2803
+  },
+  {
+   "i": 8,
+   "did": "D100",
+   "members": 2
+  },
+  {
+   "i": 9,
+   "did": "D26",
+   "members": 1
+  },
+  {
+   "i": 10,
+   "did": "D45",
+   "members": 30
+  }
+ ],
+ "bodies": {
+  "G1_real": "检索：require=[]（全部方向）｜以下是这个库的 10 个方向\n1. era=2020以前 ∧ evidence_status=仓储 ∧ type=review ∧ ¬(evidence_status=同行评审 ∨ type=article) ｜ 2 项 ｜ 使用 1 次 ｜ 最近 300 天前\n2. era=2020以前 ∧ type=article ∧ ¬(evidence_status=仓储 ∨ evidence_status=未知 ∨ source.kind=journal) ｜ 6 项 ｜ 使用 1 次 ｜ 最近 300 天前\n3. era=2020以前 ∧ evidence_status=未知 ∧ type=article ∧ ¬(evidence_status=仓储 ∨ source.kind=journal) ｜ 8 项 ｜ 使用 1 次 ｜ 最近 300 天前\n4. evidence_status=同行评审 ∧ type=article ∧ ¬(era=2020以前) ｜ 214 项 ｜ 使用 1 次 ｜ 最近 300 天前\n5. era=2020以前 ∧ evidence_status=同行评审 ∧ type=review ∧ ¬(type=article) ｜ 537 项 ｜ 使用 1 次 ｜ 最近 0 天前\n6. evidence_status=仓储 ∧ type=article ∧ ¬(era=2020以前 ∨ evidence_status=同行评审) ｜ 5 项 ｜ 使用 1 次 ｜ 最近 300 天前\n7. era=2020以前 ∧ source.kind=journal ∧ type=article ｜ 2803 项 ｜ 使用 1 次 ｜ 最近 300 天前\n8. type=article ∧ ¬(era=2020以前 ∨ evidence_status=仓储 ∨ evidence_status=同行评审) ｜ 2 项 ｜ 使用 1 次 ｜ 最近 300 天前\n9. era=2020以前 ∧ type=review ∧ ¬(evidence_status=仓储 ∨ evidence_status=同行评审 ∨ type=article) ｜ 1 项 ｜ 使用 1 次 ｜ 最近 300 天前\n10. era=2020以前 ∧ evidence_status=仓储 ∧ type=article ∧ ¬(source.kind=journal) ｜ 30 项 ｜ 使用 1 次 ｜ 最近 300 天前",
+  "G2_flip": "检索：require=[]（全部方向）｜以下是这个库的 10 个方向\n1. era=2020以前 ∧ evidence_status=仓储 ∧ type=review ∧ ¬(evidence_status=同行评审 ∨ type=article) ｜ 2 项 ｜ 使用 1 次 ｜ 最近 300 天前\n2. era=2020以前 ∧ type=article ∧ ¬(evidence_status=仓储 ∨ evidence_status=未知 ∨ source.kind=journal) ｜ 6 项 ｜ 使用 1 次 ｜ 最近 300 天前\n3. era=2020以前 ∧ evidence_status=未知 ∧ type=article ∧ ¬(evidence_status=仓储 ∨ source.kind=journal) ｜ 8 项 ｜ 使用 1 次 ｜ 最近 300 天前\n4. evidence_status=同行评审 ∧ type=article ∧ ¬(era=2020以前) ｜ 214 项 ｜ 使用 1 次 ｜ 最近 300 天前\n5. era=2020以前 ∧ evidence_status=同行评审 ∧ type=review ∧ ¬(type=article) ｜ 537 项 ｜ 使用 1 次 ｜ 最近 300 天前\n6. evidence_status=仓储 ∧ type=article ∧ ¬(era=2020以前 ∨ evidence_status=同行评审) ｜ 5 项 ｜ 使用 1 次 ｜ 最近 300 天前\n7. era=2020以前 ∧ source.kind=journal ∧ type=article ｜ 2803 项 ｜ 使用 1 次 ｜ 最近 0 天前\n8. type=article ∧ ¬(era=2020以前 ∨ evidence_status=仓储 ∨ evidence_status=同行评审) ｜ 2 项 ｜ 使用 1 次 ｜ 最近 300 天前\n9. era=2020以前 ∧ type=review ∧ ¬(evidence_status=仓储 ∨ evidence_status=同行评审 ∨ type=article) ｜ 1 项 ｜ 使用 1 次 ｜ 最近 300 天前\n10. era=2020以前 ∧ evidence_status=仓储 ∧ type=article ∧ ¬(source.kind=journal) ｜ 30 项 ｜ 使用 1 次 ｜ 最近 300 天前",
+  "G3_none": "检索：require=[]（全部方向）｜以下是这个库的 10 个方向\n1. era=2020以前 ∧ evidence_status=仓储 ∧ type=review ∧ ¬(evidence_status=同行评审 ∨ type=article) ｜ 2 项 ｜ 从未使用\n2. era=2020以前 ∧ type=article ∧ ¬(evidence_status=仓储 ∨ evidence_status=未知 ∨ source.kind=journal) ｜ 6 项 ｜ 从未使用\n3. era=2020以前 ∧ evidence_status=未知 ∧ type=article ∧ ¬(evidence_status=仓储 ∨ source.kind=journal) ｜ 8 项 ｜ 从未使用\n4. evidence_status=同行评审 ∧ type=article ∧ ¬(era=2020以前) ｜ 214 项 ｜ 从未使用\n5. era=2020以前 ∧ evidence_status=同行评审 ∧ type=review ∧ ¬(type=article) ｜ 537 项 ｜ 从未使用\n6. evidence_status=仓储 ∧ type=article ∧ ¬(era=2020以前 ∨ evidence_status=同行评审) ｜ 5 项 ｜ 从未使用\n7. era=2020以前 ∧ source.kind=journal ∧ type=article ｜ 2803 项 ｜ 从未使用\n8. type=article ∧ ¬(era=2020以前 ∨ evidence_status=仓储 ∨ evidence_status=同行评审) ｜ 2 项 ｜ 从未使用\n9. era=2020以前 ∧ type=review ∧ ¬(evidence_status=仓储 ∨ evidence_status=同行评审 ∨ type=article) ｜ 1 项 ｜ 从未使用\n10. era=2020以前 ∧ evidence_status=仓储 ∧ type=article ∧ ¬(source.kind=journal) ｜ 30 项 ｜ 从未使用",
+  "G4_tiny": "检索：require=[]（全部方向）｜以下是这个库的 10 个方向\n1. era=2020以前 ∧ evidence_status=仓储 ∧ type=review ∧ ¬(evidence_status=同行评审 ∨ type=article) ｜ 2 项 ｜ 使用 1 次 ｜ 最近 300 天前\n2. era=2020以前 ∧ type=article ∧ ¬(evidence_status=仓储 ∨ evidence_status=未知 ∨ source.kind=journal) ｜ 6 项 ｜ 使用 1 次 ｜ 最近 300 天前\n3. era=2020以前 ∧ evidence_status=未知 ∧ type=article ∧ ¬(evidence_status=仓储 ∨ source.kind=journal) ｜ 8 项 ｜ 使用 1 次 ｜ 最近 300 天前\n4. evidence_status=同行评审 ∧ type=article ∧ ¬(era=2020以前) ｜ 214 项 ｜ 使用 1 次 ｜ 最近 300 天前\n5. era=2020以前 ∧ evidence_status=同行评审 ∧ type=review ∧ ¬(type=article) ｜ 537 项 ｜ 使用 1 次 ｜ 最近 300 天前\n6. evidence_status=仓储 ∧ type=article ∧ ¬(era=2020以前 ∨ evidence_status=同行评审) ｜ 5 项 ｜ 使用 1 次 ｜ 最近 300 天前\n7. era=2020以前 ∧ source.kind=journal ∧ type=article ｜ 2803 项 ｜ 使用 1 次 ｜ 最近 300 天前\n8. type=article ∧ ¬(era=2020以前 ∨ evidence_status=仓储 ∨ evidence_status=同行评审) ｜ 2 项 ｜ 使用 1 次 ｜ 最近 0 天前\n9. era=2020以前 ∧ type=review ∧ ¬(evidence_status=仓储 ∨ evidence_status=同行评审 ∨ type=article) ｜ 1 项 ｜ 使用 1 次 ｜ 最近 300 天前\n10. era=2020以前 ∧ evidence_status=仓储 ∧ type=article ∧ ¬(source.kind=journal) ｜ 30 项 ｜ 使用 1 次 ｜ 最近 300 天前"
+ },
+ "detail": {
+  "G1_real": [
+   {
+    "inst": 0,
+    "pick_index": 5,
+    "pick_type": "review",
+    "mentions_days": true,
+    "mentions_decay": true,
+    "did": "D7",
+    "chosen": "review",
+    "answer": "我会先选第 5 个方向：它是唯一最近被下钻过（0 天前）的方向，使用记录没有衰减，说明当前关注度最高；同时它有 537 项、规模足够大，且是 2020 年以前的同行评审综述，适合作为优先深入的总览入口。\n\n{\"pick_index\": 5, \"pick_type\": \"review\", \"reason\": \"最近 0 天前刚被下钻、使用记录未衰减，且 537 项规模大，是当前最活跃且适合先做总览的方向。\"}",
+    "prompt_sha256": "676c3aee391d70c3f56585225bff093a6f0a80febaf30817ac2d7f9a295c21e2"
+   },
+   {
+    "inst": 1,
+    "pick_index": 5,
+    "pick_type": "review",
+    "mentions_days": true,
+    "mentions_decay": true,
+    "did": "D7",
+    "chosen": "review",
+    "answer": "我会先选第 5 个方向。它规模最大（537 项），且最近刚被下钻过（0 天前），使用记录没有衰减，说明它当前最活跃、最值得优先深入；其余方向的使用记录都已过去 300 天，按 30 天半衰期几乎衰减殆尽。\n\n{\"pick_index\": 5, \"pick_type\": \"review\", \"reason\": \"规模最大且最近刚被下钻（0 天前），使用信号未衰减，优先级最高。\"}",
+    "prompt_sha256": "676c3aee391d70c3f56585225bff093a6f0a80febaf30817ac2d7f9a295c21e2"
+   },
+   {
+    "inst": 2,
+    "pick_index": 5,
+    "pick_type": "review",
+    "mentions_days": true,
+    "mentions_decay": true,
+    "did": "D7",
+    "chosen": "review",
+    "answer": "我会先选第 5 项：它是唯一最近被下钻过的方向（0 天前，无衰减），且规模 537 项、属于同行评审的 review，覆盖面和可信度都高，最值得优先深入。\n\n{\"pick_index\": 5, \"pick_type\": \"review\", \"reason\": \"唯一最近（0 天前）被下钻、使用记录未衰减，且规模 537 项、同行评审 review，信息密度与可信度最高。\"}",
+    "prompt_sha256": "676c3aee391d70c3f56585225bff093a6f0a80febaf30817ac2d7f9a295c21e2"
+   },
+   {
+    "inst": 3,
+    "pick_index": 5,
+    "pick_type": "review",
+    "mentions_days": true,
+    "mentions_decay": true,
+    "did": "D7",
+    "chosen": "review",
+    "answer": "我会先选第 5 个方向。它规模最大（537 项），且最近 0 天前刚被下钻过，使用记录没有衰减，说明它当前最活跃、最值得优先深入；其余方向的使用记录都已衰减到约 1/1024，参考价值很低。\n\n{\"pick_index\": 5, \"pick_type\": \"review\", \"reason\": \"规模最大且最近刚被下钻、使用记录未衰减，当前活跃度最高。\"}",
+    "prompt_sha256": "676c3aee391d70c3f56585225bff093a6f0a80febaf30817ac2d7f9a295c21e2"
+   },
+   {
+    "inst": 4,
+    "pick_index": 5,
+    "pick_type": "review",
+    "mentions_days": true,
+    "mentions_decay": true,
+    "did": "D7",
+    "chosen": "review",
+    "answer": "我会先选第 5 个方向。它规模最大（537 项），且最近 0 天前刚被下钻过，使用记录没有衰减，说明它当前最活跃、最值得优先深入；其余方向的使用记录都已衰减约 300 天（约 10 个半衰期），权重几乎归零。\n\n{\"pick_index\": 5, \"pick_type\": \"review\", \"reason\": \"规模最大且最近刚被下钻、使用记录未衰减，当前活跃度最高。\"}",
+    "prompt_sha256": "676c3aee391d70c3f56585225bff093a6f0a80febaf30817ac2d7f9a295c21e2"
+   }
+  ],
+  "G2_flip": [
+   {
+    "inst": 0,
+    "pick_index": 7,
+    "pick_type": "article",
+    "mentions_days": true,
+    "mentions_decay": true,
+    "did": "D11",
+    "chosen": "article",
+    "answer": "我会先选第 7 个方向：它规模最大（2803 项），且最近 0 天前刚被下钻过，使用记录没有衰减，说明它当前最活跃、最值得优先深入。其余方向虽然也有使用记录，但都已是 300 天前，按 30 天半衰期几乎衰减殆尽。\n\n{\"pick_index\": 7, \"pick_type\": \"article\", \"reason\": \"规模最大且最近刚被下钻、使用记录未衰减，当前活跃度最高。\"}",
+    "prompt_sha256": "c585cbd115c9169902e8a7dc3cae26673af1a6344c41f0934d8f4cf1c429ad47"
+   },
+   {
+    "inst": 1,
+    "pick_index": 7,
+    "pick_type": "article",
+    "mentions_days": true,
+    "mentions_decay": true,
+    "did": "D11",
+    "chosen": "article",
+    "answer": "我会先选第 7 个方向。它规模最大（2803 项），且最近 0 天前刚被下钻过，使用记录没有衰减，说明它当前最活跃、最值得优先深入；其余方向虽也有使用记录，但都已 300 天未动，权重衰减到约千分之一。\n\n{\"pick_index\": 7, \"pick_type\": \"article\", \"reason\": \"规模最大且最近刚被下钻、使用记录未衰减，当前活跃度远高于其余已衰减的方向。\"}",
+    "prompt_sha256": "c585cbd115c9169902e8a7dc3cae26673af1a6344c41f0934d8f4cf1c429ad47"
+   },
+   {
+    "inst": 2,
+    "pick_index": 7,
+    "pick_type": "article",
+    "mentions_days": true,
+    "mentions_decay": true,
+    "did": "D11",
+    "chosen": "article",
+    "answer": "我会先选第 7 个方向：它规模最大（2803 项），且最近 0 天前刚被下钻过，使用记录没有衰减，说明它当前最活跃、最值得优先深入。其余方向虽然也有使用记录，但都已是 300 天前，按 30 天半衰期几乎衰减殆尽。\n\n{\"pick_index\": 7, \"pick_type\": \"article\", \"reason\": \"规模最大且最近刚被下钻（0 天前），使用权重未衰减，优先级最高。\"}",
+    "prompt_sha256": "c585cbd115c9169902e8a7dc3cae26673af1a6344c41f0934d8f4cf1c429ad47"
+   },
+   {
+    "inst": 3,
+    "pick_index": 7,
+    "pick_type": "article",
+    "mentions_days": true,
+    "mentions_decay": true,
+    "did": "D11",
+    "chosen": "article",
+    "answer": "我会先选第 7 个方向。它规模最大（2803 项），且最近 0 天前刚被下钻过，使用记录没有衰减，说明它当前最活跃、最值得优先深入；其余方向的使用记录都已衰减到约千分之一，参考价值很低。\n\n{\"pick_index\": 7, \"pick_type\": \"article\", \"reason\": \"规模最大且最近刚被下钻、使用记录未衰减，当前最活跃、最值得优先深入。\"}",
+    "prompt_sha256": "c585cbd115c9169902e8a7dc3cae26673af1a6344c41f0934d8f4cf1c429ad47"
+   },
+   {
+    "inst": 4,
+    "pick_index": 7,
+    "pick_type": "article",
+    "mentions_days": true,
+    "mentions_decay": true,
+    "did": "D11",
+    "chosen": "article",
+    "answer": "我会先选第 7 个方向。它规模最大（2803 项），且最近 0 天前刚被下钻过，使用记录没有衰减，说明它当前最活跃、最值得优先深入；其余方向的使用记录都已过去 300 天，按 30 天半衰期几乎衰减殆尽。\n\n{\"pick_index\": 7, \"pick_type\": \"article\", \"reason\": \"规模最大且最近刚被下钻、使用记录未衰减，当前活跃度最高。\"}",
+    "prompt_sha256": "c585cbd115c9169902e8a7dc3cae26673af1a6344c41f0934d8f4cf1c429ad47"
+   }
+  ],
+  "G3_none": [
+   {
+    "inst": 0,
+    "pick_index": 5,
+    "pick_type": "review",
+    "mentions_days": false,
+    "mentions_decay": false,
+    "did": "D7",
+    "chosen": "review",
+    "answer": "先选第 5 个方向：它是清单里规模最大、且明确限定为“2020 年以前、同行评审、review”的方向，适合作为优先深入的高质量综述入口；其余方向要么规模太小，要么混杂仓储/未知状态，先看它的性价比最高。\n\n{\"pick_index\": 5, \"pick_type\": \"review\", \"reason\": \"规模最大且限定为2020年以前同行评审综述，最适合作为优先深入的入口。\"}",
+    "prompt_sha256": "1df3dae0feef59fc784eb8f0e9aae6bd9556949263b8494bfc31bab8d78d0e50"
+   },
+   {
+    "inst": 1,
+    "pick_index": 5,
+    "pick_type": "review",
+    "mentions_days": false,
+    "mentions_decay": false,
+    "did": "D7",
+    "chosen": "review",
+    "answer": "先选第 5 项：它是唯一规模大、主题明确（2020 年以前、同行评审的综述），且不与 article 类型重叠的方向，适合作为快速建立领域全貌的入口。其余方向要么规模太小、要么是 article 类型、要么条件过窄，先下钻的性价比不如它。\n\n{\"pick_index\": 5, \"pick_type\": \"review\", \"reason\": \"规模大且为同行评审综述，最适合作为快速建立领域全貌的首个下钻方向。\"}",
+    "prompt_sha256": "1df3dae0feef59fc784eb8f0e9aae6bd9556949263b8494bfc31bab8d78d0e50"
+   },
+   {
+    "inst": 2,
+    "pick_index": 5,
+    "pick_type": "review",
+    "mentions_days": false,
+    "mentions_decay": true,
+    "did": "D7",
+    "chosen": "review",
+    "answer": "先选第 5 个方向：它是清单里规模最大的综述方向（537 项），且条件明确、边界干净，适合作为优先下钻的入口；其余方向要么规模太小，要么与它重叠但更窄。  \n另外，所有方向都“从未使用”，没有衰减记录可供比较，因此只能按覆盖面和可读性来挑。\n\n{\"pick_index\": 5, \"pick_type\": \"review\", \"reason\": \"规模最大且条件清晰的综述方向，最适合作为优先深入的总入口。\"}",
+    "prompt_sha256": "1df3dae0feef59fc784eb8f0e9aae6bd9556949263b8494bfc31bab8d78d0e50"
+   },
+   {
+    "inst": 3,
+    "pick_index": 5,
+    "pick_type": "review",
+    "mentions_days": false,
+    "mentions_decay": false,
+    "did": "D7",
+    "chosen": "review",
+    "answer": "先选第 5 个方向：它是清单里规模最大的综述方向（537 项），且条件明确、边界干净（2020 年以前、同行评审、综述、非 article），适合作为优先下钻的入口。其余方向要么规模太小，要么是 article 类且无使用记录，先看综述更利于快速建立全局认识。\n\n{\"pick_index\": 5, \"pick_type\": \"review\", \"reason\": \"规模最大且边界清晰的同行评审综述方向，最适合作为首个深入入口。\"}",
+    "prompt_sha256": "1df3dae0feef59fc784eb8f0e9aae6bd9556949263b8494bfc31bab8d78d0e50"
+   },
+   {
+    "inst": 4,
+    "pick_index": 5,
+    "pick_type": "review",
+    "mentions_days": false,
+    "mentions_decay": false,
+    "did": "D7",
+    "chosen": "review",
+    "answer": "先选第 5 个方向：它是清单里规模最大的综述方向（537 项），且条件明确、边界干净，适合作为优先下钻的入口；其余方向要么规模太小，要么是 article 且未见使用记录支撑。  \n{\"pick_index\": 5, \"pick_type\": \"review\", \"reason\": \"规模最大且为边界清晰的综述方向，最适合优先深入。\"}",
+    "prompt_sha256": "1df3dae0feef59fc784eb8f0e9aae6bd9556949263b8494bfc31bab8d78d0e50"
+   }
+  ],
+  "G4_tiny": [
+   {
+    "inst": 0,
+    "pick_index": 8,
+    "pick_type": "article",
+    "mentions_days": true,
+    "mentions_decay": true,
+    "did": "D100",
+    "chosen": "tiny",
+    "answer": "我会先选第 8 个方向。它虽然只有 2 项，但最近 0 天前刚被下钻过，使用记录没有衰减，说明这是当前最“热”的线索；其余方向的使用都已是 300 天前，按 30 天半衰期几乎归零。先深入这个方向，能最快接上最近的实际关注点。\n\n{\"pick_index\": 8, \"pick_type\": \"article\", \"reason\": \"最近 0 天前刚被下钻、使用记录未衰减，是当前最新鲜的线索。\"}",
+    "prompt_sha256": "d966c7fc9ec9c67cd147fe10efe27e0a5c32bc2b520617090bee63d43cae9a99"
+   },
+   {
+    "inst": 1,
+    "pick_index": 8,
+    "pick_type": "article",
+    "mentions_days": true,
+    "mentions_decay": true,
+    "did": "D100",
+    "chosen": "tiny",
+    "answer": "我会先选第 8 个方向。它最近刚被下钻过（0 天前，无衰减），说明当前检索语境与它最贴近；虽然只有 2 项，但“新近被实际使用”比“300 天前用过、已衰减到几乎可忽略”的旧记录更能反映此刻的相关性。\n\n{\"pick_index\": 8, \"pick_type\": \"article\", \"reason\": \"唯一最近 0 天被下钻、无衰减的方向，时效性最强，最值得优先深入。\"}",
+    "prompt_sha256": "d966c7fc9ec9c67cd147fe10efe27e0a5c32bc2b520617090bee63d43cae9a99"
+   },
+   {
+    "inst": 2,
+    "pick_index": 8,
+    "pick_type": "article",
+    "mentions_days": true,
+    "mentions_decay": true,
+    "did": "D100",
+    "chosen": "tiny",
+    "answer": "我会先选第 8 个方向。它最近刚被下钻过（0 天前，几乎无衰减），说明当前关注度最高；虽然只有 2 项，但“新近被深入过”这一信号在衰减机制下权重最大，先看它能最快接上已有的使用脉络。\n\n{\"pick_index\": 8, \"pick_type\": \"article\", \"reason\": \"最近 0 天前刚被下钻，使用记录几乎未衰减，是当前最活跃、最值得优先接续的方向。\"}",
+    "prompt_sha256": "d966c7fc9ec9c67cd147fe10efe27e0a5c32bc2b520617090bee63d43cae9a99"
+   },
+   {
+    "inst": 3,
+    "pick_index": 8,
+    "pick_type": "article",
+    "mentions_days": true,
+    "mentions_decay": true,
+    "did": "D100",
+    "chosen": "tiny",
+    "answer": "我会先选第 8 个方向。它虽然只有 2 项，但最近 0 天前刚被下钻过，使用记录没有衰减，说明它是当前最“热”的入口；其余方向的使用都已是 300 天前，按 30 天半衰期几乎归零。先深入这个方向，最可能接上最近的检索意图。\n\n{\"pick_index\": 8, \"pick_type\": \"article\", \"reason\": \"最近 0 天前刚被下钻、使用记录未衰减，是当前唯一仍具高权重的方向。\"}",
+    "prompt_sha256": "d966c7fc9ec9c67cd147fe10efe27e0a5c32bc2b520617090bee63d43cae9a99"
+   },
+   {
+    "inst": 4,
+    "pick_index": 8,
+    "pick_type": "article",
+    "mentions_days": true,
+    "mentions_decay": true,
+    "did": "D100",
+    "chosen": "tiny",
+    "answer": "我会先选第 8 个方向。它虽然只有 2 项，但最近 0 天前刚被下钻过，使用记录没有衰减，说明它是当前最“热”的入口；其余方向的使用都已是 300 天前，按 30 天半衰期几乎归零。先深入这个最新被验证过的方向，再决定是否扩展到相邻方向，时间回报最高。\n\n{\"pick_index\": 8, \"pick_type\": \"article\", \"reason\": \"它是唯一最近 0 天前被下钻过的方向，使用信号未衰减，最值得优先深入。\"}",
+    "prompt_sha256": "d966c7fc9ec9c67cd147fe10efe27e0a5c32bc2b520617090bee63d43cae9a99"
+   }
+  ]
+ }
+}

@@ -1,0 +1,150 @@
+{
+ "C1_T1_unable": 5,
+ "C2_T2_unable": 5,
+ "C4_T4_review": 5,
+ "of": 5,
+ "verdict": "三角成立：约束有效 / 结构无证据 / 事实可归纳",
+ "detail": {
+  "T1_same": [
+   {
+    "answer": "unable",
+    "unable": true,
+    "points_review": false,
+    "points_article": false,
+    "inst": 0,
+    "text": "{\"answer\": \"unable\", \"evidence\": [\"摘要1 第1个方向：source.kind=journal ∧ type=article ｜ 3017 项\", \"摘要2 第1个方向：source.kind=journal ∧ type=article ｜ 3017 项\", \"摘要1 第12个方向：evidence_status=同行评审 ∧ source.kind=book series ∧ type=book ∧ ¬(source.kind=conference ∨ type=article ∨ type=conference-paper ∨ type=review) ｜ 2 项\", \"摘要2 第12个方向：evidence_status=同行评审 ∧ source.kind=book series ∧ type=book ∧ ¬(source.kind=conference ∨ type=article ∨ type=conference-paper ∨ type=review) ｜ 2 项\"], \"reason\": \"两份摘要的12个方向逐项相同，均无 era= 字段或使用记录，找不到能区分「按发表时间组织」的依据。\"}",
+    "prompt_sha": "c7ccdb3a0a36e6d5e6a051dd33275768ac4e2bd7695f887eba2b40701a58d080"
+   },
+   {
+    "answer": "unable",
+    "unable": true,
+    "points_review": false,
+    "points_article": false,
+    "inst": 1,
+    "text": "{\"answer\": \"unable\", \"evidence\": [\"摘要1 第1行：source.kind=journal ∧ type=article ｜ 3017 项\", \"摘要2 第1行：source.kind=journal ∧ type=article ｜ 3017 项\", \"摘要1 第2行：evidence_status=仓储 ∧ type=article ∧ ¬(source.kind=journal) ｜ 35 项\", \"摘要2 第2行：evidence_status=仓储 ∧ type=article ∧ ¬(source.kind=journal) ｜ 35 项\"], \"reason\": \"两份摘要的字段清单均未出现 era= 或任何时间字段，且逐行内容一致，找不到能区分「按发表时间组织」的证据。\"}",
+    "prompt_sha": "c7ccdb3a0a36e6d5e6a051dd33275768ac4e2bd7695f887eba2b40701a58d080"
+   },
+   {
+    "answer": "unable",
+    "unable": true,
+    "points_review": false,
+    "points_article": false,
+    "inst": 2,
+    "text": "{\"answer\": \"unable\", \"evidence\": [\"摘要1 第1行：source.kind=journal ∧ type=article ｜ 3017 项\", \"摘要2 第1行：source.kind=journal ∧ type=article ｜ 3017 项\", \"摘要1 第5行：evidence_status=同行评审 ∧ type=review ∧ ¬(type=article) ｜ 572 项\", \"摘要2 第5行：evidence_status=同行评审 ∧ type=review ∧ ¬(type=article) ｜ 572 项\"], \"reason\": \"两份摘要的字段清单均只含 type= / evidence_status= / source.kind= / 项数，不含 era= 或任何时间字段，且逐行内容一致，无区分性证据。\"}",
+    "prompt_sha": "c7ccdb3a0a36e6d5e6a051dd33275768ac4e2bd7695f887eba2b40701a58d080"
+   },
+   {
+    "answer": "unable",
+    "unable": true,
+    "points_review": false,
+    "points_article": false,
+    "inst": 3,
+    "text": "{\"answer\": \"unable\", \"evidence\": [\"摘要1 第1个方向：source.kind=journal ∧ type=article ｜ 3017 项\", \"摘要2 第1个方向：source.kind=journal ∧ type=article ｜ 3017 项\", \"摘要1 第5个方向：evidence_status=同行评审 ∧ type=review ∧ ¬(type=article) ｜ 572 项\", \"摘要2 第5个方向：evidence_status=同行评审 ∧ type=review ∧ ¬(type=article) ｜ 572 项\"], \"reason\": \"两份摘要的各个方向均未出现 era= 字段或任何时间字段，无法区分哪一份体现按发表时间组织。\"}",
+    "prompt_sha": "c7ccdb3a0a36e6d5e6a051dd33275768ac4e2bd7695f887eba2b40701a58d080"
+   },
+   {
+    "answer": "unable",
+    "unable": true,
+    "points_review": false,
+    "points_article": false,
+    "inst": 4,
+    "text": "{\"answer\": \"unable\", \"evidence\": [\"摘要1 第1个方向：source.kind=journal ∧ type=article ｜ 3017 项\", \"摘要2 第1个方向：source.kind=journal ∧ type=article ｜ 3017 项\", \"摘要1 第5个方向：evidence_status=同行评审 ∧ type=review ∧ ¬(type=article) ｜ 572 项\", \"摘要2 第5个方向：evidence_status=同行评审 ∧ type=review ∧ ¬(type=article) ｜ 572 项\"], \"reason\": \"两份摘要的各个方向均未出现 era= 字段或任何时间字段，无法区分哪一份体现按发表时间组织。\"}",
+    "prompt_sha": "c7ccdb3a0a36e6d5e6a051dd33275768ac4e2bd7695f887eba2b40701a58d080"
+   }
+  ],
+  "T2_struct": [
+   {
+    "answer": "unable",
+    "unable": true,
+    "points_review": false,
+    "points_article": false,
+    "inst": 0,
+    "text": "{\"answer\": \"unable\", \"evidence\": [\"source.kind=journal ∧ type=article ｜ 3017 项（第1个方向）\", \"evidence_status=同行评审 ∧ type=review ∧ ¬(type=article) ｜ 572 项（第5个方向）\", \"evidence_status=同行评审 ∧ source.kind=conference ∧ type=conference-paper ∧ ¬(type=article ∨ type=review) ｜ 147 项（第8个方向）\"], \"reason\": \"清单只给出各方向的项数，没有使用记录或时间字段，无法区分“最近”更重视哪一类方向。\"}",
+    "prompt_sha": "b987f5c779c041cf3e8a5c41912bf83d8fd53432138349fa5c401a2dd7463400"
+   },
+   {
+    "answer": "unable",
+    "unable": true,
+    "points_review": false,
+    "points_article": false,
+    "inst": 1,
+    "text": "{\"answer\": \"unable\", \"evidence\": [\"- source.kind=journal ∧ type=article ｜ 3017 项（第1个方向）\", \"- evidence_status=同行评审 ∧ type=review ∧ ¬(type=article) ｜ 572 项（第5个方向）\", \"- evidence_status=同行评审 ∧ source.kind=conference ∧ type=conference-paper ∧ ¬(type=article ∨ type=review) ｜ 147 项（第8个方向）\"], \"reason\": \"清单只给出各方向的项数，没有任何使用记录或时间字段，无法区分“最近”更重视哪一类方向。\"}",
+    "prompt_sha": "b987f5c779c041cf3e8a5c41912bf83d8fd53432138349fa5c401a2dd7463400"
+   },
+   {
+    "answer": "unable",
+    "unable": true,
+    "points_review": false,
+    "points_article": false,
+    "inst": 2,
+    "text": "{\"answer\": \"unable\", \"evidence\": [\"source.kind=journal ∧ type=article ｜ 3017 项（第1个方向）\", \"evidence_status=同行评审 ∧ type=review ∧ ¬(type=article) ｜ 572 项（第5个方向）\", \"evidence_status=同行评审 ∧ source.kind=conference ∧ type=conference-paper ∧ ¬(type=article ∨ type=review) ｜ 147 项（第8个方向）\"], \"reason\": \"清单只给出各方向的项数与字段组合，没有任何使用记录或时间/era 字段，无法区分“最近”更重视哪一类方向。\"}",
+    "prompt_sha": "b987f5c779c041cf3e8a5c41912bf83d8fd53432138349fa5c401a2dd7463400"
+   },
+   {
+    "answer": "unable",
+    "unable": true,
+    "points_review": false,
+    "points_article": false,
+    "inst": 3,
+    "text": "{\"answer\": \"unable\", \"evidence\": [\"source.kind=journal ∧ type=article ｜ 3017 项（第1个方向）\", \"evidence_status=同行评审 ∧ type=review ∧ ¬(type=article) ｜ 572 项（第5个方向）\", \"evidence_status=同行评审 ∧ source.kind=conference ∧ type=conference-paper ∧ ¬(type=article ∨ type=review) ｜ 147 项（第8个方向）\"], \"reason\": \"清单只给出各方向的项数，未提供使用记录或时间字段，无法区分“最近”更重视哪一类方向。\"}",
+    "prompt_sha": "b987f5c779c041cf3e8a5c41912bf83d8fd53432138349fa5c401a2dd7463400"
+   },
+   {
+    "answer": "unable",
+    "unable": true,
+    "points_review": false,
+    "points_article": false,
+    "inst": 4,
+    "text": "{\"answer\": \"unable\", \"evidence\": [\"- source.kind=journal ∧ type=article ｜ 3017 项\", \"- evidence_status=同行评审 ∧ type=review ∧ ¬(type=article) ｜ 572 项\", \"- evidence_status=同行评审 ∧ source.kind=conference ∧ type=conference-paper ∧ ¬(type=article ∨ type=review) ｜ 147 项\"], \"reason\": \"清单只给出各方向的项数与字段组合，没有任何使用记录或时间/era 字段，无法区分“最近”更重视哪一类方向。\"}",
+    "prompt_sha": "b987f5c779c041cf3e8a5c41912bf83d8fd53432138349fa5c401a2dd7463400"
+   }
+  ],
+  "T4_facts": [
+   {
+    "answer": "最近更重视 era=2020以前 ∧ evidence_status=同行评审 ∧ type=review 这一类方向（第7行），因为它是唯一最近 0 天前被下钻过的方向。",
+    "unable": false,
+    "points_review": true,
+    "points_article": false,
+    "inst": 0,
+    "text": "{\"answer\": \"最近更重视 era=2020以前 ∧ evidence_status=同行评审 ∧ type=review 这一类方向（第7行），因为它是唯一最近 0 天前被下钻过的方向。\", \"evidence\": [\"7. era=2020以前 ∧ evidence_status=同行评审 ∧ type=review ∧ ¬(type=article) ｜ 537 项 ｜ 使用 1 次 ｜ 最近 0 天前\", \"2. type=conference-paper ∧ ¬(era=2020以前 ∨ evidence_status=同行评审 ∨ source.kind=ebook platform ∨ type=article ∨ type=book-chapter ∨ type=preprint ∨ type=review) ｜ 1 项 ｜ 使用 1 次 ｜ 最近 300 天前\", \"3. source.kind=ebook platform ∧ ¬(era=2020以前 ∨ evidence_status=同行评审 ∨ type=article ∨ type=book-chapter ∨ type=preprint ∨ type=review) ｜ 7 项 ｜ 使用 1 次 ｜ 最近 300 天前\", \"4. （全部） ∧ ¬(era=2020以前 ∨ evidence_status=同行评审 ∨ source.kind=ebook platform ∨ type=article ∨ type=book-chapter ∨ type=conference-paper ∨ type=preprint ∨ type=review) ｜ 1 项 ｜ 使用 1 次 ｜ 最近 300 天前\", \"6. era=2020以前 ∧ source.kind=journal ∧ type=article ｜ 2803 项 ｜ 使用 1 次 ｜ 最近 300 天前\", \"10. type=book-chapter ∧ ¬(era=2020以前 ∨ evidence_status=同行评审 ∨ type=article ∨ type=preprint ∨ type=review) ｜ 9 项 ｜ 使用 1 次 ｜ 最近 300 天前\"], \"reason\": \"在有使用记录的方向中，只有第7行的最近使用为 0 天前，其余有记录方向均为 300 天前，按半衰期 30 天衰减后第7行的使用记录权重最高，故区分性证据指向第7行所代表的方向。\"}",
+    "prompt_sha": "820d101f70f47a410fe5ef2f94f244590501d2182a687a5a2539eb2567eef610"
+   },
+   {
+    "answer": "最近更重视 era=2020以前 ∧ evidence_status=同行评审 ∧ type=review 这一类方向",
+    "unable": false,
+    "points_review": true,
+    "points_article": false,
+    "inst": 1,
+    "text": "{\"answer\": \"最近更重视 era=2020以前 ∧ evidence_status=同行评审 ∧ type=review 这一类方向\", \"evidence\": [\"7. era=2020以前 ∧ evidence_status=同行评审 ∧ type=review ∧ ¬(type=article) ｜ 537 项 ｜ 使用 1 次 ｜ 最近 0 天前\", \"2. type=conference-paper ∧ ¬(era=2020以前 ∨ evidence_status=同行评审 ∨ source.kind=ebook platform ∨ type=article ∨ type=book-chapter ∨ type=preprint ∨ type=review) ｜ 1 项 ｜ 使用 1 次 ｜ 最近 300 天前\", \"3. source.kind=ebook platform ∧ ¬(era=2020以前 ∨ evidence_status=同行评审 ∨ type=article ∨ type=book-chapter ∨ type=preprint ∨ type=review) ｜ 7 项 ｜ 使用 1 次 ｜ 最近 300 天前\", \"4. （全部） ∧ ¬(era=2020以前 ∨ evidence_status=同行评审 ∨ source.kind=ebook platform ∨ type=article ∨ type=book-chapter ∨ type=conference-paper ∨ type=preprint ∨ type=review) ｜ 1 项 ｜ 使用 1 次 ｜ 最近 300 天前\", \"6. era=2020以前 ∧ source.kind=journal ∧ type=article ｜ 2803 项 ｜ 使用 1 次 ｜ 最近 300 天前\", \"10. type=book-chapter ∧ ¬(era=2020以前 ∨ evidence_status=同行评审 ∨ type=article ∨ type=preprint ∨ type=review) ｜ 9 项 ｜ 使用 1 次 ｜ 最近 300 天前\"], \"reason\": \"唯一使用记录为“最近 0 天前”的方向是第 7 个方向，其余有使用记录的方向均为“最近 300 天前”，按半衰期 30 天衰减后第 7 个方向的记录权重远高于其余方向。\"}",
+    "prompt_sha": "820d101f70f47a410fe5ef2f94f244590501d2182a687a5a2539eb2567eef610"
+   },
+   {
+    "answer": "最近更重视 era=2020以前 ∧ evidence_status=同行评审 ∧ type=review 这一类方向",
+    "unable": false,
+    "points_review": true,
+    "points_article": false,
+    "inst": 2,
+    "text": "{\"answer\": \"最近更重视 era=2020以前 ∧ evidence_status=同行评审 ∧ type=review 这一类方向\", \"evidence\": [\"7. era=2020以前 ∧ evidence_status=同行评审 ∧ type=review ∧ ¬(type=article) ｜ 537 项 ｜ 使用 1 次 ｜ 最近 0 天前\", \"2. type=conference-paper ∧ ¬(era=2020以前 ∨ evidence_status=同行评审 ∨ source.kind=ebook platform ∨ type=article ∨ type=book-chapter ∨ type=preprint ∨ type=review) ｜ 1 项 ｜ 使用 1 次 ｜ 最近 300 天前\", \"3. source.kind=ebook platform ∧ ¬(era=2020以前 ∨ evidence_status=同行评审 ∨ type=article ∨ type=book-chapter ∨ type=preprint ∨ type=review) ｜ 7 项 ｜ 使用 1 次 ｜ 最近 300 天前\", \"4. （全部） ∧ ¬(era=2020以前 ∨ evidence_status=同行评审 ∨ source.kind=ebook platform ∨ type=article ∨ type=book-chapter ∨ type=conference-paper ∨ type=preprint ∨ type=review) ｜ 1 项 ｜ 使用 1 次 ｜ 最近 300 天前\", \"6. era=2020以前 ∧ source.kind=journal ∧ type=article ｜ 2803 项 ｜ 使用 1 次 ｜ 最近 300 天前\", \"10. type=book-chapter ∧ ¬(era=2020以前 ∨ evidence_status=同行评审 ∨ type=article ∨ type=preprint ∨ type=review) ｜ 9 项 ｜ 使用 1 次 ｜ 最近 300 天前\"], \"reason\": \"有使用记录的方向中，只有第7行最近使用时间为 0 天前，其余有记录方向均为 300 天前，按半衰期 30 天衰减后第7行的使用记录权重最高，故最近更重视第7行所代表的 era=2020以前 ∧ evidence_status=同行评审 ∧ type=review 一类方向。\"}",
+    "prompt_sha": "820d101f70f47a410fe5ef2f94f244590501d2182a687a5a2539eb2567eef610"
+   },
+   {
+    "answer": "最近更重视 era=2020以前 ∧ evidence_status=同行评审 ∧ type=review 这一类方向",
+    "unable": false,
+    "points_review": true,
+    "points_article": false,
+    "inst": 3,
+    "text": "{\"answer\": \"最近更重视 era=2020以前 ∧ evidence_status=同行评审 ∧ type=review 这一类方向\", \"evidence\": [\"7. era=2020以前 ∧ evidence_status=同行评审 ∧ type=review ∧ ¬(type=article) ｜ 537 项 ｜ 使用 1 次 ｜ 最近 0 天前\", \"2. type=conference-paper ∧ ¬(era=2020以前 ∨ evidence_status=同行评审 ∨ source.kind=ebook platform ∨ type=article ∨ type=book-chapter ∨ type=preprint ∨ type=review) ｜ 1 项 ｜ 使用 1 次 ｜ 最近 300 天前\", \"3. source.kind=ebook platform ∧ ¬(era=2020以前 ∨ evidence_status=同行评审 ∨ type=article ∨ type=book-chapter ∨ type=preprint ∨ type=review) ｜ 7 项 ｜ 使用 1 次 ｜ 最近 300 天前\", \"4. （全部） ∧ ¬(era=2020以前 ∨ evidence_status=同行评审 ∨ source.kind=ebook platform ∨ type=article ∨ type=book-chapter ∨ type=conference-paper ∨ type=preprint ∨ type=review) ｜ 1 项 ｜ 使用 1 次 ｜ 最近 300 天前\", \"6. era=2020以前 ∧ source.kind=journal ∧ type=article ｜ 2803 项 ｜ 使用 1 次 ｜ 最近 300 天前\", \"10. type=book-chapter ∧ ¬(era=2020以前 ∨ evidence_status=同行评审 ∨ type=article ∨ type=preprint ∨ type=review) ｜ 9 项 ｜ 使用 1 次 ｜ 最近 300 天前\"], \"reason\": \"有使用记录的方向中，只有第7行最近使用时间为 0 天前，其余有记录方向均为 300 天前，按半衰期 30 天衰减后第7行的使用记录权重最高。\"}",
+    "prompt_sha": "820d101f70f47a410fe5ef2f94f244590501d2182a687a5a2539eb2567eef610"
+   },
+   {
+    "answer": "最近更重视 era=2020以前 ∧ evidence_status=同行评审 ∧ type=review 这一类方向",
+    "unable": false,
+    "points_review": true,
+    "points_article": false,
+    "inst": 4,
+    "text": "{\"answer\": \"最近更重视 era=2020以前 ∧ evidence_status=同行评审 ∧ type=review 这一类方向\", \"evidence\": [\"7. era=2020以前 ∧ evidence_status=同行评审 ∧ type=review ∧ ¬(type=article) ｜ 537 项 ｜ 使用 1 次 ｜ 最近 0 天前\", \"2. type=conference-paper ∧ ¬(era=2020以前 ∨ evidence_status=同行评审 ∨ source.kind=ebook platform ∨ type=article ∨ type=book-chapter ∨ type=preprint ∨ type=review) ｜ 1 项 ｜ 使用 1 次 ｜ 最近 300 天前\", \"3. source.kind=ebook platform ∧ ¬(era=2020以前 ∨ evidence_status=同行评审 ∨ type=article ∨ type=book-chapter ∨ type=preprint ∨ type=review) ｜ 7 项 ｜ 使用 1 次 ｜ 最近 300 天前\", \"4. （全部） ∧ ¬(era=2020以前 ∨ evidence_status=同行评审 ∨ source.kind=ebook platform ∨ type=article ∨ type=book-chapter ∨ type=conference-paper ∨ type=preprint ∨ type=review) ｜ 1 项 ｜ 使用 1 次 ｜ 最近 300 天前\", \"6. era=2020以前 ∧ source.kind=journal ∧ type=article ｜ 2803 项 ｜ 使用 1 次 ｜ 最近 300 天前\", \"10. type=book-chapter ∧ ¬(era=2020以前 ∨ evidence_status=同行评审 ∨ type=article ∨ type=preprint ∨ type=review) ｜ 9 项 ｜ 使用 1 次 ｜ 最近 300 天前\"], \"reason\": \"有使用记录的方向中，只有第7行最近使用为0天前，其余有记录方向均为300天前，且第7行同时具备era=2020以前、evidence_status=同行评审、type=review。\"}",
+    "prompt_sha": "820d101f70f47a410fe5ef2f94f244590501d2182a687a5a2539eb2567eef610"
+   }
+  ]
+ }
+}

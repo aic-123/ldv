@@ -1,0 +1,84 @@
+A=D11 | era=2020以前 ∧ source.kind=journal ∧ type=article
+B=D7 | era=2020以前 ∧ evidence_status=同行评审 ∧ type=review ∧ 
+drilled=6 aged={'D11': 1, 'D39': 1, 'D55': 1, 'D89': 1, 'D90': 1}，有记录方向数=6
+ordered_by=usage A pos=5 B pos=0
+  fact D7: n=1 last_days=0
+  fact D11: n=1 last_days=300
+  fact D39: n=1 last_days=300
+  fact D55: n=1 last_days=300
+  fact D89: n=1 last_days=300
+  fact D90: n=1 last_days=300
+  自检通过：days=[0, 300, 300, 300, 300, 300]
+
+=== F1_real ===
+检索：require=[]（全部方向）｜按使用历史排序
+1. era=2020以前 ∧ evidence_status=同行评审 ∧ type=review ∧ ¬(type=article) ｜ 537 项 ｜ 使用 1 次 ｜ 最近 0 天前
+2. type=book-chapter ∧ ¬(era=2020以前 ∨ evidence_status=同行评审 ∨ type=article ∨ type=preprint ∨ type=review) ｜ 9 项 ｜ 使用 1 次 ｜ 最近 300 天前
+3. source.kind=ebook platform ∧ ¬(era=2020以前 ∨ evidence_status=同行评审 ∨ type=article ∨ type=book-chapter ∨ type=preprint ∨ type=review) ｜ 7 项 ｜ 使用 1 次 ｜ 最近 300 天前
+4. type=conference-paper ∧ ¬(era=2020以前 ∨ evidence_status=同行评审 ∨ source.kind=ebook platform ∨ type=article ∨ type=book-chapter ∨ type=preprint ∨ type=review) ｜ 1 项 ｜ 使用 1 次 ｜ 最近 300 天前
+5. （全部） ∧ ¬(era=2020以前 ∨ evidence_status=同行评审 ∨ source.kind=ebook platform ∨ type=article ∨ type=book-chapter ∨ type=conference-paper ∨ type=preprint ∨ type=review) ｜ 1 项 ｜ 使用 1 次 ｜ 最近 300 天前
+6. era=2020以前 ∧ source.kind=journal ∧ type=article ｜ 2803 项 ｜ 使用 1 次 ｜ 最近 300 天前
+7. type=article ∧ ¬(era=2020以前 ∨ evidence_status=仓储 ∨ evidence_status=同行评审) ｜ 2 项 ｜ 从未使用
+8. era=2020以前 ∧ source.kind=repository ∧ type=conference-paper ∧ ¬(evidence_status=同行评审 ∨ type=article ∨ type=preprint ∨ type=review) ｜ 3 项 ｜ 从未使用
+9. era=2020以前 ∧ source.kind=repository ∧ type=dataset ∧ ¬(evidence_status=同行评审 ∨ type=article ∨ type=conference-paper ∨ type=preprint ∨ type=review) ｜ 2 项 ｜ 从未使用
+10. era=2020以前 ∧ evidence_status=仓储 ∧ type=review ∧ ¬(evidence_status=同行评审 ∨ type=article) ｜ 2 项 ｜ 从未使用
+
+=== F1_fake ===
+检索：require=[]（全部方向）｜按使用历史排序
+1. era=2020以前 ∧ evidence_status=同行评审 ∧ type=review ∧ ¬(type=article) ｜ 537 项 ｜ 使用 1 次 ｜ 最近 300 天前
+2. type=book-chapter ∧ ¬(era=2020以前 ∨ evidence_status=同行评审 ∨ type=article ∨ type=preprint ∨ type=review) ｜ 9 项 ｜ 使用 1 次 ｜ 最近 300 天前
+3. source.kind=ebook platform ∧ ¬(era=2020以前 ∨ evidence_status=同行评审 ∨ type=article ∨ type=book-chapter ∨ type=preprint ∨ type=review) ｜ 7 项 ｜ 使用 1 次 ｜ 最近 300 天前
+4. type=conference-paper ∧ ¬(era=2020以前 ∨ evidence_status=同行评审 ∨ source.kind=ebook platform ∨ type=article ∨ type=book-chapter ∨ type=preprint ∨ type=review) ｜ 1 项 ｜ 使用 1 次 ｜ 最近 300 天前
+5. （全部） ∧ ¬(era=2020以前 ∨ evidence_status=同行评审 ∨ source.kind=ebook platform ∨ type=article ∨ type=book-chapter ∨ type=conference-paper ∨ type=preprint ∨ type=review) ｜ 1 项 ｜ 使用 1 次 ｜ 最近 300 天前
+6. era=2020以前 ∧ source.kind=journal ∧ type=article ｜ 2803 项 ｜ 使用 1 次 ｜ 最近 0 天前
+7. type=article ∧ ¬(era=2020以前 ∨ evidence_status=仓储 ∨ evidence_status=同行评审) ｜ 2 项 ｜ 从未使用
+8. era=2020以前 ∧ source.kind=repository ∧ type=conference-paper ∧ ¬(evidence_status=同行评审 ∨ type=article ∨ type=preprint ∨ type=review) ｜ 3 项 ｜ 从未使用
+9. era=2020以前 ∧ source.kind=repository ∧ type=dataset ∧ ¬(evidence_status=同行评审 ∨ type=article ∨ type=conference-paper ∨ type=preprint ∨ type=review) ｜ 2 项 ｜ 从未使用
+10. era=2020以前 ∧ evidence_status=仓储 ∧ type=review ∧ ¬(evidence_status=同行评审 ∨ type=article) ｜ 2 项 ｜ 从未使用
+
+=== F2_real ===
+检索：require=[]（全部方向）｜以下顺序无意义
+1. era=2020以前 ∧ source.kind=repository ∧ type=dataset ∧ ¬(evidence_status=同行评审 ∨ type=article ∨ type=conference-paper ∨ type=preprint ∨ type=review) ｜ 2 项 ｜ 从未使用
+2. type=conference-paper ∧ ¬(era=2020以前 ∨ evidence_status=同行评审 ∨ source.kind=ebook platform ∨ type=article ∨ type=book-chapter ∨ type=preprint ∨ type=review) ｜ 1 项 ｜ 使用 1 次 ｜ 最近 300 天前
+3. source.kind=ebook platform ∧ ¬(era=2020以前 ∨ evidence_status=同行评审 ∨ type=article ∨ type=book-chapter ∨ type=preprint ∨ type=review) ｜ 7 项 ｜ 使用 1 次 ｜ 最近 300 天前
+4. （全部） ∧ ¬(era=2020以前 ∨ evidence_status=同行评审 ∨ source.kind=ebook platform ∨ type=article ∨ type=book-chapter ∨ type=conference-paper ∨ type=preprint ∨ type=review) ｜ 1 项 ｜ 使用 1 次 ｜ 最近 300 天前
+5. era=2020以前 ∧ source.kind=repository ∧ type=conference-paper ∧ ¬(evidence_status=同行评审 ∨ type=article ∨ type=preprint ∨ type=review) ｜ 3 项 ｜ 从未使用
+6. era=2020以前 ∧ source.kind=journal ∧ type=article ｜ 2803 项 ｜ 使用 1 次 ｜ 最近 300 天前
+7. era=2020以前 ∧ evidence_status=同行评审 ∧ type=review ∧ ¬(type=article) ｜ 537 项 ｜ 使用 1 次 ｜ 最近 0 天前
+8. type=article ∧ ¬(era=2020以前 ∨ evidence_status=仓储 ∨ evidence_status=同行评审) ｜ 2 项 ｜ 从未使用
+9. era=2020以前 ∧ evidence_status=仓储 ∧ type=review ∧ ¬(evidence_status=同行评审 ∨ type=article) ｜ 2 项 ｜ 从未使用
+10. type=book-chapter ∧ ¬(era=2020以前 ∨ evidence_status=同行评审 ∨ type=article ∨ type=preprint ∨ type=review) ｜ 9 项 ｜ 使用 1 次 ｜ 最近 300 天前
+
+=== F2_fake ===
+检索：require=[]（全部方向）｜以下顺序无意义
+1. era=2020以前 ∧ source.kind=repository ∧ type=dataset ∧ ¬(evidence_status=同行评审 ∨ type=article ∨ type=conference-paper ∨ type=preprint ∨ type=review) ｜ 2 项 ｜ 从未使用
+2. type=conference-paper ∧ ¬(era=2020以前 ∨ evidence_status=同行评审 ∨ source.kind=ebook platform ∨ type=article ∨ type=book-chapter ∨ type=preprint ∨ type=review) ｜ 1 项 ｜ 使用 1 次 ｜ 最近 300 天前
+3. source.kind=ebook platform ∧ ¬(era=2020以前 ∨ evidence_status=同行评审 ∨ type=article ∨ type=book-chapter ∨ type=preprint ∨ type=review) ｜ 7 项 ｜ 使用 1 次 ｜ 最近 300 天前
+4. （全部） ∧ ¬(era=2020以前 ∨ evidence_status=同行评审 ∨ source.kind=ebook platform ∨ type=article ∨ type=book-chapter ∨ type=conference-paper ∨ type=preprint ∨ type=review) ｜ 1 项 ｜ 使用 1 次 ｜ 最近 300 天前
+5. era=2020以前 ∧ source.kind=repository ∧ type=conference-paper ∧ ¬(evidence_status=同行评审 ∨ type=article ∨ type=preprint ∨ type=review) ｜ 3 项 ｜ 从未使用
+6. era=2020以前 ∧ source.kind=journal ∧ type=article ｜ 2803 项 ｜ 使用 1 次 ｜ 最近 0 天前
+7. era=2020以前 ∧ evidence_status=同行评审 ∧ type=review ∧ ¬(type=article) ｜ 537 项 ｜ 使用 1 次 ｜ 最近 300 天前
+8. type=article ∧ ¬(era=2020以前 ∨ evidence_status=仓储 ∨ evidence_status=同行评审) ｜ 2 项 ｜ 从未使用
+9. era=2020以前 ∧ evidence_status=仓储 ∧ type=review ∧ ¬(evidence_status=同行评审 ∨ type=article) ｜ 2 项 ｜ 从未使用
+10. type=book-chapter ∧ ¬(era=2020以前 ∨ evidence_status=同行评审 ∨ type=article ∨ type=preprint ∨ type=review) ｜ 9 项 ｜ 使用 1 次 ｜ 最近 300 天前
+  F1_real inst0 review=False article=False focus=最近更重视 2020 年以前、同行评审的 review（非 article）方向
+  F1_real inst1 review=True article=False focus=最近更重视 2020 年以前、同行评审的 review 类方向（最近 0 天前使用，权重几乎未衰减）
+  F1_real inst2 review=True article=False focus=最近更重视 2020 年以前、同行评审的 review 类方向
+  F1_real inst3 review=True article=False focus=最近更重视 2020 年以前、同行评审的 review 类方向
+  F1_real inst4 review=True article=False focus=最近更重视 2020 年以前、同行评审的 review 类方向
+  F1_fake inst0 review=False article=True focus=更重视 2020 年以前、source.kind=journal 的 article 方向
+  F1_fake inst1 review=False article=True focus=更重视 2020 年以前、source.kind=journal 的 article 方向
+  F1_fake inst2 review=False article=True focus=更重视 2020 年以前、source.kind=journal 的 article 方向
+  F1_fake inst3 review=False article=True focus=更重视 2020 年以前、source.kind=journal 的 article 方向
+  F1_fake inst4 review=False article=True focus=更重视 2020 年以前、source.kind=journal 的 article 类方向
+  F2_real inst0 review=False article=False focus=最近更重视 2020 年以前、同行评审的 review（非 article）方向
+  F2_real inst1 review=False article=False focus=最近更重视 2020 年以前、同行评审的 review（非 article）方向
+  F2_real inst2 review=False article=False focus=更重视 2020 年以前、同行评审的 review 类方向（非 article）
+  F2_real inst3 review=False article=False focus=更重视 2020 年以前、同行评审的 review（非 article）方向
+  F2_real inst4 review=False article=False focus=最近更重视 2020 年以前、同行评审的 review（非 article）方向
+  F2_fake inst0 review=False article=True focus=更重视 2020 年以前、source.kind=journal 的 article 方向
+  F2_fake inst1 review=False article=True focus=更重视 2020 年以前、source.kind=journal 的 article 方向
+  F2_fake inst2 review=False article=True focus=更重视 2020 年以前、source.kind=journal 的 article（期刊论文）方向
+  F2_fake inst3 review=False article=True focus=更重视 2020 年以前、source.kind=journal 的 article（期刊论文）方向
+  F2_fake inst4 review=False article=True focus=更重视 2020 年以前、source.kind=journal 的 article 方向
+{"P1_F1_real_review": 4, "P2_F1_fake_article": 5, "P3_F2_real_review": 0, "P4_F2_fake_article": 5, "of": 5, "A": "D11", "B": "D7", "n_drilled": 6, "ordered_by": "usage"}

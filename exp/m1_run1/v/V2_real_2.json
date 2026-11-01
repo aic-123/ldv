@@ -1,0 +1,33 @@
+{
+ "task": "V2",
+ "instance": 2,
+ "arm": "real",
+ "order": [
+  "only",
+  "ab",
+  "distractor"
+ ],
+ "labels": {
+  "only": "一",
+  "ab": "二",
+  "distractor": "三"
+ },
+ "prompt_sha256": "12874b8c7cc928c8fd78bd942ec171da38966b60cd7955226572b465ff43b6b8",
+ "answer": "依据：摘要一与摘要二在结构上高度同源，分类维度（evidence_status、source.kind、type 的组合方式）一致，且各条目计数呈整体增长关系；摘要三的计数明显错位（如 conference-abstract 达 3017 项、仓储 review 达 572 项），像是字段错配，不是同一材料的正常版本。摘要二相比摘要一，总量与各主要类别均扩大，并新增了 conference-paper、book 等更细的类型分支。\n\n{\"pair\": [\"一\", \"二\"], \"later\": \"二\", \"incremental\": [\"article 类总量与 journal/article 主类扩充\", \"会议论文（conference-paper）类型细分与计数增加\", \"book series 下 book 类型的补充\"]}",
+ "json": {
+  "pair": [
+   "一",
+   "二"
+  ],
+  "later": "二",
+  "incremental": [
+   "article 类总量与 journal/article 主类扩充",
+   "会议论文（conference-paper）类型细分与计数增加",
+   "book series 下 book 类型的补充"
+  ]
+ },
+ "pair_correct": true,
+ "later_correct": true,
+ "distractor_not_later": true,
+ "n_incremental": 3
+}

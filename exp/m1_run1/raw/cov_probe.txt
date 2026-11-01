@@ -1,0 +1,27 @@
+方向 101｜总项 4037
+B(95%): keep 5 方向 / 覆盖 1.000 / 247 字
+C(90%): keep 5 方向 / 覆盖 1.000 / 247 字
+B'(随机): keep 20 方向 / 2187 字｜A 14802 字
+B 最大缩进深度 3（全量 8）
+B'': keep 5 方向 / 788 字（B 247 字）
+  D4 inst0 left=test pick=摘要1 test_win=True
+  D4 inst1 left=base pick=摘要2 test_win=True
+  D4 inst2 left=test pick=摘要1 test_win=True
+  D4 inst3 left=base pick=摘要2 test_win=True
+  D4 inst4 left=test pick=摘要1 test_win=True
+  D5 inst0 left=test pick=摘要1 test_win=True
+  D5 inst1 left=base pick=摘要2 test_win=True
+  D5 inst2 left=test pick=摘要1 test_win=True
+  D5 inst3 left=base pick=摘要2 test_win=True
+  D5 inst4 left=test pick=摘要1 test_win=True
+  D6 inst0 left=test pick=摘要1 test_win=True
+  D6 inst1 left=base pick=摘要1 test_win=False
+  D6 inst2 left=test pick=摘要1 test_win=True
+  D6 inst3 left=base pick=摘要1 test_win=False
+  D6 inst4 left=test pick=摘要1 test_win=True
+  D7 inst0 left=test pick=摘要1 test_win=True
+  D7 inst1 left=base pick=摘要1 test_win=False
+  D7 inst2 left=test pick=摘要1 test_win=True
+  D7 inst3 left=base pick=摘要1 test_win=False
+  D7 inst4 left=test pick=摘要1 test_win=True
+{"D4_B_vs_A": 5, "D5_C_vs_A": 5, "D6_B_vs_Bprime": 3, "D7_B_vs_Bdoubleprime": 3, "chars_R2": 788, "keep": {"B": 5, "C": 5, "R": 20}, "cover": {"B": 1.0, "C": 1.0}, "chars": {"A": 14802, "B": 247, "C": 247, "R": 2187}}

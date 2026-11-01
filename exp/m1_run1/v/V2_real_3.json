@@ -1,0 +1,33 @@
+{
+ "task": "V2",
+ "instance": 3,
+ "arm": "real",
+ "order": [
+  "ab",
+  "distractor",
+  "only"
+ ],
+ "labels": {
+  "ab": "一",
+  "distractor": "二",
+  "only": "三"
+ },
+ "prompt_sha256": "7239bd64f597c5a479e8721d1923be83bfd885d3e23fe5336a8bf180d8556408",
+ "answer": "依据：摘要一和摘要二的条目结构、谓词组合与分类骨架完全一致，仅各项计数不同，属于同一材料的前后版本；摘要三的分类谓词（如 evidence_status=未知、book-chapter 等）与它们不同，是另一套整理结果。摘要二相比摘要一，把大量计数从 journal/article 与 conference-abstract 等类别转移，并新增/细化了 book series 相关类别，说明其分类更细、覆盖更全，应为后来的版本。\n\n{\"pair\": [\"一\", \"二\"], \"later\": \"二\", \"incremental\": [\"来源类型细分（book series 下 conference-paper/book 等类别的计数与结构变化）\", \"会议类文献类型细分（conference-paper 与 conference-abstract 的计数重新分配）\", \"证据状态与文献类型交叉分类的计数调整\"]}",
+ "json": {
+  "pair": [
+   "一",
+   "二"
+  ],
+  "later": "二",
+  "incremental": [
+   "来源类型细分（book series 下 conference-paper/book 等类别的计数与结构变化）",
+   "会议类文献类型细分（conference-paper 与 conference-abstract 的计数重新分配）",
+   "证据状态与文献类型交叉分类的计数调整"
+  ]
+ },
+ "pair_correct": false,
+ "later_correct": false,
+ "distractor_not_later": false,
+ "n_incremental": 3
+}

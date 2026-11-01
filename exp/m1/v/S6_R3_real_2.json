@@ -1,0 +1,19 @@
+{
+ "task": "S6",
+ "role": "R3",
+ "arm": "real",
+ "instance": 2,
+ "prompt_sha256": "7d6fb7abf7d3edcdc45dee49b96e997eeb6ed6c6de9c7a647625678d083348ec",
+ "answer": "建结构的人最看重“来源类型（source.kind）”与“证据状态（evidence_status）”这两个维度，并明显以“期刊论文”为核心默认类别——它被单独放在第一条、项数远超其他（3017 项），其余类别几乎都是围绕它做排除式定义（¬source.kind=journal 等）。同时，分类逻辑优先按 type 分层（article → review → conference-paper 等），说明类型维度是主骨架，来源与证据状态是修饰性维度。\n\n{\"most_important\": \"以期刊论文（source.kind=journal ∧ type=article）为核心默认类别，其余类别均以排除它的方式定义\", \"evidence\": [\"第一条 source.kind=journal ∧ type=article 单独列出且项数最多（3017 项）\", \"后续多条用 ¬(source.kind=journal) 或 ¬(evidence_status=仓储 ∨ source.kind=journal) 等排除式条件定义，围绕期刊论文做补集划分\", \"分类骨架按 type 分层（article、review、conference-paper、conference-abstract、book），type 是主维度\"], \"verdict\": \"有倾向\"}",
+ "json": {
+  "most_important": "以期刊论文（source.kind=journal ∧ type=article）为核心默认类别，其余类别均以排除它的方式定义",
+  "evidence": [
+   "第一条 source.kind=journal ∧ type=article 单独列出且项数最多（3017 项）",
+   "后续多条用 ¬(source.kind=journal) 或 ¬(evidence_status=仓储 ∨ source.kind=journal) 等排除式条件定义，围绕期刊论文做补集划分",
+   "分类骨架按 type 分层（article、review、conference-paper、conference-abstract、book），type 是主维度"
+  ],
+  "verdict": "有倾向"
+ },
+ "no_tendency": false,
+ "has_evidence": true
+}

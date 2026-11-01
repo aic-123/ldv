@@ -1,0 +1,5 @@
+F1_real: review=5 article=0 其他=0 / 5
+F1_fake: review=0 article=5 其他=0 / 5
+F2_real: review=5 article=0 其他=0 / 5
+F2_fake: review=0 article=5 其他=0 / 5
+{"P1_F1_real_review": 5, "P2_F1_fake_article": 5, "P3_F2_real_review": 5, "P4_F2_fake_article": 5, "of": 5, "note": "V11.3 离线重判（同一批原话，未重新调用模型）"}

@@ -1,0 +1,41 @@
+A=D11 era=2020以前 ∧ source.kind=journal ∧ type=article
+B=D7 era=2020以前 ∧ evidence_status=同行评审 ∧ type=review ∧ ¬(type=art
+aged 1 条｜tendency: A=0.000977 B=8.000000
+ordered_by=usage｜A pos=1 B pos=0
+
+=== 真件 ===
+检索：require=[]（全部方向）｜按使用历史排序（ordered_by=usage）
+1. era=2020以前 ∧ evidence_status=同行评审 ∧ type=review ∧ ¬(type=article) ｜ 537 项 ｜ 倾向 8.0000
+2. era=2020以前 ∧ source.kind=journal ∧ type=article ｜ 2803 项 ｜ 倾向 0.0010
+3. type=article ∧ ¬(era=2020以前 ∨ evidence_status=仓储 ∨ evidence_status=同行评审) ｜ 2 项 ｜ 倾向 0.0000
+4. era=2020以前 ∧ source.kind=repository ∧ type=conference-paper ∧ ¬(evidence_status=同行评审 ∨ type=article ∨ type=preprint ∨ type=review) ｜ 3 项 ｜ 倾向 0.0000
+5. era=2020以前 ∧ source.kind=repository ∧ type=dataset ∧ ¬(evidence_status=同行评审 ∨ type=article ∨ type=conference-paper ∨ type=preprint ∨ type=review) ｜ 2 项 ｜ 倾向 0.0000
+6. era=2020以前 ∧ evidence_status=仓储 ∧ type=review ∧ ¬(evidence_status=同行评审 ∨ type=article) ｜ 2 项 ｜ 倾向 0.0000
+7. era=2020以前 ∧ type=review ∧ ¬(evidence_status=仓储 ∨ evidence_status=同行评审 ∨ type=article) ｜ 1 项 ｜ 倾向 0.0000
+8. era=2020以前 ∧ evidence_status=同行评审 ∧ source.kind=conference ∧ type=conference-abstract ∧ ¬(type=article ∨ type=review) ｜ 1 项 ｜ 倾向 0.0000
+9. era=2020以前 ∧ evidence_status=同行评审 ∧ source.kind=conference ∧ ¬(type=article ∨ type=conference-abstract ∨ type=review) ｜ 121 项 ｜ 倾向 0.0000
+10. evidence_status=同行评审 ∧ source.kind=book series ∧ type=conference-paper ∧ ¬(era=2020以前 ∨ source.kind=conference ∨ type=article ∨ type=review) ｜ 4 项 ｜ 倾向 0.0000
+
+=== 伪件 ===
+检索：require=[]（全部方向）｜按使用历史排序（ordered_by=usage）
+1. era=2020以前 ∧ source.kind=journal ∧ type=article ｜ 2803 项 ｜ 倾向 8.0000
+2. era=2020以前 ∧ type=review ∧ ¬(evidence_status=仓储 ∨ evidence_status=同行评审 ∨ type=article) ｜ 1 项 ｜ 倾向 0.0010
+3. era=2020以前 ∧ evidence_status=同行评审 ∧ type=review ∧ ¬(type=article) ｜ 537 项 ｜ 倾向 0.0000
+4. type=article ∧ ¬(era=2020以前 ∨ evidence_status=仓储 ∨ evidence_status=同行评审) ｜ 2 项 ｜ 倾向 0.0000
+5. era=2020以前 ∧ source.kind=repository ∧ type=conference-paper ∧ ¬(evidence_status=同行评审 ∨ type=article ∨ type=preprint ∨ type=review) ｜ 3 项 ｜ 倾向 0.0000
+6. era=2020以前 ∧ source.kind=repository ∧ type=dataset ∧ ¬(evidence_status=同行评审 ∨ type=article ∨ type=conference-paper ∨ type=preprint ∨ type=review) ｜ 2 项 ｜ 倾向 0.0000
+7. era=2020以前 ∧ evidence_status=仓储 ∧ type=review ∧ ¬(evidence_status=同行评审 ∨ type=article) ｜ 2 项 ｜ 倾向 0.0000
+8. era=2020以前 ∧ evidence_status=同行评审 ∧ source.kind=conference ∧ type=conference-abstract ∧ ¬(type=article ∨ type=review) ｜ 1 项 ｜ 倾向 0.0000
+9. era=2020以前 ∧ evidence_status=同行评审 ∧ source.kind=conference ∧ ¬(type=article ∨ type=conference-abstract ∨ type=review) ｜ 121 项 ｜ 倾向 0.0000
+10. evidence_status=同行评审 ∧ source.kind=book series ∧ type=conference-paper ∧ ¬(era=2020以前 ∨ source.kind=conference ∨ type=article ∨ type=review) ｜ 4 项 ｜ 倾向 0.0000
+  real inst0 points_review=True cites=True focus=更重视 2020 年以前、同行评审的综述（review）类方向
+  real inst1 points_review=True cites=True focus=更重视 2020 年以前、同行评审的综述（review）类方向
+  real inst2 points_review=True cites=True focus=更重视 2020 年以前、同行评审的综述（review）类方向
+  real inst3 points_review=True cites=True focus=2020年以前、同行评审的综述（review）类文献
+  real inst4 points_review=True cites=True focus=2020年以前、同行评审的综述（review）类文献方向
+  fake inst0 points_review=False cites=True focus=2020年以前、source.kind=journal 的 article 类研
+  fake inst1 points_review=False cites=True focus=2020年以前、期刊来源的 article（研究论文）方向最受重视
+  fake inst2 points_review=False cites=True focus=2020年以前发表的期刊论文（era=2020以前 ∧ source.kind=
+  fake inst3 points_review=False cites=True focus=更重视 2020 年以前、source.kind=journal 的 artic
+  fake inst4 points_review=False cites=True focus=更重视 2020 年以前、source.kind=journal 的 artic
+{"W1_real_points_review": 5, "W2_fake_points_review": 0, "W3_fake_follows_weight(article)": 5, "of": 5}

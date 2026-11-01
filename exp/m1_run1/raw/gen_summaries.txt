@@ -1,0 +1,12 @@
+  V1_tree_era.md: 14 行, 1476 字
+  V1_tree_type.md: 9 行, 576 字
+  V1B_tree_era_small.md: 10 行, 949 字
+  V2_A_only.md: 14 行, 1203 字
+  V2_A_B.md: 14 行, 1203 字
+  V2_A_B_distractor.md: 14 行, 1203 字
+  V3_L.md: 14 行, 1203 字
+  V3_G.md: 26 行, 733 字
+  V3_T.md: 27 行, 788 字
+  summary_1page.md: 14 行, 1201 字
+  summary_null.md: 14 行, 1201 字
+{"intent_A": ["era=2020及以后"], "intent_B": ["type=article"], "rows_A": 12, "rows_B": 7, "rows_A2": 8, "rows_only": 12, "rows_AB": 12, "n_nodes": [4037, 3000, 4037], "tree_A": {"方向数": 101, "层数": 16, "最大叶": 2803}, "tree_AB": {"方向数": 77, "层数": 16, "最大叶": 3017}, "fp": {"A": "89767e92db325d37", "A2": "9380db9c10ab0e4b", "AB": "fb94d42568f39bcd"}}

@@ -1,0 +1,238 @@
+{
+ "P1_F1_real_review": 5,
+ "P2_F1_fake_article": 5,
+ "P3_F2_real_review": 5,
+ "P4_F2_fake_article": 5,
+ "of": 5,
+ "note": "V11.3 离线重判（同一批原话，未重新调用模型）",
+ "detail": {
+  "F1_real": [
+   {
+    "inst": 0,
+    "focus": "最近更重视 2020 年以前、同行评审的 review（非 article）方向",
+    "points_review": true,
+    "points_article": false,
+    "mentions_days": true,
+    "mentions_decay": true,
+    "answer": "更重视的是 **2020 年以前、同行评审的 review（且非 article）** 这一类方向。它虽然只被使用 1 次，但最近 0 天前刚被下钻过，按 30 天半衰期衰减后权重仍接近满值；其余有使用记录的方向最近都在 300 天前，衰减到约 2^-10≈0.001，几乎可忽略。从未使用过的方向不计入使用历史排序。\n\n{\"focus\": \"最近更重视 2020 年以前、同行评审的 review（非 article）方向\", \"evidence\": [\"第1类：537 项，使用 1 次，最近 0 天前（衰减权重≈1）\", \"第2–6类：各使用 1 次，但最近 300 天前，衰减权重≈2^-10≈0.001\", \"第7–10类：从未使用，不留下使用记录\"]}",
+    "prompt_sha256": "4c15d2910b5c5d9f24769da270da89db5520f0d09377c7669308360c032416fe",
+    "a_negated": true
+   },
+   {
+    "inst": 1,
+    "focus": "最近更重视 2020 年以前、同行评审的 review 类方向（最近 0 天前使用，权重几乎未衰减）",
+    "points_review": true,
+    "points_article": false,
+    "mentions_days": true,
+    "mentions_decay": true,
+    "answer": "更重视的是 **2020 年以前、同行评审的综述（review）类方向**。它虽然只被使用 1 次，但最近 0 天前刚被下钻，按 30 天半衰期几乎无衰减；其余有使用记录的方向最近都在 300 天前，衰减到约 2^-10 ≈ 0.1%，权重远低于它。从未使用过的方向不计入使用历史排序。\n\n{\"focus\": \"最近更重视 2020 年以前、同行评审的 review 类方向（最近 0 天前使用，权重几乎未衰减）\", \"evidence\": [\"第1类：era=2020以前 ∧ evidence_status=同行评审 ∧ type=review，使用 1 次，最近 0 天前\", \"其余有使用记录的第2–6类最近均为 300 天前，按 30 天半衰期衰减约 2^-10≈0.1%\", \"第7–10类为从未使用，不构成近期使用偏好\"]}",
+    "prompt_sha256": "4c15d2910b5c5d9f24769da270da89db5520f0d09377c7669308360c032416fe",
+    "a_negated": false
+   },
+   {
+    "inst": 2,
+    "focus": "最近更重视 2020 年以前、同行评审的 review 类方向",
+    "points_review": true,
+    "points_article": false,
+    "mentions_days": true,
+    "mentions_decay": true,
+    "answer": "更重视的是 **2020 年以前、同行评审的综述（review）类方向**。它虽然只被使用 1 次，但最近 0 天前刚被下钻，按 30 天半衰期几乎无衰减；其余有使用记录的方向最近都在 300 天前，衰减到约 2^-10 ≈ 0.1%，权重远低于它。\n\n{\"focus\": \"最近更重视 2020 年以前、同行评审的 review 类方向\", \"evidence\": [\"第 1 类：era=2020以前 ∧ evidence_status=同行评审 ∧ type=review，使用 1 次，最近 0 天前\", \"第 2–6 类有使用记录但最近均为 300 天前，按 30 天半衰期衰减约 2^-10≈0.1%\"]}",
+    "prompt_sha256": "4c15d2910b5c5d9f24769da270da89db5520f0d09377c7669308360c032416fe",
+    "a_negated": false
+   },
+   {
+    "inst": 3,
+    "focus": "最近更重视 2020 年以前、同行评审的 review 类方向",
+    "points_review": true,
+    "points_article": false,
+    "mentions_days": true,
+    "mentions_decay": true,
+    "answer": "更重视的是 **2020 年以前、同行评审的综述（review）类方向**。它虽然只被使用 1 次，但最近 0 天前刚被下钻，按 30 天半衰期几乎无衰减；其余有使用记录的方向最近都在 300 天前，权重已衰减到约 2^-10 ≈ 0.1%，远低于它。\n\n{\"focus\": \"最近更重视 2020 年以前、同行评审的 review 类方向\", \"evidence\": [\"第 1 类：era=2020以前 ∧ evidence_status=同行评审 ∧ type=review，使用 1 次，最近 0 天前\", \"其余有使用记录的第 2–6 类最近均为 300 天前，按 30 天半衰期衰减约 2^-10，权重远低于第 1 类\"]}",
+    "prompt_sha256": "4c15d2910b5c5d9f24769da270da89db5520f0d09377c7669308360c032416fe",
+    "a_negated": false
+   },
+   {
+    "inst": 4,
+    "focus": "最近更重视 2020 年以前、同行评审的 review 类方向",
+    "points_review": true,
+    "points_article": false,
+    "mentions_days": true,
+    "mentions_decay": true,
+    "answer": "更重视的是 **2020 年以前、同行评审的综述（review）类方向**。它虽然只被使用 1 次，但最近 0 天前刚被下钻，按 30 天半衰期几乎无衰减；其余有使用记录的方向最近都在 300 天前，权重已衰减到约 2^-10≈0.001，远低于前者。\n\n{\"focus\": \"最近更重视 2020 年以前、同行评审的 review 类方向\", \"evidence\": [\"第1条：era=2020以前 ∧ evidence_status=同行评审 ∧ type=review，使用1次，最近0天前\", \"第2–6条：使用1次但最近300天前，按30天半衰期衰减约2^-10≈0.001\", \"第7–10条：从未使用，无使用记录\"]}",
+    "prompt_sha256": "4c15d2910b5c5d9f24769da270da89db5520f0d09377c7669308360c032416fe",
+    "a_negated": false
+   }
+  ],
+  "F1_fake": [
+   {
+    "inst": 0,
+    "focus": "更重视 2020 年以前、source.kind=journal 的 article 方向",
+    "points_review": false,
+    "points_article": true,
+    "mentions_days": true,
+    "mentions_decay": true,
+    "answer": "更重视的是 **2020 年以前、期刊来源的 article** 这一类方向。依据是：它最近使用记录为 **0 天前**（最新），且使用过 **1 次**；而其他有使用记录的方向最近都在 **300 天前**，按 30 天半衰期衰减后权重远低于它。\n\n{\"focus\": \"更重视 2020 年以前、source.kind=journal 的 article 方向\", \"evidence\": [\"第 6 类：era=2020以前 ∧ source.kind=journal ∧ type=article，2803 项，使用 1 次，最近 0 天前\", \"其余有使用记录的 1–5 类均为使用 1 次、最近 300 天前，按 30 天半衰期衰减后远低于第 6 类\"]}",
+    "prompt_sha256": "bacf5ec16f50713c2cfd4a68b6bb91b57f454bd4d55a18a575e1a57e2730014c",
+    "a_negated": false
+   },
+   {
+    "inst": 1,
+    "focus": "更重视 2020 年以前、source.kind=journal 的 article 方向",
+    "points_review": false,
+    "points_article": true,
+    "mentions_days": true,
+    "mentions_decay": true,
+    "answer": "更重视的是 **2020 年以前、期刊来源的 article** 这一类方向。它虽然只被使用 1 次，但最近使用时间是 **0 天前**，而其他有使用记录的方向最近都是 **300 天前**；按 30 天半衰期衰减后，它的使用权重远高于其余方向。\n\n{\"focus\": \"更重视 2020 年以前、source.kind=journal 的 article 方向\", \"evidence\": [\"第 6 类：era=2020以前 ∧ source.kind=journal ∧ type=article，2803 项，使用 1 次，最近 0 天前\", \"其余有使用记录的第 1–5 类均为使用 1 次、最近 300 天前，按半衰期 30 天衰减后权重远低于第 6 类\"]}",
+    "prompt_sha256": "bacf5ec16f50713c2cfd4a68b6bb91b57f454bd4d55a18a575e1a57e2730014c",
+    "a_negated": false
+   },
+   {
+    "inst": 2,
+    "focus": "更重视 2020 年以前、source.kind=journal 的 article 方向",
+    "points_review": false,
+    "points_article": true,
+    "mentions_days": true,
+    "mentions_decay": true,
+    "answer": "更重视的是 **2020 年以前、期刊来源的 article** 这一类方向。它虽然只被使用 1 次，但最近使用时间是 **0 天前**，而其他有使用记录的方向最近都是 **300 天前**；按 30 天半衰期衰减后，它的使用权重远高于其余方向。\n\n{\"focus\": \"更重视 2020 年以前、source.kind=journal 的 article 方向\", \"evidence\": [\"第 6 类：era=2020以前 ∧ source.kind=journal ∧ type=article，2803 项，使用 1 次，最近 0 天前\", \"其余有使用记录的第 1–5 类均为使用 1 次、最近 300 天前，按半衰期 30 天衰减后权重远低于第 6 类\"]}",
+    "prompt_sha256": "bacf5ec16f50713c2cfd4a68b6bb91b57f454bd4d55a18a575e1a57e2730014c",
+    "a_negated": false
+   },
+   {
+    "inst": 3,
+    "focus": "更重视 2020 年以前、source.kind=journal 的 article 方向",
+    "points_review": false,
+    "points_article": true,
+    "mentions_days": true,
+    "mentions_decay": false,
+    "answer": "更重视的是 **2020 年以前、期刊来源的 article** 这一类方向。依据是：它最近使用时间为 0 天前（即最近刚被下钻使用），而其余有使用记录的方向最近都是 300 天前；同时它使用 1 次、覆盖 2803 项，规模也远大于其他有记录方向。\n\n{\"focus\": \"更重视 2020 年以前、source.kind=journal 的 article 方向\", \"evidence\": [\"第 6 类：era=2020以前 ∧ source.kind=journal ∧ type=article，2803 项，使用 1 次，最近 0 天前\", \"第 1–5 类虽有使用记录，但最近均为 300 天前；第 7–10 类从未使用\"]}",
+    "prompt_sha256": "bacf5ec16f50713c2cfd4a68b6bb91b57f454bd4d55a18a575e1a57e2730014c",
+    "a_negated": false
+   },
+   {
+    "inst": 4,
+    "focus": "更重视 2020 年以前、source.kind=journal 的 article 类方向",
+    "points_review": false,
+    "points_article": true,
+    "mentions_days": true,
+    "mentions_decay": true,
+    "answer": "更重视的是 **2020 年以前、期刊来源的 article** 这一类方向。它虽然只被使用 1 次，但最近使用时间是 **0 天前**，而其他有使用记录的方向最近都是 **300 天前**；按 30 天半衰期衰减后，它的使用权重远高于其余方向。其余方向要么从未使用，要么衰减严重。\n\n{\"focus\": \"更重视 2020 年以前、source.kind=journal 的 article 类方向\", \"evidence\": [\"第 6 类：era=2020以前 ∧ source.kind=journal ∧ type=article，2803 项，使用 1 次，最近 0 天前\", \"第 1–5 类虽有使用记录，但最近均为 300 天前，按 30 天半衰期衰减后权重极低\"]}",
+    "prompt_sha256": "bacf5ec16f50713c2cfd4a68b6bb91b57f454bd4d55a18a575e1a57e2730014c",
+    "a_negated": false
+   }
+  ],
+  "F2_real": [
+   {
+    "inst": 0,
+    "focus": "最近更重视 2020 年以前、同行评审的 review（非 article）方向",
+    "points_review": true,
+    "points_article": false,
+    "mentions_days": true,
+    "mentions_decay": true,
+    "answer": "更重视的是**2020年以前、经同行评审的 review（且非 article）**这一类方向。依据是它的最近使用时间为 0 天前（即最近刚被下钻），而其他有使用记录的方向最近一次都在 300 天前；按 30 天半衰期，300 天前的记录权重已衰减到约 2^-10 ≈ 0.1%，几乎可忽略。\n\n{\"focus\": \"最近更重视 2020 年以前、同行评审的 review（非 article）方向\", \"evidence\": [\"第7类：era=2020以前 ∧ evidence_status=同行评审 ∧ type=review ∧ ¬type=article，537 项，使用 1 次，最近 0 天前\", \"其余有使用记录的类别（第2、3、4、6、10类）最近使用均为 300 天前，按 30 天半衰期权重约衰减至 2^-10≈0.1%\"]}",
+    "prompt_sha256": "f28ab0deefde2701aca28d08f2a9fc7bae9dd4b4a0fd47d28a6fd96db259a4b8",
+    "a_negated": true
+   },
+   {
+    "inst": 1,
+    "focus": "最近更重视 2020 年以前、同行评审的 review（非 article）方向",
+    "points_review": true,
+    "points_article": false,
+    "mentions_days": true,
+    "mentions_decay": true,
+    "answer": "更重视的是**2020年以前、经同行评审的 review（且非 article）**这一类方向。依据是它的最近使用时间为 0 天前（即最近刚被下钻），而其他有使用记录的方向最近一次都在 300 天前；按 30 天半衰期，300 天前的权重已衰减到约 2^-10 ≈ 0.1%，几乎可忽略。\n\n{\"focus\": \"最近更重视 2020 年以前、同行评审的 review（非 article）方向\", \"evidence\": [\"第7类：era=2020以前 ∧ evidence_status=同行评审 ∧ type=review ∧ ¬type=article，537 项，使用 1 次，最近 0 天前\", \"其余有使用记录的类别（第2、3、4、6、10类）最近均为 300 天前，按 30 天半衰期衰减至约 0.1%\"]}",
+    "prompt_sha256": "f28ab0deefde2701aca28d08f2a9fc7bae9dd4b4a0fd47d28a6fd96db259a4b8",
+    "a_negated": true
+   },
+   {
+    "inst": 2,
+    "focus": "更重视 2020 年以前、同行评审的 review 类方向（非 article）",
+    "points_review": true,
+    "points_article": false,
+    "mentions_days": true,
+    "mentions_decay": false,
+    "answer": "更重视的是**2020年以前、经同行评审的 review 类方向**（且非 article）。依据是：该方向最近使用记录为“最近 0 天前”，而其他有使用记录的方向最近使用都在 300 天前；同时它覆盖 537 项，规模也远大于其余近期有记录的小类。\n\n{\"focus\": \"更重视 2020 年以前、同行评审的 review 类方向（非 article）\", \"evidence\": [\"第7条：era=2020以前 ∧ evidence_status=同行评审 ∧ type=review ∧ ¬(type=article)，537 项，使用 1 次，最近 0 天前\", \"其余有使用记录的第2/3/4/6/10条最近使用均为 300 天前\"]}",
+    "prompt_sha256": "f28ab0deefde2701aca28d08f2a9fc7bae9dd4b4a0fd47d28a6fd96db259a4b8",
+    "a_negated": true
+   },
+   {
+    "inst": 3,
+    "focus": "更重视 2020 年以前、同行评审的 review（非 article）方向",
+    "points_review": true,
+    "points_article": false,
+    "mentions_days": true,
+    "mentions_decay": true,
+    "answer": "更重视的是**2020年以前、经同行评审的 review（且非 article）**这一类方向。依据是它的使用记录最近为 0 天前（刚被下钻过），而其他有使用记录的方向最近一次都在 300 天前；按 30 天半衰期，0 天前的权重远高于 300 天前（约衰减 2^10 ≈ 1024 倍）。从未使用过的方向则没有留下使用记录，不计入重视程度。\n\n{\"focus\": \"更重视 2020 年以前、同行评审的 review（非 article）方向\", \"evidence\": [\"第7条：era=2020以前 ∧ evidence_status=同行评审 ∧ type=review ∧ ¬type=article，537 项，使用 1 次，最近 0 天前\", \"其余有使用记录的方向（第2、3、4、6、10条）最近均为 300 天前，按 30 天半衰期衰减约 2^10≈1024 倍\"]}",
+    "prompt_sha256": "f28ab0deefde2701aca28d08f2a9fc7bae9dd4b4a0fd47d28a6fd96db259a4b8",
+    "a_negated": true
+   },
+   {
+    "inst": 4,
+    "focus": "最近更重视 2020 年以前、同行评审的 review（非 article）方向",
+    "points_review": true,
+    "points_article": false,
+    "mentions_days": true,
+    "mentions_decay": true,
+    "answer": "更重视的是 **2020 年以前、经同行评审的 review（且非 article）** 这一类方向。依据是它最近使用时间为 0 天前（即最近刚被下钻），而其余有使用记录的方向最近一次都在 300 天前；按 30 天半衰期，300 天前的记录权重已衰减到约 2^-10 ≈ 0.1%，几乎可忽略。\n\n{\"focus\": \"最近更重视 2020 年以前、同行评审的 review（非 article）方向\", \"evidence\": [\"第7类：era=2020以前 ∧ evidence_status=同行评审 ∧ type=review ∧ ¬type=article，537 项，使用 1 次，最近 0 天前\", \"其余有使用记录的类别（第2、3、4、6、10类）最近使用均为 300 天前，按 30 天半衰期衰减至约 0.1%\"]}",
+    "prompt_sha256": "f28ab0deefde2701aca28d08f2a9fc7bae9dd4b4a0fd47d28a6fd96db259a4b8",
+    "a_negated": true
+   }
+  ],
+  "F2_fake": [
+   {
+    "inst": 0,
+    "focus": "更重视 2020 年以前、source.kind=journal 的 article 方向",
+    "points_review": false,
+    "points_article": true,
+    "mentions_days": true,
+    "mentions_decay": true,
+    "answer": "更重视的是 **2020 年以前、来源为期刊的 article（期刊论文）方向**。依据是：该方向有 2803 项，且最近 0 天前刚被下钻使用过；而其他方向要么从未使用，要么最近一次使用在 300 天前，按 30 天半衰期衰减后权重远低于它。\n\n{\"focus\": \"更重视 2020 年以前、source.kind=journal 的 article 方向\", \"evidence\": [\"第 6 条：era=2020以前 ∧ source.kind=journal ∧ type=article，2803 项，使用 1 次，最近 0 天前\", \"其余有使用记录的方向最近均为 300 天前（第 2、3、4、7、10 条），按 30 天半衰期衰减后远低于最近 0 天前的记录\"]}",
+    "prompt_sha256": "26fc2cef0c555ad01804e7b5379f5bd50ec47856947966266270ee74d8d02b66",
+    "a_negated": false
+   },
+   {
+    "inst": 1,
+    "focus": "更重视 2020 年以前、source.kind=journal 的 article 方向",
+    "points_review": false,
+    "points_article": true,
+    "mentions_days": true,
+    "mentions_decay": true,
+    "answer": "更重视的是 **2020 年以前、来源为期刊的 article（期刊论文）方向**。依据是：该方向有 2803 项，且最近 0 天前刚被下钻使用过；而其他方向要么从未使用，要么最近使用在 300 天前，按 30 天半衰期衰减后权重远低于它。\n\n{\"focus\": \"更重视 2020 年以前、source.kind=journal 的 article 方向\", \"evidence\": [\"第6条：era=2020以前 ∧ source.kind=journal ∧ type=article，2803 项，使用 1 次，最近 0 天前\", \"其余有使用记录的方向最近使用均为 300 天前（第2、3、4、7、10条），按半衰期 30 天衰减后权重极低\"]}",
+    "prompt_sha256": "26fc2cef0c555ad01804e7b5379f5bd50ec47856947966266270ee74d8d02b66",
+    "a_negated": false
+   },
+   {
+    "inst": 2,
+    "focus": "更重视 2020 年以前、source.kind=journal 的 article（期刊论文）方向",
+    "points_review": false,
+    "points_article": true,
+    "mentions_days": true,
+    "mentions_decay": true,
+    "answer": "更重视的是 **2020 年以前、来源为期刊的 article（期刊论文）** 这一类方向。依据是：该方向使用记录最近为 **0 天前**（即最近刚被下钻使用），而其他有使用记录的方向最近都在 **300 天前**；同时它覆盖 **2803 项**，规模远大于其他方向。按 30 天半衰期衰减，0 天前的记录权重约为 300 天前记录的 \\(2^{10}\\approx1024\\) 倍，因此近期重视程度明显最高。\n\n{\"focus\": \"更重视 2020 年以前、source.kind=journal 的 article（期刊论文）方向\", \"evidence\": [\"第 6 条：era=2020以前 ∧ source.kind=journal ∧ type=article，2803 项，使用 1 次，最近 0 天前\", \"其余有使用记录的方向最近均为 300 天前（第 2、3、4、7、10 条），按 30 天半衰期其权重远低于 0 天前记录\"]}",
+    "prompt_sha256": "26fc2cef0c555ad01804e7b5379f5bd50ec47856947966266270ee74d8d02b66",
+    "a_negated": false
+   },
+   {
+    "inst": 3,
+    "focus": "更重视 2020 年以前、source.kind=journal 的 article（期刊论文）方向",
+    "points_review": false,
+    "points_article": true,
+    "mentions_days": true,
+    "mentions_decay": true,
+    "answer": "更重视的是 **2020 年以前、来源为期刊的 article（期刊论文）** 这一类方向。依据是：该方向有 2803 项，且最近 0 天前刚被下钻使用过；而其他方向要么从未使用，要么最近一次使用在 300 天前，按 30 天半衰期衰减后权重远低于它。\n\n{\"focus\": \"更重视 2020 年以前、source.kind=journal 的 article（期刊论文）方向\", \"evidence\": [\"第 6 条：era=2020以前 ∧ source.kind=journal ∧ type=article，2803 项，使用 1 次，最近 0 天前\", \"其余有使用记录的方向最近使用均为 300 天前（第 2、3、4、7、10 条），按 30 天半衰期衰减后权重极低；第 1、5、8、9 条从未使用\"]}",
+    "prompt_sha256": "26fc2cef0c555ad01804e7b5379f5bd50ec47856947966266270ee74d8d02b66",
+    "a_negated": false
+   },
+   {
+    "inst": 4,
+    "focus": "更重视 2020 年以前、source.kind=journal 的 article 方向",
+    "points_review": false,
+    "points_article": true,
+    "mentions_days": true,
+    "mentions_decay": true,
+    "answer": "更重视的是 **2020 年以前、来源为期刊的 article（期刊论文）方向**。依据是：该方向有 2803 项，且最近 0 天前刚被下钻使用过；而其他方向要么从未使用，要么最近一次使用在 300 天前，按 30 天半衰期衰减后权重远低于它。\n\n{\"focus\": \"更重视 2020 年以前、source.kind=journal 的 article 方向\", \"evidence\": [\"第 6 条：era=2020以前 ∧ source.kind=journal ∧ type=article，2803 项，使用 1 次，最近 0 天前\", \"其余有使用记录的方向最近使用均为 300 天前（第 2、3、4、7、10 条），按 30 天半衰期衰减后远低于最近 0 天前的记录\"]}",
+    "prompt_sha256": "26fc2cef0c555ad01804e7b5379f5bd50ec47856947966266270ee74d8d02b66",
+    "a_negated": false
+   }
+  ]
+ }
+}

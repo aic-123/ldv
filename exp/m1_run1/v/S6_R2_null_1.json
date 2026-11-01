@@ -1,0 +1,18 @@
+{
+ "task": "S6",
+ "role": "R2",
+ "arm": "null",
+ "instance": 1,
+ "prompt_sha256": "9d3a7dc016a4f755a1a85cc0332a0018c86c2fa1682f55150600535f5a5ffa41",
+ "answer": "从结构看，建它的人最重视“证据来源/证据状态（evidence_status、source.kind）”与“文献类型（type）”的组合区分，尤其是把“同行评审的 article”作为最大主类单独列出。整体倾向是以来源可靠性和出版类型为核心来组织分类，而非按主题内容划分。\n\n{\"most_important\": \"最重视按证据来源与文献类型（尤其同行评审的期刊论文）来区分材料。\", \"evidence\": [\"最大类别是 evidence_status=同行评审 ∧ type=article ∧ ¬(evidence_status=仓储 ∨ source.kind=journal)，达3017项\", \"分类条件普遍以 evidence_status、source.kind、type 的组合与排除式逻辑构建，而非主题词\"], \"verdict\": \"有倾向\"}",
+ "json": {
+  "most_important": "最重视按证据来源与文献类型（尤其同行评审的期刊论文）来区分材料。",
+  "evidence": [
+   "最大类别是 evidence_status=同行评审 ∧ type=article ∧ ¬(evidence_status=仓储 ∨ source.kind=journal)，达3017项",
+   "分类条件普遍以 evidence_status、source.kind、type 的组合与排除式逻辑构建，而非主题词"
+  ],
+  "verdict": "有倾向"
+ },
+ "no_tendency": false,
+ "has_evidence": true
+}

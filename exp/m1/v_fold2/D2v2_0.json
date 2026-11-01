@@ -1,0 +1,14 @@
+{
+ "task": "D2v2",
+ "instance": 0,
+ "left": "folded",
+ "right": "other",
+ "pick": "摘要2",
+ "folded_wins": false,
+ "prompt_sha256": "78321700ec689d5b82e637e62cc7837b6e7dc6c6ef71f88e41da2bb6317d3c53",
+ "answer": "摘要2 更像人组织出来的：它先抓住体量最大的 `type=article` 和 `type=review` 两条主线，再在各自下面按 era、evidence_status、source.kind 等逐步收窄，明显有“先看大头、再处理边角”的取舍。摘要1 则从“全部”开始一路用否定条件层层排除，把大量小分支和极端细碎的排除项都平铺出来，更像机械地按条件逐个列举。\n\n{\"human\": \"摘要2\", \"reason\": \"摘要2先按主要类型（article、review）组织，再逐层细分，体现了对数据分布的取舍；摘要1从全集开始用否定条件层层排除，分支细碎且平铺，更像机械列举。\"}",
+ "json": {
+  "human": "摘要2",
+  "reason": "摘要2先按主要类型（article、review）组织，再逐层细分，体现了对数据分布的取舍；摘要1从全集开始用否定条件层层排除，分支细碎且平铺，更像机械列举。"
+ }
+}
