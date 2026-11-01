@@ -65,6 +65,7 @@ import threading
 import time
 import traceback
 from collections import Counter
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -263,6 +264,60 @@ class App:
         self.usage_loaded = len(recs)
         # ★ 遗忘在这里发生：按记录年龄降权（**记录一条不删**）
         self._tendency = usage_store.aged_tendency(self._usage_dir, now=self._usage_now)
+
+    def _attention(self, shown: list[dict]) -> dict:
+        """把「为什么这么排」作为**只读派生读数**说出来（提案 `exp/m1/ATTENTION_READOUT.md`）。
+
+        ⚠️ **纯派生**：每次由 `usage/*.md` 现算，**不落盘、不接受写入**。
+           想改它，唯一的办法是产生新记录（`drill` → `promote`）——
+           否则「只追加不覆写 / 曝光不算分 / 时间由内核给」这三条会被绕过（V13-A）。
+        ⚠️ **不含分数、不含排名**：字段名避开 `protocol.BANNED_FIELDS`
+           （score / weight / priority / rating）。给的是**事实**（条数、天数），
+           判断「这算不算重视」留给读者 —— 系统不充当裁判（E-1）。
+        ⚠️ **可移除性（I5）**：删掉本字段，`nodes` / `ordered_by` / `n_answer` 逐字不变。
+           它不参与任何计算，只是把已有排序的理由说出来；若有人让排序去读它，这条就破了。
+        ⚠️ `last_used_days` 为 `null` = 记录缺时间戳 ⇒ 按 `decay_weight` 的约定**不衰减**
+           （判据 D3）：既不猜它「很老」，也不猜它「很新」。
+        ⚠️ `rows` 与 `nodes` **同序、只含有记录的方向**（I1/I2）——不替没出现过的方向编故事。
+        """
+        hl = usage_store.HALF_LIFE_DAYS
+        # ⚠️ 取值域与 `ordered_by` 相同（`default` / `usage`），**不新造枚举值**：
+        #    §S1 要求输出里每个字符串都能指回材料或进协议白名单，而白名单里
+        #    本来就有 `default` / `usage` 这两个「排序依据」的取值（2026-11-01 实测抓到的红）。
+        if self._usage_dir is None:
+            return {"basis": "default", "half_life_days": hl,
+                    "n_with_records": 0, "rows": []}
+        now = self._usage_now or datetime.now()
+        per: dict[str, dict] = {}
+        for r in usage_store.load(self._usage_dir):
+            did = str(r.get("did") or "")
+            p = float(r.get("propensity") or 0.0)
+            if not did or not (0.0 < p <= 1.0):
+                continue                   # 与 `aged_tendency` 同口径（§K7 / B11）
+            e = per.setdefault(did, {"n": 0, "ats": []})
+            e["n"] += 1
+            if r.get("at"):
+                e["ats"].append(str(r["at"]))
+        rows = []
+        for n in shown:                    # 与 `nodes` 同序 ⇒ 读者能对上号（I1）
+            e = per.get(n["did"])
+            if not e:
+                continue
+            ats = sorted(e["ats"])
+            days = None
+            span = 0
+            if ats:
+                try:
+                    days = max(0, (now - datetime.fromisoformat(ats[-1])).days)
+                    if len(ats) >= 2:
+                        span = max(0, (datetime.fromisoformat(ats[-1])
+                                       - datetime.fromisoformat(ats[0])).days)
+                except ValueError:         # 时间戳坏了 ⇒ 当作「不知道时间」
+                    days, span = None, 0
+            rows.append({"did": n["did"], "n_records": e["n"],
+                         "last_used_days": days, "span_days": span})
+        return {"basis": "usage" if rows else "default", "half_life_days": hl,
+                "n_with_records": len(rows), "rows": rows}
 
     def _record_use(self, k, d, *, outcome: float = 1.0) -> dict | None:
         """下钻 = 这次「这个方向有用」的**真实**信号（不是合成反馈）。
@@ -687,6 +742,10 @@ class App:
                     if (v := str((self.nodes[i].fields or {}).get("verdict") or ""))},
                 # ② 零结果时给「去掉哪个键就有结果」——逐键试一遍，确定性
                 "relax": (self._relax(req, forb) if not ans else []),
+                # ★ 注意力读数（提案 `exp/m1/ATTENTION_READOUT.md`）：把「为什么这么排」
+                #   说出来。**只读派生**、零分数、不参与计算（删掉它不影响上面任何一个读数，
+                #   判据 I5）。数据来源只有 `usage/*.md`，写入口仍只有 `drill`。
+                "attention": self._attention(shown),
                 "ms": round(ms, 2)}
 
     def fingerprint(self) -> str:

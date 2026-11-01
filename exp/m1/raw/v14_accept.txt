@@ -1,0 +1,12 @@
+[A-2] PASS {"basis": "default", "rows": 0, "ordered_by": "default", "hl": 30.0}
+[I4] PASS {"basis": "default", "n": 0}
+nodes 前3: ['D17', 'D7', 'D19']
+attention: {"basis": "usage", "half_life_days": 30.0, "n_with_records": 2, "rows": [{"did": "D17", "n_records": 1, "last_used_days": 0, "span_days": 0}, {"did": "D7", "n_records": 1, "last_used_days": 0, "span_days": 0}]}
+[I1] PASS {"row_positions": [0, 1]}
+[I2] PASS {"n_rows": 2, "n_nodes": 39}
+[I3] PASS {"n_with_records": 2, "len_rows": 2, "branches_hidden": 0}
+[A-4] PASS {"identical": true}
+[I5] PASS {"dynamic_identical": true, "read_sites": []}
+[A-3] PASS {"why": "(收)", "banned_checked": true}
+[A-5] PASS {"exit": 0, "summary": "{\"A_pass\": 6, \"A_total\": 6, \"verdict\": \"对外接口守住\"}"}
+{"pass": 9, "total": 9, "verdict": "attention 验收通过"}
