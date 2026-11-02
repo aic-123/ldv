@@ -306,6 +306,10 @@ def contradictions(kernel: Any, cap: int | None = None) -> dict[str, Any]:
     rows: list[dict[str, Any]] = []
     dirs = kernel.all_directions()
     checked = {"边打架": 0, "子覆盖越出父": 0, "孤立方向": 0}
+    # ★ 根 did 自 2026-11-02 起由**内容派生**，不能写死 `"D0"`。
+    #   没有 `_root` 的是测试桩（`checks/_controls.StubKernel`）—— 它们仍用 D0 作根。
+    _r = getattr(kernel, "_root", None)
+    root_did = _r.did if _r is not None else "D0"
 
     for d in dirs:
         # ① 边打架
@@ -331,11 +335,11 @@ def contradictions(kernel: Any, cap: int | None = None) -> dict[str, Any]:
                 rows.append({"类型": "子覆盖越出父", "方向": d.did,
                              "越出": len(union - set(kernel.members_of(d))),
                              "说明": "子方向的成员并集不在父方向成员里"})
-        # ③ 孤立方向（既无父、也不是根 —— 根是 `D0`）
-        if not d.parent and d.did != "D0":
+        # ③ 孤立方向（既无父、也不是根）
+        if not d.parent and d.did != root_did:
             checked["孤立方向"] += 1
             rows.append({"类型": "孤立方向", "方向": d.did,
-                         "说明": "没有父，也不是根 D0"})
+                         "说明": f"没有父，也不是根 {root_did}"})
 
     n_struct = len(rows)
 

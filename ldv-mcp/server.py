@@ -95,6 +95,111 @@ def _server_version() -> str:
 #:   按 `filled_by` 的同一条纪律：**声明照记，不当证明**。
 CALL_LOG = STORE / "log" / "mcp-calls.jsonl"
 
+#: 日志的**累积状态** —— 三处读者共用一次扫描（2026-11-02）。
+#:
+#: 为什么要有：`_change_receipt` / `_cache_stats` / `_actor_split` 原来各自
+#: 把整份日志读一遍。日志只追加、不轮转 ⇒ 三处都随日志线性变慢，而 `orient`
+#: 是每会话都要调的。`S35` 量的就是这件事：10 万行时 `orient` 469ms。
+#:
+#: ⚠️ **语义必须等于全量扫描** —— 这是「流式等价物」，不是近似。
+#:    判据 `S35b` 把它和冷启动全量逐字对拍。
+_LOG = {
+    "key": None,      # (st_dev, st_ino)：换了文件 ⇒ 必须从零重扫
+    "off": 0,         # 已消费到的字节偏移，**总停在换行之后**
+    "tail": b"",      # `off` 之前 64 字节的指纹（见 `_scan_log`）
+    "cache": {},      # corpus -> [ask 数, 命中数]
+    "actor": set(),   # (qfp, did)：actor=agent 声明的下钻
+    "writes": [],     # 写事件，保序：[{session, tool, v}]
+}
+
+
+def _reset_log() -> None:
+    _LOG.update({"key": None, "off": 0, "tail": b"",
+                 "cache": {}, "actor": set(), "writes": []})
+
+
+def _absorb(row: dict) -> None:
+    """把**一行**日志并进累积状态。三处要的东西都在这里一次算完。"""
+    a = row.get("args") or {}
+    sm = row.get("summary") or {}
+    tool = row.get("tool")
+    if tool == "ask":
+        # ⚠️ 老日志没有 `cached` 字段 ⇒ 只统计有该字段的行。
+        #    拿「没记」当「没命中」会把命中率算低。
+        if "cached" in sm:
+            slot = _LOG["cache"].setdefault(str(a.get("corpus") or ""), [0, 0])
+            slot[0] += 1
+            if sm.get("cached"):
+                slot[1] += 1
+    elif tool == "drill" and row.get("actor") == "agent":
+        _LOG["actor"].add((str(sm.get("qfp", "")), str(sm.get("did", ""))))
+    # ---- 变更回执只收**成功**的写；条件在这里判一次，读的一侧不再判 ----
+    v = None
+    if tool == "remember" and sm.get("written") is True:
+        v = a.get("id")
+    elif tool == "derive" and sm.get("ok") is True:
+        v = a.get("name")
+    elif tool == "remember_answer" and sm.get("written") is True:
+        v = sm.get("key")
+    elif tool == "drill" and a.get("verdict") == "wrong" and sm.get("ok") is True:
+        v = sm.get("did")
+    if v:
+        _LOG["writes"].append({"session": str(row.get("session") or ""),
+                               "tool": tool, "v": v})
+
+
+def _scan_log() -> None:
+    """把日志里**新增的行**消费进 `_LOG`；已经看过的字节不再读。
+
+    ⚠️ 换文件（inode 变）或文件变短（轮转 / 清空）⇒ 从零重扫。
+       只比 size 不够：清空后重新长到同样大小，size 会骗人。
+    ⚠️ 所以还留一个 **64 字节尾部指纹**：`off` 之前那段字节变了 ⇒ 历史被改写
+       ⇒ 从零重扫。追加只动 `off` 之后，指纹天然稳定，成本是一次 64B 读。
+    ⚠️ **末行不完整就不消费**：另一个进程可能正写到一半，
+       消费半行会 `json.loads` 失败并**永久丢掉那一条**。偏移停在最后一个 `\n` 之后。
+    """
+    try:
+        st = CALL_LOG.stat()
+    except OSError:
+        _reset_log()
+        return
+    key = (st.st_dev, st.st_ino)
+    if _LOG["key"] != key or st.st_size < _LOG["off"]:
+        _reset_log()
+        _LOG["key"] = key
+    if _LOG["off"]:
+        try:
+            with io.open(CALL_LOG, "rb") as f:
+                f.seek(max(0, _LOG["off"] - 64))
+                if f.read(_LOG["off"] - max(0, _LOG["off"] - 64)) != _LOG["tail"]:
+                    _reset_log()
+                    _LOG["key"] = key          # 同 inode，但内容被改写
+        except OSError:
+            _reset_log()
+            return
+    if st.st_size <= _LOG["off"]:
+        return
+    try:
+        with io.open(CALL_LOG, "rb") as f:
+            f.seek(_LOG["off"])
+            data = f.read(st.st_size - _LOG["off"])
+    except OSError:
+        return
+    cut = data.rfind(b"\n")
+    if cut < 0:
+        return                                  # 一行都还没写完整
+    _LOG["off"] += cut + 1
+    # ⚠️ 拼**旧指纹**再取尾 64：只追加 1 行（< 64 字节）时，
+    #    单看本次读到的字节会比 64 短 ⇒ 下次比对长度不等 ⇒ 误判「被改写」并全量重扫。
+    _LOG["tail"] = (_LOG["tail"] + data[:cut + 1])[-64:]
+    for raw in data[:cut].split(b"\n"):
+        if not raw.strip():
+            continue
+        try:
+            _absorb(json.loads(raw.decode("utf-8", "replace")))
+        except ValueError:
+            continue                            # 坏行跳过，不影响后面的行
+
 
 def _tail(path, n: int = 5) -> list[str]:
     """从文件**尾**读最后 n 行，不整篇读进内存。
@@ -182,38 +287,17 @@ def _change_receipt(sid: str) -> dict:
     """
     out: dict = {"新写": [], "造维度": [], "编译答案": [], "降权支": [],
                  "合计": 0}
-    if not CALL_LOG.is_file():
-        return out
-    try:
-        lines = io.open(CALL_LOG, encoding="utf-8", errors="replace").readlines()
-    except OSError:
-        return out
-    for line in lines:
-        try:
-            row = json.loads(line)
-        except ValueError:
+    # ★ 增量读（2026-11-02）：不再把整份日志 readlines()。
+    #   「哪些写成功了」在 `_absorb` 里判一次，这里只按会话过滤。
+    _scan_log()
+    bucket = {"remember": "新写", "derive": "造维度",
+              "remember_answer": "编译答案", "drill": "降权支"}
+    for ev in _LOG["writes"]:
+        if sid and ev["session"] != sid:
             continue
-        if sid and (row.get("session") or "") != sid:
-            continue
-        tool = row.get("tool")
-        a = row.get("args") or {}
-        sm = row.get("summary") or {}
-        if tool == "remember" and sm.get("written") is True:
-            v = a.get("id")
-            if v and v not in out["新写"]:
-                out["新写"].append(v)
-        elif tool == "derive" and sm.get("ok") is True:
-            v = a.get("name")
-            if v and v not in out["造维度"]:
-                out["造维度"].append(v)
-        elif tool == "remember_answer" and sm.get("written") is True:
-            v = sm.get("key")
-            if v and v not in out["编译答案"]:
-                out["编译答案"].append(v)
-        elif tool == "drill" and a.get("verdict") == "wrong" and sm.get("ok") is True:
-            v = sm.get("did")
-            if v and v not in out["降权支"]:
-                out["降权支"].append(v)
+        key = bucket.get(ev["tool"])
+        if key and ev["v"] not in out[key]:
+            out[key].append(ev["v"])
     out["合计"] = sum(len(v) for k, v in out.items() if isinstance(v, list))
     return out
 
@@ -302,27 +386,9 @@ def _cache_stats(corpus: str) -> dict:
     ⚠️ **它是复用率，不是智能指标**：命中率完全取决于**问题重复率**
        （同一问两遍 = 100%，每问都不同 = 0%）。别拿它当能力读数。
     """
-    asks = hits = 0
-    if CALL_LOG.is_file():
-        try:
-            for line in io.open(CALL_LOG, encoding="utf-8", errors="replace"):
-                try:
-                    row = json.loads(line)
-                except ValueError:
-                    continue
-                if row.get("tool") != "ask":
-                    continue
-                a = row.get("args") or {}
-                if corpus and a.get("corpus") != corpus:
-                    continue
-                s = row.get("summary") or {}
-                if "cached" not in s:
-                    continue                     # 老日志：不记 ≠ 没命中
-                asks += 1
-                if s.get("cached"):
-                    hits += 1
-        except OSError:
-            pass
+    # ★ 增量读（2026-11-02）：按语料分桶的 [ask 数, 命中数] 累积在 `_LOG` 里。
+    _scan_log()
+    asks, hits = _LOG["cache"].get(str(corpus or ""), [0, 0])
     return {"ask 数": asks, "命中数": hits,
             "答案缓存命中率": (round(hits / asks, 3) if asks else None),
             "note": ("命中率 = 命中 / ask。**None = 还没有带 `cached` 字段的 ask**"
@@ -553,45 +619,25 @@ def _tool_orient(a: dict) -> dict:
     return out
 
 
-_ACTOR_CACHE: dict = {"sig": None, "val": None}   # (size, mtime) → 分解读数
 
 
 def _actor_split(app) -> dict:
     """正式记录里多少条来自 agent 声明的下钻（读数，不打分不拦截）。
 
-    ⚠️ 这一处**语义上要全量**（分解是整个历史，不是最近几条）⇒ 不能倒读。
-       外部评审 A4 顺带查到它：日志线性增长时它也线性变慢。缓解 = 按
-       (size, mtime) 缓存 —— 同一份日志重复调用不重算；跨调用仍随日志增长，
-       这是已知的线性点，写在这里不假装没有。
+    ⚠️ **语义上要全量**（分解是整个历史，不是最近几条）⇒ 不能只倒读尾巴。
+       2026-11-02 改成增量：历史在 `_LOG["actor"]` 里累积，新增行才解析。
+       语义与全量扫描逐字相同（判据 `S35b` 对拍），只是不重复劳动。
     """
     from ldv.tools import usage_store as US
 
-    agent_q: set[tuple[str, str]] = set()
-    try:
-        st = CALL_LOG.stat()
-        sig = (st.st_size, st.st_mtime_ns)
-    except OSError:
-        sig = None
-    if sig is not None and _ACTOR_CACHE.get("sig") == sig:
-        return _ACTOR_CACHE["val"]
-    if CALL_LOG.is_file():
-        for line in io.open(CALL_LOG, encoding="utf-8"):
-            try:
-                row = json.loads(line)
-            except ValueError:
-                continue
-            # ★ 只收 actor 声明为 agent 的下钻（第一版忘过滤 ⇒ 分解失去意义）
-            if row.get("tool") == "drill" and row.get("actor") == "agent":
-                agent_q.add((str(row.get("summary", {}).get("qfp", "")),
-                             str(row.get("summary", {}).get("did", ""))))
+    # ★ 只收 actor 声明为 agent 的下钻（第一版忘过滤 ⇒ 分解失去意义）
+    _scan_log()
+    agent_q = _LOG["actor"]
     rows = US.load(app._usage_dir)
     n_agent = sum(1 for r in rows if (r.get("qfp", ""), r.get("did", "")) in agent_q)
-    val = {"记录数": len(rows), "agent 声明的下钻": n_agent,
-           "其余（人 / 未声明）": len(rows) - n_agent,
-           "note": "actor 是调用方**声明**的，服务器不验（同 filled_by）"}
-    if sig is not None:
-        _ACTOR_CACHE["sig"], _ACTOR_CACHE["val"] = sig, val
-    return val
+    return {"记录数": len(rows), "agent 声明的下钻": n_agent,
+            "其余（人 / 未声明）": len(rows) - n_agent,
+            "note": "actor 是调用方**声明**的，服务器不验（同 filled_by）"}
 
 
 def _tool_ask(a: dict) -> dict:
@@ -1402,6 +1448,42 @@ def _tool_next(a: dict) -> dict:
     }
     out["note"] = ("按**后果**分档：填错会让结论错 ⇒ 必须；只是不全 ⇒ 可延后；"
                    "无差别 ⇒ 可忽略。不是分数，没有置信度")
+
+    # ★★ **议程层接进 MCP**（2026-11-02）：`idle=K` ⇒ 报「空闲第 K 轮，轮到哪条待办」。
+    #
+    #   内核 v0.1.51 就加了 `core/agenda.py`（ACT-R 激活 `B=ln(Σ age^-0.5)` +
+    #   阈值 `τ(k)=0.5-0.3k` + 老化兜底 `STALE_DAYS=7`），但本仓库 PINNED 在
+    #   v0.1.47，**这一层从来没有消费者** —— README 写着「MCP `next(idle=K)`」，
+    #   而 `next` 的 schema 里连 `idle` 都没有。这一版把它接上。
+    #
+    #   ⚠️ **缺省一个字段都不加**：不传 `idle` ⇒ 输出与从前**逐字相同**。
+    #      加字段比改字段安全，但「默认路径也被改了」是另一回事，判据 `S47a` 守这条。
+    #   ⚠️ **只读**：不写 `agenda.jsonl`（写入口只有 `--agenda-tick` / 调度器）。
+    #      在 MCP 里自动记 `seen` 会催熟 `k`，而 `k` 一旦被催熟，「闲置」就不再是事实。
+    if a.get("idle") is not None:
+        from ldv.core import agenda as AG
+
+        nodes, _in_store = _corpus_dir(corpus)
+        if nodes is None:
+            # 内置语料：与 `App(None)` 走**同一条**兜底链（`LDV_CORPUS` 已设时它优先）
+            from ldv.checks._fixtures import find_corpus
+            nodes = find_corpus()
+        kk = max(0, int(a["idle"]))
+        ag = AG.agenda(
+            k, k=kk,
+            history=AG.load_history(nodes) if nodes is not None else {},
+            cooldown=AG.cooldown_until(nodes) if nodes is not None else {},
+            cap=a.get("cap"))
+        out["议程"] = {
+            "空闲轮次": ag["空闲轮次"],
+            "阈值": ag["阈值"],
+            "公式": ag["公式"],
+            "到点": ag["到点"][:limit],
+            "未到": ag["未到"][:limit],
+            "老化兜底": ag["老化兜底"],
+            # ⚠️ 不写 `下一轮`：那是调度器的事；MCP 这一层只回答「现在轮到谁」。
+            "说明": ag["说明"],
+        }
     return out
 
 TOOLS = [
@@ -1550,12 +1632,19 @@ TOOLS = [
                      "required": ["id"]}},
     {"name": "next",
      "description": "反思：此刻该干什么 —— 后果三档（必须/可延后/可忽略），"
-                    "不是分数、没有置信度。",
+                    "不是分数、没有置信度。"
+                    "给 `idle=K`（我闲了 K 轮）⇒ 另报议程："
+                    "按 ACT-R 激活与阈值 τ(k) 判「现在轮到哪条」；"
+                    "不给 ⇒ 输出与从前逐字相同。",
      "inputSchema": {"type": "object",
                      "properties": {
                          "corpus": {"type": "string"},
                          "plugin": {"type": "string"},
                          "cap": {"type": "integer"},
+                         "idle": {"type": "integer",
+                                  "description": "空闲轮次 K（≥0）。给了 ⇒ 附加 `议程`："
+                                                 "到点/未到/阈值/老化兜底。"
+                                                 "只是「轮到它了」，不是「必须做」"},
                          "limit": {"type": "integer",
                                    "description": "每档最多列几条（默认 5）"}}}},
 ]

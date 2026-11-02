@@ -1,65 +1,68 @@
 # 钉住的内核 —— 本产品不改内核，只包它。
 
-版本      v0.1.47
-提交      336bebb4962e30cf0384de6c735ea645cf05d277
-日期      2026-10-26
+版本      v0.1.53
+提交      314662d
+日期      2026-11-01
 来源      github.com/aic-123/ldv
 
 ## 本版带进来什么（为什么必须升）
 
-### 接口 / 行为（插件要用）
+### 议程层（主动性）—— 本次升级的唯一硬理由
 
-    drill(verdict="wrong", actor="human")  ⇒ outcome=-1（判错只能外部授予）      v0.1.39
-    ask(reject_below=N)                    ⇒ 倾向 < N 且 require 不含该支 must
-                                             的支不摆出来（skipped_rejected /
-                                             rejected_items 差额可算）          v0.1.39
-    answer_verdicts                        ⇒ 项级标记（只标记，不改候选集）      v0.1.39
-    keys_of 平铺 ≡ 嵌套                     ⇒ `source.kind: x` 与
-                                             `source:\n  kind: x` 等价
-                                             （原来平铺时值不进词汇表）          v0.1.40
-    空语料合法                              ⇒ 目录存在但没 .md ⇒ 0 项，不再需要
-                                             占位文件（`_keystone.md` 已删）     v0.1.41
-    max_branches + branches_total/shown/hidden
-                                           ⇒ 从本仓库并回内核（原来两份漂移）
+    ldv/core/agenda.py    ACT-R 激活 B=ln(Σ age^-0.5) + 阈值 τ(k)=0.5-0.3k
+                          + 老化兜底 STALE_DAYS=7 + 冷却 COOLDOWN_DAYS=1
+    ldv/core/clock.py     可替换的「现在」：now() / set_source() / frozen() / age_days()
+
+    v0.1.47 的副本里**这两个文件不存在**。而 README 与 `cli.py` 的 docstring
+    都写着消费方是「MCP 的 `next(idle=)`」—— 那个参数当时并不存在。
+    ⇒ 这一版把 `agenda.py` / `clock.py` 同步进来，并把 `next(idle=)` 真正接上
+      （判据 `S47a–d`：缺省逐字不变 / τ(0)=0.5、τ(6)=-1.3 / 门槛下降不会让到点变少 /
+       只读，不写 `agenda.jsonl`）。
+
+### 接口 / 行为
+
+    query() 新增 attention        只读派生读数：basis / half_life_days / rows（条数与天数，
+                                  不给分数）。本次升级**未消费** —— 是否暴露另议，  v0.1.53
+                                  先不接，避免「加了字段没人读」重演。
+    agenda(k, k=)                 到点 / 未到 / 老化兜底；档位原样透传，不改档            v0.1.51
+    clock.now() / idle_rounds()   k 由时间推（`IDLE_PERIOD_MIN=30`，上限 `IDLE_CAP=6`）  v0.1.51
+    (v0.1.47 及更早的接口全部保持不变)
 
 ### 只改文档，不改接口
 
-    v0.1.42  §S6 失配修复收敛（断言 32 条）
-    v0.1.43–44  定位措辞：从「结构」这个方向做的认知模型
-    v0.1.45  §S7 记忆处置：降权不删除，忽略在支不在项（断言 33 条）
-             ⇒ **把「支级跳过 vs 项级标记」写成一条可判承诺**，
-               免得每换一个人读都要重新问「到底能不能删、删了会怎样」
+    v0.1.48–v0.1.50  README 数字订正 / 定义从「四件事」到「五件事」/ 首句换掉
+    v0.1.52          E1–E4 评测报告、服务层 P1 文档、Windows GBK 编码修复说明
 
-### 加了一个只读属性（不改接口，但本仓库要用）
-
-    v0.1.46  `App.derived_meta` —— 派生维度 sidecar 的 `_meta`（what / why /
-             derived_from / generated_by / derived_at）
-             ⚠️ 原来 `entry.py` 只读 `_meta["field"]` 与 `values`，
-                `derive` 强制要求的 `derived_from` / `rationale` **写进去没人读** ——
-                「这一行决定答案里敢不敢把它当事实」当时没有代码兑现。
-             ⇒ 本仓库用它透传到 `orient.derived_meta` / `ask.derived_provenance`
-                （判据 `S44a–c`）。**只读出来，不参与任何判断。**
-             同版还补了 §S6/§S7 的保证矩阵债（`docs/保证矩阵.md` 是生成物，
-             加断言后没重生成 ⇒ `[保证] ④⑦` 红过）。
-
-⚠️ **升级内核 = 改这个文件 + 重跑本仓库的 smoke 测试 + 重跑内核自带的全套判据。**
-   不许「顺手跟进」—— 内核的保证矩阵、判据读数、版本落点都以它自己的提交为准。
-   `v0.1.41..v0.1.47` 的代码改动**只有三个文件**（实测 `git diff --stat`）：
-   `entry.py` +11（`derived_meta`）｜`ldv/tests/run_tests.py` +45（死锁修复）｜
-   `ldv/tools/guarantee_matrix.py` +2。**三个都已同步**，其余是文档。
-   ⚠️ 别照着「只动文档」这句话跳过同步 —— v0.1.46 就动了 `entry.py`。
-
-### v0.1.47：死锁修复 + 状态行补正
-
-`test_service_shell` 挂 67 文件的副本，收尾一次 `shutil.rmtree` 被环境的批量删除
-守卫（>50）拦下 ⇒ 崩在收尾 ⇒ 残留 ⇒ **下一趟死在前置清理**。
-改成 `_rm_tree_small`（一个文件一次 `unlink`，删不掉就抛）。
-⚠️ 连带后果：单次 `run_tests` **跑不完**（守卫按累计计数，跑到第 50 个就拦）
-⇒ 内核那 885 条要**分两段验**（868 + 17）。这一条写在内核 release 正文里。
-
-## 一条仍然生效的纪律
+### 一条仍然生效的纪律
 
 **「落后于上游」不是问题，「落后而没人知道为什么」才是。**
 每次决定不升，理由写在这里；升级之后，那条理由如果失效就删掉，只留结论。
-（2026-10-24 那次「落后两个提交不升」的记录已随 v0.1.39 升级失效 ——
-它的理由在升级时仍然成立，但升级的理由是**要用内核的新字段**，不是那两条。）
+
+## 本次升级时发现、并已在本仓库修掉的两件事
+
+1. **内置语料 32/36 被覆盖**（`core/ldv/corpus/nodes/*.md` 是校园网认证页 HTML）。
+   是 v0.1.52 那次提交（`dba07bb`）带进来的，`git show HEAD:` 里就是坏的。
+   后果：`ask` / `next` 不带 `corpus` 直接 `CorpusError`。
+   已从顶层 `ldv/corpus/nodes` 逐个覆盖，36/36 都有 front-matter。
+
+2. **日志三处全量扫描**（`_change_receipt` / `_cache_stats` / `_actor_split`）。
+   10 万行时 `orient` 469ms。已改为共用一份增量状态（`_LOG` / `_scan_log`），
+   语义与全量逐字相同（`S35b` 对拍），稳态 6.5ms。
+
+## 本仓库对内核的**本地修改**（上游尚未合并，升级时必须重放）
+
+    core/ldv/core/kernel.py   did：自增计数器 → 内容派生            2026-11-02
+
+    `did = f"D{counter}"` 取决于**分裂顺序**。实测（内置语料 25 支）：
+    加 1 条材料，1 支的 did 指向了别的内容；加 2 条 11 支（44%）；加 5 条 13 支（52%）。
+    后果是所有按 did 记的账**静默错位**——读数照样有，只是记到了别支上。
+
+    现在 `did = "D" + int(sha1((父, sorted(must), sorted(mustnot)))[:12], 16)`。
+    保留 `D<数字>` 形状（`did_order()` 依赖它）；撞车当场抛——那意味着
+    同一父下有两个完全相同的键集合，是重复覆盖，不是 id 问题。
+
+    ⚠️ **升级内核时这一处会被覆盖**，必须重放，并对既有 usage 记录重跑迁移
+       （旧 did → 新 did 的映射必须先在旧内核上导出，改完就导不出来了）。
+
+⚠️ **升级内核 = 改这个文件 + 重跑本仓库的 smoke 测试 + 重跑内核自带的全套判据。**
+   不许「顺手跟进」—— 内核的保证矩阵、判据读数、版本落点都以它自己的提交为准。

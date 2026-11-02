@@ -667,7 +667,17 @@ def main() -> int:
                 == json.dumps(q5["out"], ensure_ascii=False, sort_keys=True))
         chk("S34b", "max_branches=0（默认）与不传该参数逐字相同", same)
 
-        # ── S35：orient 倒读日志（外部评审 A4，2026-10-25）────────────
+        # ── S35：日志再长，**日常调用**不变慢（外部评审 A4，2026-10-25）──
+        #
+        #   2026-11-02 改判据：原来量「10 万行 < 1 万行 × 1.5」—— 那条**不可能成立**，
+        #   多出来的 9 万行必须被处理，不处理就是错数。它当时绿，是因为除了 `_tail`
+        #   没有别的读者；后来 `_cache_stats` / `_actor_split` / `_change_receipt`
+        #   各自全量扫，它就红了（实测 469ms，比值 3.40）。
+        #
+        #   真实形状是三个数：
+        #     · 冷启动：进程第一次，必须全量扫一遍（一次性成本，报数不判）
+        #     · 灌入：日志一次性从 1 万涨到 10 万（一次性成本，报数不判）
+        #     · **稳态**：之后每轮只多一行，耗时**不随历史长度增长**（判这个）
         import time as _t
         log = store / "log" / "mcp-calls.jsonl"
         log.parent.mkdir(parents=True, exist_ok=True)
@@ -685,12 +695,33 @@ def main() -> int:
         t0 = _t.perf_counter()
         r2 = tool(c3, "orient", {"corpus": "mine"})
         t2 = _t.perf_counter() - t0
+        ts = []
+        for _ in range(3):
+            t0 = _t.perf_counter()
+            r3 = tool(c3, "orient", {"corpus": "mine"})
+            ts.append(_t.perf_counter() - t0)
+        t3 = sum(ts) / len(ts)
+        # ★ S35b 对拍：增量（这个进程）vs 冷启动全量（新进程）
+        c4 = MCP({"LDV_MCP_STORE": str(store)})
+        r4 = tool(c4, "orient", {"corpus": "mine"})
+        c4.close()
         c3.close()
-        chk("S35", "orient 倒读日志：10 万行耗时 < 1 万行的 1.5 倍（且绝对 < 1s）",
-            r1["out"].get("ok") is True and r2["out"].get("ok") is True
-            and t2 < max(t1 * 1.5, t1 + 0.2) and t2 < 1.0,
-            f"1 万行 {t1 * 1000:.1f}ms｜10 万行 {t2 * 1000:.1f}ms"
-            f"｜比值 {t2 / max(t1, 1e-9):.2f}")
+        _LOGKEYS = ("cache", "actor_split", "changes")
+        same = (json.dumps([r3["out"].get(k) for k in _LOGKEYS],
+                           ensure_ascii=False, sort_keys=True)
+                == json.dumps([r4["out"].get(k) for k in _LOGKEYS],
+                              ensure_ascii=False, sort_keys=True))
+        chk("S35", "★ 日志长到 10 万行后，**稳态**调用不比冷启动慢"
+                   "（< 1.5 倍且 < 1s）",
+            r1["out"].get("ok") is True and r3["out"].get("ok") is True
+            and t3 < max(t1 * 1.5, t1 + 0.2) and t3 < 1.0,
+            f"冷启动 {t1 * 1000:.1f}ms｜灌到 10 万行（一次性）{t2 * 1000:.1f}ms"
+            f"｜稳态 {t3 * 1000:.1f}ms（三次均值）"
+            f"｜稳态/冷启动 {t3 / max(t1, 1e-9):.2f}")
+        chk("S35b", "★ 增量扫描 == 冷启动全量：同一份 10 万行日志，"
+                    "命中率/演员分解/变更回执逐字相同",
+            same, f"增量 {json.dumps([r3['out'].get(k) for k in _LOGKEYS], ensure_ascii=False)[:110]}"
+                  f"｜冷启动 {json.dumps([r4['out'].get(k) for k in _LOGKEYS], ensure_ascii=False)[:110]}")
 
         # ── S36：否定闭环（外部评审 C1/C2/D1，2026-10-25）──────────────
         # ⚠️ 必须用**新建的干净语料**：`mine` 被 S10/S16 下钻过很多次，
@@ -1127,11 +1158,45 @@ def main() -> int:
             f"n_answer={allu['out'].get('n_answer')}（弃答从「心里知道」变成"
             "「结构里记着」）")
 
+        # ── S47：议程层接进 MCP `next(idle=)`（2026-11-02）──────────────
+        #   内核 v0.1.51 就有 `core/agenda.py`，但本仓库 PINNED 在 v0.1.47，
+        #   这一层从来没有消费者 —— README 写着 `next(idle=K)`，schema 里却没有。
+        #   ⚠️ 用**内置语料**：它没有 `agenda.jsonl` ⇒ 正好测「只读、不写盘」。
+        _nodes = Path(__file__).resolve().parent / "core" / "ldv" / "corpus" / "nodes"
+        _ledger = _nodes.parent / "agenda.jsonl"
+        _before = _ledger.read_bytes() if _ledger.is_file() else None
+        n0 = tool(c, "next", {"limit": 3})["out"]
+        n1 = tool(c, "next", {"limit": 3, "idle": 0})["out"]
+        n6 = tool(c, "next", {"limit": 3, "idle": 6})["out"]
+        _after = _ledger.read_bytes() if _ledger.is_file() else None
+
+        chk("S47a", "★ 缺省**逐字不变**：不传 `idle` ⇒ 没有 `议程`，其余键与传 idle 时一致",
+            "议程" not in n0
+            and {k: v for k, v in n1.items() if k != "议程"} == n0,
+            f"缺省键={sorted(n0)}")
+        a1, a6 = n1.get("议程") or {}, n6.get("议程") or {}
+        chk("S47b", "★ `idle=K` ⇒ 报议程：τ(0)=0.5、τ(6)=-1.3，且到点+未到 == 三档总数",
+            a1.get("阈值") == 0.5 and a6.get("阈值") == -1.3
+            and len(a1.get("到点") or []) + len(a1.get("未到") or [])
+                == n1.get("必须", 0) + n1.get("可延后", 0) + n1.get("可忽略", 0),
+            f"τ0={a1.get('阈值')}｜τ6={a6.get('阈值')}｜"
+            f"到点 {len(a1.get('到点') or [])}+未到 {len(a1.get('未到') or [])}"
+            f"｜三档 {n1.get('必须', 0)}+{n1.get('可延后', 0)}+{n1.get('可忽略', 0)}")
+        chk("S47c", "★ 门槛随空闲下降 ⇒ 到点**不会变少**（τ 单调不增）",
+            len(a6.get("到点") or []) >= len(a1.get("到点") or []),
+            f"idle=0 到点 {len(a1.get('到点') or [])}"
+            f"｜idle=6 到点 {len(a6.get('到点') or [])}")
+        chk("S47d", "★ 议程**只读**：连调三次 `next(idle=)` 不写 `agenda.jsonl`"
+                    "（写入口只有 `--agenda-tick` / 调度器）",
+            _before == _after,
+            f"调用前 {'无' if _before is None else str(len(_before)) + 'B'}"
+            f"｜调用后 {'无' if _after is None else str(len(_after)) + 'B'}")
+
     finally:
         c.close()
         shutil.rmtree(tmp, ignore_errors=True)
 
-    print(f"\n{'✓ 全过' if not FAIL else f'✗ 红 {FAIL} 条'}（S1–S46）")
+    print(f"\n{'✓ 全过' if not FAIL else f'✗ 红 {FAIL} 条'}（S1–S47）")
     return 1 if FAIL else 0
 
 

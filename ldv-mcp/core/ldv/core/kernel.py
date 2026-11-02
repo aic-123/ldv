@@ -43,6 +43,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from contextlib import ExitStack
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Sequence
@@ -190,6 +191,38 @@ class QueryResult:
         )
 
 
+def content_key(parent: str | None, payload: Any) -> tuple:
+    """一个方向的**内容身份**：`(父, 是键集合, 否键集合)`，全部排序。
+
+    为什么不用 `witness`：它就是父，已经在里面了。
+    为什么不用 `rank`：rank 是深度，由父决定；同一父下的兄弟 rank 相同。
+    """
+    if isinstance(payload, tuple) and len(payload) == 2:
+        must, mustnot = payload
+    else:
+        must, mustnot = payload, ()
+    return (parent or "",
+            tuple(sorted(str(x) for x in (must or ()))),
+            tuple(sorted(str(x) for x in (mustnot or ()))))
+
+
+def did_of(parent: str | None, payload: Any) -> str:
+    """由**内容**派生 did —— 同一（父，键集合）永远同一个 id。
+
+    ★★ 为什么必须这样（2026-11-02）：原来是 `D{自增计数器}`，取决于**分裂顺序**。
+       实测：内置语料加**一条**材料，25 支里就有 1 支的 did 指向了别的内容；
+       加 2 条是 11 支（44%），加 5 条是 13 支（52%）。
+       ⇒ 所有按 did 记的账（使用记录、会话句柄、任何察觉记录）全部错位，
+         而错位是**静默**的：读数照样有，只是记到了别支上。
+
+    ⚠️ **保留 `D<数字>` 形状**：`direction.did_order()` 与既有输出都按这个读；
+       换成 `D<hex>` 会让它们全部落到「非 D<数字>」的兜底分支（排最后）。
+    ⚠️ 48 bit（12 hex）在几万支规模下碰撞可忽略；**真撞了就抛**，不静默覆盖。
+    """
+    h = hashlib.sha1(repr(content_key(parent, payload)).encode("utf-8")).hexdigest()
+    return f"D{int(h[:12], 16)}"
+
+
 class Kernel:
     """内核。构造时**只**接受一个插件和一批项 —— 没有别的参数。
 
@@ -253,8 +286,15 @@ class Kernel:
 
     def _new(self, *, rank: int, payload: Any, witness: tuple[str, ...],
              origin: str, parent: str | None) -> Direction:
-        did = f"D{self._counter}"
-        self._counter += 1
+        # ★ 内容派生（2026-11-02）：同一（父，键集合）永远同一个 did。
+        #   ⚠️ 撞车 = 同一父下有两个完全相同的键集合 —— 那是结构本身的问题
+        #      （§K2 的「重复覆盖」），必须当场说出来，不能靠覆盖掩掉。
+        did = did_of(parent, payload)
+        if did in self._dirs:
+            raise RuntimeError(
+                f"did 撞车：{did} 已存在（parent={parent!r}）。"
+                "同一父下出现了两个完全相同的键集合 —— 这是重复覆盖，不是 id 问题。")
+        self._counter += 1                # 只用于缓存版本号（`(len, _counter)`）
         d = Direction(did=did, rank=rank, payload=payload, witness=witness,
                       origin=origin, parent=parent)
         self._dirs[did] = d
