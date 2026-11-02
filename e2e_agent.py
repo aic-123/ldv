@@ -536,22 +536,14 @@ def main(argv: list[str]) -> int:
         rep.check("⑰ 观测：重启后 /metrics 仍有本轮计数（重启前的已归零）；访问日志是可解析 JSON",
                   code_met == 200 and need <= set(counts) and parsed >= 5,
                   f"计数 {sorted(counts)[:8]}｜日志 {len(log_lines)} 行，可解析 {parsed}", t0)
-        import importlib.util as _ilu
         code_txt, body_txt, hd_txt = cli.get("/metrics", token=tok_admin)
-        has_lib = _ilu.find_spec("prometheus_client") is not None
-        if has_lib:
-            ok_txt = (code_txt == 200
-                      and str(body_txt).startswith("# HELP ldv_shell_events_total")
-                      and "text/plain" in (hd_txt.get("content-type") or ""))
-            detail = f"{code_txt}｜{str(hd_txt.get('content-type'))}"
-        else:
-            # 没装库时**回退成 JSON 且说明原因** —— 回退要看得见，不许冒充标准格式
-            ok_txt = (code_txt == 200 and isinstance(body_txt, dict)
-                      and "json" in str(body_txt.get("格式", "")))
-            detail = f"{code_txt}｜JSON 回退（未装 prometheus_client）"
-        rep.check("⑰ `/metrics` 是标准出口：装了库 ⇒ Prometheus 文本；"
-                  "没装 ⇒ 明确回退 JSON（不冒充）",
-                  ok_txt, detail)
+        # 零依赖：文本出口由 `serve.prometheus_text()` 用标准库直接生成，
+        # 不再有「装了就标准、没装就 JSON」的分叉（那条降级路径本身会漂）。
+        ok_txt = (code_txt == 200
+                  and str(body_txt).startswith("# HELP ldv_shell_events_total")
+                  and "text/plain" in (hd_txt.get("content-type") or ""))
+        rep.check("⑰ `/metrics` 是标准出口：Prometheus 文本（零依赖）",
+                  ok_txt, f"{code_txt}｜{str(hd_txt.get('content-type'))}")
 
         rep.check("⑰ 每个响应都有协议头（本轮共 %d 个响应）" % len(cli.headers),
                   all(h.get("x-ldv-protocol") == "ldv-http/1" for h in cli.headers if h),

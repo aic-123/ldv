@@ -425,48 +425,29 @@ class TaskTable:
 TABLE = TaskTable()
 
 
-def prometheus_text(snapshot: dict) -> str | None:
-    """把计数转成 **Prometheus 文本**；没装 `prometheus_client` ⇒ `None`（调用方回退 JSON）。
+def _prom_escape(s: str) -> str:
+    """Prometheus 文本里 label 值的转义（只这三样；UTF-8 原样留着）。"""
+    return s.replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
+
+
+def prometheus_text(snapshot: dict) -> str:
+    """把计数转成 **Prometheus 文本**（纯标准库，零依赖）。
 
     ★ 为什么是「转换」而不是「另存一份 Counter 对象」：**两套计数一定会漂**。
       同一件事记在两个地方，出问题时你分不清「哪一份是对的」——这正是本仓库
       最忌的「两个真相」。所以唯一真相仍是 `METRICS` 那个字典，这里只做**呈现**。
 
-    ⚠️ 版本细节（0.26.0 实测）：`CounterMetricFamily` **不在顶层**，在
-      `prometheus_client.core` 里。照文档写 `from prometheus_client import CounterMetricFamily`
-      会 `ImportError` —— 这个坑记在这里，免得下次又踩。
-    ⚠️ 多进程模式下自定义 collector 不工作（官方文档的限制清单）。我们单进程，
-      将来真上 `uvicorn --workers N`，这里要换成 `PROMETHEUS_MULTIPROC_DIR` +
-      `multiprocess.MultiProcessCollector` —— 但那时 `AppCache` 也得先外置（见 `docs/壳层选型.md` §5.2）。
+    ★ 为什么不再用 `prometheus_client`（2026-11-02）：它是壳的**可选**依赖，
+      而 CI 明确「故意不装任何包」⇒ `/metrics` 在 CI 上退回 JSON，判据 `[P1] 74b`
+      一直红。文本格式本身只有三行形状（HELP / TYPE / 样本），手写比维护一条
+      「装了就标准、没装就降级」的分叉更可靠 —— 降级路径本身就是一条会漂的真相。
     """
-    try:
-        from prometheus_client import CollectorRegistry, generate_latest
-        from prometheus_client.core import CounterMetricFamily
-    except ImportError:
-        return None
-
-    class _One:
-        """把「已经攒好样本的 family」包成 collector。
-
-        ⚠️ **必须包这一层**（0.26.0 实测）：直接把 `CounterMetricFamily` 交给
-        `registry.register()` 会抛 `TypeError: unhashable type: 'CounterMetricFamily'`
-        —— 注册表要拿 collector 当字典的键，而 MetricFamily 在这个版本里不可哈希。
-        文档示例用的是 `Counter(...)`（那类对象可哈希），照抄到 MetricFamily 上就炸。
-        """
-
-        def __init__(self, fams):
-            self._f = fams
-
-        def collect(self):
-            return self._f
-
-    fam = CounterMetricFamily("ldv_shell_events",
-                              "服务壳事件计数（进程内；重启归零）", labels=["kind"])
+    lines = ["# HELP ldv_shell_events_total 服务壳事件计数（进程内；重启归零）",
+             "# TYPE ldv_shell_events_total counter"]
     for k in sorted(snapshot):
-        fam.add_metric([k], float(snapshot[k]))
-    reg = CollectorRegistry()
-    reg.register(_One([fam]))
-    return generate_latest(reg).decode("utf-8")
+        lines.append(f'ldv_shell_events_total{{kind="{_prom_escape(str(k))}"}} '
+                     f'{int(snapshot[k])}')
+    return "\n".join(lines) + "\n"
 
 
 #: 状态码 → `X-Ldv-Error` 的默认值。**机器读这个头，人读正文**：
@@ -716,19 +697,10 @@ class Handler(BaseHTTPRequestHandler):
             METRICS.bump("readyz 不ready · 调度器停")
 
     def _metrics_text(self) -> None:
-        """`/metrics` —— **Prometheus 文本**（标准出口，看板直接吃）。
-
-        没装 `prometheus_client` 时**回退成 JSON**，并在正文里写明「为什么是 JSON」——
-        回退要能被看见，不能让人以为自己接的是标准格式。
-        """
+        """`/metrics` —— **Prometheus 文本**（标准出口，零依赖，看板直接吃）。"""
         if self._admin() is None:
             return
         text = prometheus_text(METRICS.snapshot())
-        if text is None:
-            METRICS.bump("metrics 回退 JSON")
-            self._json(200, {"格式": "json（未装 prometheus_client，Prometheus 文本不可用）",
-                             "计数": METRICS.snapshot()})
-            return
         # `version=0.0.4` 是 Prometheus 的文本格式版本，不是我们的协议版本
         self._send(200, text, ctype="text/plain; version=0.0.4; charset=utf-8")
 
