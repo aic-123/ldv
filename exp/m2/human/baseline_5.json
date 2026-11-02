@@ -1,0 +1,66 @@
+{
+  "_note": "2026-11-02 t=0 人类基线，第一批 5 道。raw 逐字保留，不改写；interpret 是我的读法，与 raw 分开存，读错可单独作废。",
+  "at": "2026-11-02T13:41:56+08:00",
+  "items": [
+    {
+      "qid": "H1",
+      "scene": "这个月记账记得有点乱，我想看看钱主要压在哪儿了。",
+      "pool": ["finance/001", "finance/007", "finance/009", "finance/014", "finance/015"],
+      "raw": "会先看月份，然后会先看活动支出而不是固定支出和储蓄",
+      "interpret": {
+        "steps": ["按月份看（时间）", "把支出粗分三档：活动 / 固定 / 储蓄，先看活动"],
+        "first_action": "排序",
+        "dims_used": ["月份", "类别（三档）"],
+        "note": "类别在语料里是 6 个值；他要的是 3 档。月份在 finance 里只有正文提到，没有成字段。"
+      }
+    },
+    {
+      "qid": "H2",
+      "scene": "报修单堆了几张，我怕有拖太久的。",
+      "pool": ["ticket/003","ticket/005","ticket/007","ticket/009","ticket/010","ticket/011","ticket/012","ticket/013","ticket/014","ticket/015","ticket/001","ticket/002","ticket/004","ticket/006","ticket/008"],
+      "raw": "会先看哪些是待修，然后从时间从早到晚看",
+      "interpret": {
+        "steps": ["筛：只留待修（把已修滤掉，不是分成三组）", "按报修时间从早到晚排"],
+        "first_action": "筛",
+        "dims_used": ["状态", "日期"],
+        "note": "「处理中」他没提 —— 是留是弃，需要确认。"
+      }
+    },
+    {
+      "qid": "H3",
+      "scene": "11 月以后还有什么事情排着。",
+      "pool": ["meeting/011","meeting/012","meeting/013","meeting/014","meeting/015","ticket/010","ticket/011","ticket/012","ticket/013","ticket/014","ticket/015"],
+      "raw": "就根据那件事情离现在最近然后会考虑哪些事情有冲突",
+      "interpret": {
+        "steps": ["按「离现在多近」排", "看两件事之间有没有冲突"],
+        "first_action": "排序",
+        "dims_used": ["日期（相对现在）", "冲突"],
+        "note": "「冲突」是跨条关系，不是单条属性。"
+      }
+    },
+    {
+      "qid": "H4",
+      "scene": "晚上想做点快的，20 分钟以内能弄完的。",
+      "pool": ["recipe/003","recipe/005","recipe/006","recipe/008","recipe/011","recipe/013","recipe/014"],
+      "raw": "会先看名字然后联想对应的做法，考虑哪些菜可以同时做然后考虑这菜本身是否容易凉或者冷了不好吃",
+      "interpret": {
+        "steps": ["看菜名，联想做法", "看哪几道能同时做（共用灶/蒸锅/占用时长）", "看会不会凉、凉了还好不好吃"],
+        "first_action": "联想",
+        "dims_used": ["菜名语义", "工序重叠", "保温性"],
+        "note": "三层全不在语料字段里；耗时与口味在，但不是他要的。"
+      }
+    },
+    {
+      "qid": "H5",
+      "scene": "我标过星的那 13 条，现在回头看，好像有点杂。",
+      "pool": ["books/003","books/013","finance/007","finance/011","finance/015","fitness/002","meeting/002","meeting/005","meeting/014","recipe/003","recipe/007","ticket/003","ticket/009"],
+      "raw": "我会根据我自身当前的状态，就先看002 014 005这些，然后如果空闲可能会再看003 015 007这种保障类型",
+      "interpret": {
+        "steps": ["先按我自己现在的状态（忙/闲）定取舍", "忙：只点名 meeting/002、meeting/014、meeting/005", "闲：再看 003、finance/015、finance/007 这类保障"],
+        "first_action": "条件",
+        "dims_used": ["查询者状态", "具体点名", "保障"],
+        "note": "「003」有歧义：标星池里只有 books/003 与 ticket/003，按「保障类型」看更像 ticket/003（门禁），待确认。"
+      }
+    }
+  ]
+}
