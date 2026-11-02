@@ -1,0 +1,49 @@
+  C1 读书+重要     orig i0 fields=['type', '标记'] steps=6 hit=True
+  C1 读书+重要     fold i0 fields=['type', '标记'] steps=4 hit=True
+  C1 读书+重要     orig i1 fields=['type', '标记'] steps=6 hit=True
+  C1 读书+重要     fold i1 fields=['type', '标记'] steps=4 hit=True
+  C1 读书+重要     orig i2 fields=['type', '标记'] steps=2 hit=True
+  C1 读书+重要     fold i2 fields=['type', '标记'] steps=4 hit=True
+  C2 健身+背      orig i0 fields=['type'] steps=1 hit=True
+  C2 健身+背      fold i0 fields=['type'] steps=2 hit=True
+  C2 健身+背      orig i1 fields=['type'] steps=1 hit=True
+  C2 健身+背      fold i1 fields=['type'] steps=2 hit=True
+  C2 健身+背      orig i2 fields=['type'] steps=1 hit=True
+  C2 健身+背      fold i2 fields=['type'] steps=2 hit=True
+  C3 食谱+清淡     orig i0 fields=['type', '口味'] steps=2 hit=True
+  C3 食谱+清淡     fold i0 fields=['type', '口味'] steps=6 hit=True
+  C3 食谱+清淡     orig i1 fields=['type', '口味'] steps=2 hit=True
+  C3 食谱+清淡     fold i1 fields=['type', '口味'] steps=6 hit=True
+  C3 食谱+清淡     orig i2 fields=['type', '口味'] steps=2 hit=True
+  C3 食谱+清淡     fold i2 fields=['type', '口味'] steps=6 hit=True
+  C4 旅行+夏季     orig i0 fields=['type', '季节'] steps=2 hit=True
+  C4 旅行+夏季     fold i0 fields=['type', '季节'] steps=2 hit=True
+  C4 旅行+夏季     orig i1 fields=['type', '季节'] steps=2 hit=True
+  C4 旅行+夏季     fold i1 fields=['type', '季节'] steps=2 hit=True
+  C4 旅行+夏季     orig i2 fields=['type', '季节'] steps=2 hit=True
+  C4 旅行+夏季     fold i2 fields=['type', '季节'] steps=2 hit=True
+  C5 财务+固定支出   orig i0 fields=['type', '类别'] steps=8 hit=True
+  C5 财务+固定支出   fold i0 fields=['type', '类别'] steps=2 hit=True
+  C5 财务+固定支出   orig i1 fields=['type', '类别'] steps=2 hit=True
+  C5 财务+固定支出   fold i1 fields=['type', '类别'] steps=2 hit=True
+  C5 财务+固定支出   orig i2 fields=['type', '类别'] steps=8 hit=True
+  C5 财务+固定支出   fold i2 fields=['type', '类别'] steps=2 hit=True
+  C6 报修+待修     orig i0 fields=['type'] steps=1 hit=True
+  C6 报修+待修     fold i0 fields=['type'] steps=2 hit=True
+  C6 报修+待修     orig i1 fields=['type'] steps=1 hit=True
+  C6 报修+待修     fold i1 fields=['type'] steps=2 hit=True
+  C6 报修+待修     orig i2 fields=['type'] steps=1 hit=True
+  C6 报修+待修     fold i2 fields=['type'] steps=2 hit=True
+  C7 会议+6人     orig i0 fields=['type', '参会'] steps=2 hit=True
+  C7 会议+6人     fold i0 fields=['type', '参会'] steps=2 hit=True
+  C7 会议+6人     orig i1 fields=['type', '参会'] steps=2 hit=True
+  C7 会议+6人     fold i1 fields=['type', '参会'] steps=2 hit=True
+  C7 会议+6人     orig i2 fields=['type', '参会'] steps=2 hit=True
+  C7 会议+6人     fold i2 fields=['type', '参会'] steps=2 hit=True
+  C8 论文+NeurIP orig i0 fields=['type', '发表'] steps=2 hit=True
+  C8 论文+NeurIP fold i0 fields=['type', '发表'] steps=2 hit=True
+  C8 论文+NeurIP orig i1 fields=['type', '发表'] steps=2 hit=True
+  C8 论文+NeurIP fold i1 fields=['type', '发表'] steps=2 hit=True
+  C8 论文+NeurIP orig i2 fields=['type', '发表'] steps=2 hit=True
+  C8 论文+NeurIP fold i2 fields=['type', '发表'] steps=2 hit=True
+{"F1_fold_fields": 24, "F2_orig_fields": 24, "F3_fold_steps": 6, "fold_calls": 24, "orig_calls": 24}

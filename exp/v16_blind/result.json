@@ -1,0 +1,897 @@
+{
+ "F1_fold_fields": 24,
+ "F2_orig_fields": 24,
+ "F3_fold_steps": 6,
+ "fold_calls": 24,
+ "orig_calls": 24,
+ "detail": [
+  {
+   "需求": "C1 读书+重要",
+   "arm": "orig",
+   "inst": 0,
+   "truth_fields": [
+    "type",
+    "标记"
+   ],
+   "got_fields": [
+    "type",
+    "标记"
+   ],
+   "fields_hit": true,
+   "steps": 6,
+   "expect_steps": null,
+   "steps_ok": null,
+   "unable": false,
+   "answer": "{\"fields\": [\"type\", \"标记\"], \"steps\": 6, \"evidence\": [\"1. 标记｜16 项｜相干\", \"2. type=会议｜12 项｜相干\", \"4. type=食谱｜6 项｜相干\", \"5. type=健身｜4 项｜相干\", \"6. type=报修｜2 项｜相干\"], \"reason\": \"与需求相关的筛选字段只有标记和type，记录从步骤1到步骤6共6步。\"}"
+  },
+  {
+   "需求": "C1 读书+重要",
+   "arm": "fold",
+   "inst": 0,
+   "truth_fields": [
+    "type",
+    "标记"
+   ],
+   "got_fields": [
+    "标记",
+    "type"
+   ],
+   "fields_hit": true,
+   "steps": 4,
+   "expect_steps": 4,
+   "steps_ok": true,
+   "unable": false,
+   "answer": "{\"fields\": [\"标记\", \"type\"], \"steps\": 4, \"evidence\": [\"1. 按「标记」筛选（1 刀）｜ 到 16 项\", \"2. 按「type」筛选（1 刀）｜ 到 12 项\", \"3. [过路] 该方向还有子类细分 ｜ 到 9 项\", \"4. 按「type」筛选（3 刀）｜ 到 2 项\"], \"reason\": \"记录中与需求相关的筛选字段为「标记」和「type」，从第1步到第4步共4步。\"}"
+  },
+  {
+   "需求": "C1 读书+重要",
+   "arm": "orig",
+   "inst": 1,
+   "truth_fields": [
+    "type",
+    "标记"
+   ],
+   "got_fields": [
+    "type",
+    "标记"
+   ],
+   "fields_hit": true,
+   "steps": 6,
+   "expect_steps": null,
+   "steps_ok": null,
+   "unable": false,
+   "answer": "{\"fields\": [\"type\", \"标记\"], \"steps\": 6, \"evidence\": [\"1. 标记｜16 项｜相干\", \"2. type=会议｜12 项｜相干\", \"4. type=食谱｜6 项｜相干\", \"5. type=健身｜4 项｜相干\", \"6. type=报修｜2 项｜相干\"], \"reason\": \"记录中与需求相关的筛选字段只有标记和type，且从步骤1到步骤6共经过6步。\"}"
+  },
+  {
+   "需求": "C1 读书+重要",
+   "arm": "fold",
+   "inst": 1,
+   "truth_fields": [
+    "type",
+    "标记"
+   ],
+   "got_fields": [
+    "标记",
+    "type"
+   ],
+   "fields_hit": true,
+   "steps": 4,
+   "expect_steps": 4,
+   "steps_ok": true,
+   "unable": false,
+   "answer": "{\"fields\": [\"标记\", \"type\"], \"steps\": 4, \"evidence\": [\"1. 按「标记」筛选（1 刀）｜ 到 16 项\", \"2. 按「type」筛选（1 刀）｜ 到 12 项\", \"3. [过路] 该方向还有子类细分 ｜ 到 9 项\", \"4. 按「type」筛选（3 刀）｜ 到 2 项\"], \"reason\": \"记录中与需求相关的筛选字段为「标记」和「type」，从步骤1到步骤4共经历4步。\"}"
+  },
+  {
+   "需求": "C1 读书+重要",
+   "arm": "orig",
+   "inst": 2,
+   "truth_fields": [
+    "type",
+    "标记"
+   ],
+   "got_fields": [
+    "type",
+    "标记"
+   ],
+   "fields_hit": true,
+   "steps": 2,
+   "expect_steps": null,
+   "steps_ok": null,
+   "unable": false,
+   "answer": "{\"fields\": [\"type\", \"标记\"], \"steps\": 2, \"evidence\": [\"1. 标记｜16 项｜相干\", \"2. type=会议｜12 项｜相干\"], \"reason\": \"记录中与需求相关的筛选只有标记和type两个字段，但type的取值均为会议、食谱、健身、报修，未出现读书，故记录不足以确认满足type=读书且标记=重要的结果。\"}"
+  },
+  {
+   "需求": "C1 读书+重要",
+   "arm": "fold",
+   "inst": 2,
+   "truth_fields": [
+    "type",
+    "标记"
+   ],
+   "got_fields": [
+    "标记",
+    "type"
+   ],
+   "fields_hit": true,
+   "steps": 4,
+   "expect_steps": 4,
+   "steps_ok": true,
+   "unable": false,
+   "answer": "{\"fields\": [\"标记\", \"type\"], \"steps\": 4, \"evidence\": [\"1. 按「标记」筛选（1 刀）｜ 到 16 项\", \"2. 按「type」筛选（1 刀）｜ 到 12 项\", \"3. [过路] 该方向还有子类细分 ｜ 到 9 项\", \"4. 按「type」筛选（3 刀）｜ 到 2 项\"], \"reason\": \"记录中与需求相关的筛选字段只有「标记」和「type」，过程共记录4个步骤。\"}"
+  },
+  {
+   "需求": "C2 健身+背",
+   "arm": "orig",
+   "inst": 0,
+   "truth_fields": [
+    "type"
+   ],
+   "got_fields": [
+    "type"
+   ],
+   "fields_hit": true,
+   "steps": 1,
+   "expect_steps": null,
+   "steps_ok": null,
+   "unable": false,
+   "answer": "{\"fields\": [\"type\"], \"steps\": 1, \"evidence\": [\"5. type=健身｜2 项｜相干\"], \"reason\": \"记录中与需求相关的筛选只有步骤5的 type=健身，部位字段未出现，故仅用 type 一步筛选。\"}"
+  },
+  {
+   "需求": "C2 健身+背",
+   "arm": "fold",
+   "inst": 0,
+   "truth_fields": [
+    "type"
+   ],
+   "got_fields": [
+    "type"
+   ],
+   "fields_hit": true,
+   "steps": 2,
+   "expect_steps": 5,
+   "steps_ok": false,
+   "unable": false,
+   "answer": "{\"fields\": [\"type\"], \"steps\": 2, \"evidence\": [\"2. 按「type」筛选（1 刀）｜ 到 12 项\", \"4. 按「type」筛选（2 刀）｜ 到 2 项\"], \"reason\": \"记录中只有按「type」的两次筛选，部位=背未出现任何筛选步骤，故实际筛选字段仅为 type，共 2 步。\"}"
+  },
+  {
+   "需求": "C2 健身+背",
+   "arm": "orig",
+   "inst": 1,
+   "truth_fields": [
+    "type"
+   ],
+   "got_fields": [
+    "type"
+   ],
+   "fields_hit": true,
+   "steps": 1,
+   "expect_steps": null,
+   "steps_ok": null,
+   "unable": false,
+   "answer": "{\"fields\": [\"type\"], \"steps\": 1, \"evidence\": [\"5. type=健身｜2 项｜相干\"], \"reason\": \"记录中只有步骤5按type=健身筛选与需求相关，部位字段未出现，故仅type一个字段、一步。\"}"
+  },
+  {
+   "需求": "C2 健身+背",
+   "arm": "fold",
+   "inst": 1,
+   "truth_fields": [
+    "type"
+   ],
+   "got_fields": [
+    "type"
+   ],
+   "fields_hit": true,
+   "steps": 2,
+   "expect_steps": 5,
+   "steps_ok": false,
+   "unable": false,
+   "answer": "{\"fields\": [\"type\"], \"steps\": 2, \"evidence\": [\"2. 按「type」筛选（1 刀）｜ 到 12 项\", \"4. 按「type」筛选（2 刀）｜ 到 2 项\"], \"reason\": \"记录中只有按「type」的两次筛选，未出现「部位」字段的筛选，故实际筛选字段仅为 type，共 2 步。\"}"
+  },
+  {
+   "需求": "C2 健身+背",
+   "arm": "orig",
+   "inst": 2,
+   "truth_fields": [
+    "type"
+   ],
+   "got_fields": [
+    "type"
+   ],
+   "fields_hit": true,
+   "steps": 1,
+   "expect_steps": null,
+   "steps_ok": null,
+   "unable": false,
+   "answer": "{\"fields\": [\"type\"], \"steps\": 1, \"evidence\": [\"5. type=健身｜2 项｜相干\"], \"reason\": \"记录中只有步骤5的 type=健身 与需求 type=健身 相关，部位=背 在记录中未出现，故仅 type 一个字段参与筛选，从需求到结果一步。\"}"
+  },
+  {
+   "需求": "C2 健身+背",
+   "arm": "fold",
+   "inst": 2,
+   "truth_fields": [
+    "type"
+   ],
+   "got_fields": [
+    "type"
+   ],
+   "fields_hit": true,
+   "steps": 2,
+   "expect_steps": 5,
+   "steps_ok": false,
+   "unable": false,
+   "answer": "{\"fields\": [\"type\"], \"steps\": 2, \"evidence\": [\"2. 按「type」筛选（1 刀）｜ 到 12 项\", \"4. 按「type」筛选（2 刀）｜ 到 2 项\"], \"reason\": \"记录中只有按「type」的两次筛选，部位=背未出现任何筛选步骤，故实际筛选字段仅为 type，共 2 步。\"}"
+  },
+  {
+   "需求": "C3 食谱+清淡",
+   "arm": "orig",
+   "inst": 0,
+   "truth_fields": [
+    "type",
+    "口味"
+   ],
+   "got_fields": [
+    "type",
+    "口味"
+   ],
+   "fields_hit": true,
+   "steps": 2,
+   "expect_steps": null,
+   "steps_ok": null,
+   "unable": false,
+   "answer": "{\"fields\": [\"type\", \"口味\"], \"steps\": 2, \"evidence\": [\"4. type=食谱｜3 项｜相干\", \"6. 口味=清淡｜1 项｜相干\"], \"reason\": \"与需求相关的筛选只有步骤4的type=食谱和步骤6的口味=清淡，共两步。\"}"
+  },
+  {
+   "需求": "C3 食谱+清淡",
+   "arm": "fold",
+   "inst": 0,
+   "truth_fields": [
+    "type",
+    "口味"
+   ],
+   "got_fields": [
+    "type",
+    "口味"
+   ],
+   "fields_hit": true,
+   "steps": 6,
+   "expect_steps": 6,
+   "steps_ok": true,
+   "unable": false,
+   "answer": "{\"fields\": [\"type\", \"口味\"], \"steps\": 6, \"evidence\": [\"2. 按「type」筛选（1 刀）｜ 到 12 项\", \"4. 按「type」筛选（1 刀）｜ 到 3 项\", \"6. 按「口味」筛选（1 刀）｜ 到 1 项\"], \"reason\": \"记录中与需求相关的筛选字段为 type 和口味，过程从步骤1到步骤6共6步。\"}"
+  },
+  {
+   "需求": "C3 食谱+清淡",
+   "arm": "orig",
+   "inst": 1,
+   "truth_fields": [
+    "type",
+    "口味"
+   ],
+   "got_fields": [
+    "type",
+    "口味"
+   ],
+   "fields_hit": true,
+   "steps": 2,
+   "expect_steps": null,
+   "steps_ok": null,
+   "unable": false,
+   "answer": "{\"fields\": [\"type\", \"口味\"], \"steps\": 2, \"evidence\": [\"4. type=食谱｜3 项｜相干\", \"6. 口味=清淡｜1 项｜相干\"], \"reason\": \"与需求相关的筛选只有步骤4的type=食谱和步骤6的口味=清淡两步。\"}"
+  },
+  {
+   "需求": "C3 食谱+清淡",
+   "arm": "fold",
+   "inst": 1,
+   "truth_fields": [
+    "type",
+    "口味"
+   ],
+   "got_fields": [
+    "type",
+    "口味"
+   ],
+   "fields_hit": true,
+   "steps": 6,
+   "expect_steps": 6,
+   "steps_ok": true,
+   "unable": false,
+   "answer": "{\"fields\": [\"type\", \"口味\"], \"steps\": 6, \"evidence\": [\"2. 按「type」筛选（1 刀）｜ 到 12 项\", \"4. 按「type」筛选（1 刀）｜ 到 3 项\", \"6. 按「口味」筛选（1 刀）｜ 到 1 项\"], \"reason\": \"记录中与需求相关的筛选字段为type和口味，过程记录共6步。\"}"
+  },
+  {
+   "需求": "C3 食谱+清淡",
+   "arm": "orig",
+   "inst": 2,
+   "truth_fields": [
+    "type",
+    "口味"
+   ],
+   "got_fields": [
+    "type",
+    "口味"
+   ],
+   "fields_hit": true,
+   "steps": 2,
+   "expect_steps": null,
+   "steps_ok": null,
+   "unable": false,
+   "answer": "{\"fields\": [\"type\", \"口味\"], \"steps\": 2, \"evidence\": [\"4. type=食谱｜3 项｜相干\", \"6. 口味=清淡｜1 项｜相干\"], \"reason\": \"与需求相关的筛选只有步骤4按type=食谱和步骤6按口味=清淡两步。\"}"
+  },
+  {
+   "需求": "C3 食谱+清淡",
+   "arm": "fold",
+   "inst": 2,
+   "truth_fields": [
+    "type",
+    "口味"
+   ],
+   "got_fields": [
+    "type",
+    "口味"
+   ],
+   "fields_hit": true,
+   "steps": 6,
+   "expect_steps": 6,
+   "steps_ok": true,
+   "unable": false,
+   "answer": "{\"fields\": [\"type\", \"口味\"], \"steps\": 6, \"evidence\": [\"2. 按「type」筛选（1 刀）｜ 到 12 项\", \"4. 按「type」筛选（1 刀）｜ 到 3 项\", \"6. 按「口味」筛选（1 刀）｜ 到 1 项\"], \"reason\": \"记录中与需求相关的筛选字段为 type 和口味，过程从步骤1到步骤6共6步。\"}"
+  },
+  {
+   "需求": "C4 旅行+夏季",
+   "arm": "orig",
+   "inst": 0,
+   "truth_fields": [
+    "type",
+    "季节"
+   ],
+   "got_fields": [
+    "type",
+    "季节"
+   ],
+   "fields_hit": true,
+   "steps": 2,
+   "expect_steps": null,
+   "steps_ok": null,
+   "unable": false,
+   "answer": "{\"fields\": [\"type\", \"季节\"], \"steps\": 2, \"evidence\": [\"2. type=旅行｜15 项｜相干\", \"3. 季节=夏季｜4 项｜相干\"], \"reason\": \"记录中与需求相关的筛选只有步骤2的type=旅行和步骤3的季节=夏季，共两步。\"}"
+  },
+  {
+   "需求": "C4 旅行+夏季",
+   "arm": "fold",
+   "inst": 0,
+   "truth_fields": [
+    "type",
+    "季节"
+   ],
+   "got_fields": [
+    "type",
+    "季节"
+   ],
+   "fields_hit": true,
+   "steps": 2,
+   "expect_steps": 3,
+   "steps_ok": false,
+   "unable": false,
+   "answer": "{\"fields\": [\"type\", \"季节\"], \"steps\": 2, \"evidence\": [\"2. 按「type」筛选（1 刀）｜ 到 15 项\", \"3. 按「季节」筛选（1 刀）｜ 到 4 项\"], \"reason\": \"记录显示先按type筛选、再按季节筛选，共两步，均与需求字段对应。\"}"
+  },
+  {
+   "需求": "C4 旅行+夏季",
+   "arm": "orig",
+   "inst": 1,
+   "truth_fields": [
+    "type",
+    "季节"
+   ],
+   "got_fields": [
+    "type",
+    "季节"
+   ],
+   "fields_hit": true,
+   "steps": 2,
+   "expect_steps": null,
+   "steps_ok": null,
+   "unable": false,
+   "answer": "{\"fields\": [\"type\", \"季节\"], \"steps\": 2, \"evidence\": [\"2. type=旅行｜15 项｜相干\", \"3. 季节=夏季｜4 项｜相干\"], \"reason\": \"记录中与需求相关的筛选只有步骤2的type=旅行和步骤3的季节=夏季，共两步。\"}"
+  },
+  {
+   "需求": "C4 旅行+夏季",
+   "arm": "fold",
+   "inst": 1,
+   "truth_fields": [
+    "type",
+    "季节"
+   ],
+   "got_fields": [
+    "type",
+    "季节"
+   ],
+   "fields_hit": true,
+   "steps": 2,
+   "expect_steps": 3,
+   "steps_ok": false,
+   "unable": false,
+   "answer": "{\"fields\": [\"type\", \"季节\"], \"steps\": 2, \"evidence\": [\"2. 按「type」筛选（1 刀）｜ 到 15 项\", \"3. 按「季节」筛选（1 刀）｜ 到 4 项\"], \"reason\": \"记录显示先按type筛选再按季节筛选，共两步，均与需求字段一致。\"}"
+  },
+  {
+   "需求": "C4 旅行+夏季",
+   "arm": "orig",
+   "inst": 2,
+   "truth_fields": [
+    "type",
+    "季节"
+   ],
+   "got_fields": [
+    "type",
+    "季节"
+   ],
+   "fields_hit": true,
+   "steps": 2,
+   "expect_steps": null,
+   "steps_ok": null,
+   "unable": false,
+   "answer": "{\"fields\": [\"type\", \"季节\"], \"steps\": 2, \"evidence\": [\"2. type=旅行｜15 项｜相干\", \"3. 季节=夏季｜4 项｜相干\"], \"reason\": \"记录中与需求相关的筛选只有步骤2的type=旅行和步骤3的季节=夏季，共两步。\"}"
+  },
+  {
+   "需求": "C4 旅行+夏季",
+   "arm": "fold",
+   "inst": 2,
+   "truth_fields": [
+    "type",
+    "季节"
+   ],
+   "got_fields": [
+    "type",
+    "季节"
+   ],
+   "fields_hit": true,
+   "steps": 2,
+   "expect_steps": 3,
+   "steps_ok": false,
+   "unable": false,
+   "answer": "{\"fields\": [\"type\", \"季节\"], \"steps\": 2, \"evidence\": [\"2. 按「type」筛选（1 刀）｜ 到 15 项\", \"3. 按「季节」筛选（1 刀）｜ 到 4 项\"], \"reason\": \"记录显示先按type筛选、再按季节筛选，共两步。\"}"
+  },
+  {
+   "需求": "C5 财务+固定支出",
+   "arm": "orig",
+   "inst": 0,
+   "truth_fields": [
+    "type",
+    "类别"
+   ],
+   "got_fields": [
+    "type",
+    "类别"
+   ],
+   "fields_hit": true,
+   "steps": 8,
+   "expect_steps": null,
+   "steps_ok": null,
+   "unable": false,
+   "answer": "{\"fields\": [\"type\", \"类别\"], \"steps\": 8, \"evidence\": [\"2. type=旅行｜89 项｜相干\", \"8. 类别=固定支出｜3 项｜相干\"], \"reason\": \"记录中与需求相关的筛选字段只有 type 和 类别，且从步骤0到步骤8共经历8步。\"}"
+  },
+  {
+   "需求": "C5 财务+固定支出",
+   "arm": "fold",
+   "inst": 0,
+   "truth_fields": [
+    "type",
+    "类别"
+   ],
+   "got_fields": [
+    "type",
+    "类别"
+   ],
+   "fields_hit": true,
+   "steps": 2,
+   "expect_steps": 4,
+   "steps_ok": false,
+   "unable": false,
+   "answer": "{\"fields\": [\"type\", \"类别\"], \"steps\": 2, \"evidence\": [\"2. 按「type」筛选（5 刀）｜ 到 35 项\", \"4. 按「类别」筛选（1 刀）｜ 到 3 项\"], \"reason\": \"记录中与需求相关的筛选只有按「type」和按「类别」两步，其余为过路信息。\"}"
+  },
+  {
+   "需求": "C5 财务+固定支出",
+   "arm": "orig",
+   "inst": 1,
+   "truth_fields": [
+    "type",
+    "类别"
+   ],
+   "got_fields": [
+    "type",
+    "类别"
+   ],
+   "fields_hit": true,
+   "steps": 2,
+   "expect_steps": null,
+   "steps_ok": null,
+   "unable": false,
+   "answer": "{\"fields\": [\"type\", \"类别\"], \"steps\": 2, \"evidence\": [\"2. type=旅行｜89 项｜相干\", \"8. 类别=固定支出｜3 项｜相干\"], \"reason\": \"记录中与需求相关的筛选字段只有 type 和 类别，且从需求到结果经过这两步筛选。\"}"
+  },
+  {
+   "需求": "C5 财务+固定支出",
+   "arm": "fold",
+   "inst": 1,
+   "truth_fields": [
+    "type",
+    "类别"
+   ],
+   "got_fields": [
+    "type",
+    "类别"
+   ],
+   "fields_hit": true,
+   "steps": 2,
+   "expect_steps": 4,
+   "steps_ok": false,
+   "unable": false,
+   "answer": "{\"fields\": [\"type\", \"类别\"], \"steps\": 2, \"evidence\": [\"2. 按「type」筛选（5 刀）｜ 到 35 项\", \"4. 按「类别」筛选（1 刀）｜ 到 3 项\"], \"reason\": \"记录中与需求相关的筛选只有按 type 和按类别两步，其余为过路信息。\"}"
+  },
+  {
+   "需求": "C5 财务+固定支出",
+   "arm": "orig",
+   "inst": 2,
+   "truth_fields": [
+    "type",
+    "类别"
+   ],
+   "got_fields": [
+    "type",
+    "类别"
+   ],
+   "fields_hit": true,
+   "steps": 8,
+   "expect_steps": null,
+   "steps_ok": null,
+   "unable": false,
+   "answer": "{\"fields\": [\"type\", \"类别\"], \"steps\": 8, \"evidence\": [\"2. type=旅行｜89 项｜相干\", \"8. 类别=固定支出｜3 项｜相干\"], \"reason\": \"记录中与需求相关的筛选字段只有 type 和 类别，且从步骤0到步骤8共经历8步。\"}"
+  },
+  {
+   "需求": "C5 财务+固定支出",
+   "arm": "fold",
+   "inst": 2,
+   "truth_fields": [
+    "type",
+    "类别"
+   ],
+   "got_fields": [
+    "type",
+    "类别"
+   ],
+   "fields_hit": true,
+   "steps": 2,
+   "expect_steps": 4,
+   "steps_ok": false,
+   "unable": false,
+   "answer": "{\"fields\": [\"type\", \"类别\"], \"steps\": 2, \"evidence\": [\"2. 按「type」筛选（5 刀）｜ 到 35 项\", \"4. 按「类别」筛选（1 刀）｜ 到 3 项\"], \"reason\": \"记录中与需求相关的筛选只有按type和按类别两步，其余为过路信息。\"}"
+  },
+  {
+   "需求": "C6 报修+待修",
+   "arm": "orig",
+   "inst": 0,
+   "truth_fields": [
+    "type"
+   ],
+   "got_fields": [
+    "type"
+   ],
+   "fields_hit": true,
+   "steps": 1,
+   "expect_steps": null,
+   "steps_ok": null,
+   "unable": false,
+   "answer": "{\"fields\": [\"type\"], \"steps\": 1, \"evidence\": [\"6. type=报修｜2 项｜相干\"], \"reason\": \"记录中与需求相关的筛选只有步骤6的 type=报修，状态字段未出现，故仅用 type 一步得到结果。\"}"
+  },
+  {
+   "需求": "C6 报修+待修",
+   "arm": "fold",
+   "inst": 0,
+   "truth_fields": [
+    "type"
+   ],
+   "got_fields": [
+    "type"
+   ],
+   "fields_hit": true,
+   "steps": 2,
+   "expect_steps": 4,
+   "steps_ok": false,
+   "unable": false,
+   "answer": "{\"fields\": [\"type\"], \"steps\": 2, \"evidence\": [\"2. 按「type」筛选（1 刀）｜ 到 12 项\", \"4. 按「type」筛选（3 刀）｜ 到 2 项\"], \"reason\": \"记录中只有按「type」筛选的步骤，共两次筛选动作，未出现状态字段的筛选。\"}"
+  },
+  {
+   "需求": "C6 报修+待修",
+   "arm": "orig",
+   "inst": 1,
+   "truth_fields": [
+    "type"
+   ],
+   "got_fields": [
+    "type"
+   ],
+   "fields_hit": true,
+   "steps": 1,
+   "expect_steps": null,
+   "steps_ok": null,
+   "unable": false,
+   "answer": "{\"fields\": [\"type\"], \"steps\": 1, \"evidence\": [\"6. type=报修｜2 项｜相干\"], \"reason\": \"记录中只有步骤6按type=报修筛选出2项，状态字段未出现，故仅type一个字段、一步。\"}"
+  },
+  {
+   "需求": "C6 报修+待修",
+   "arm": "fold",
+   "inst": 1,
+   "truth_fields": [
+    "type"
+   ],
+   "got_fields": [
+    "type"
+   ],
+   "fields_hit": true,
+   "steps": 2,
+   "expect_steps": 4,
+   "steps_ok": false,
+   "unable": false,
+   "answer": "{\"fields\": [\"type\"], \"steps\": 2, \"evidence\": [\"2. 按「type」筛选（1 刀）｜ 到 12 项\", \"4. 按「type」筛选（3 刀）｜ 到 2 项\"], \"reason\": \"记录中只有按「type」筛选的步骤，共两次筛选，未出现状态字段的筛选。\"}"
+  },
+  {
+   "需求": "C6 报修+待修",
+   "arm": "orig",
+   "inst": 2,
+   "truth_fields": [
+    "type"
+   ],
+   "got_fields": [
+    "type"
+   ],
+   "fields_hit": true,
+   "steps": 1,
+   "expect_steps": null,
+   "steps_ok": null,
+   "unable": false,
+   "answer": "{\"fields\": [\"type\"], \"steps\": 1, \"evidence\": [\"6. type=报修｜2 项｜相干\"], \"reason\": \"记录中只有步骤6按type=报修筛选出2项，未出现状态字段的筛选步骤。\"}"
+  },
+  {
+   "需求": "C6 报修+待修",
+   "arm": "fold",
+   "inst": 2,
+   "truth_fields": [
+    "type"
+   ],
+   "got_fields": [
+    "type"
+   ],
+   "fields_hit": true,
+   "steps": 2,
+   "expect_steps": 4,
+   "steps_ok": false,
+   "unable": false,
+   "answer": "{\"fields\": [\"type\"], \"steps\": 2, \"evidence\": [\"2. 按「type」筛选（1 刀）｜ 到 12 项\", \"4. 按「type」筛选（3 刀）｜ 到 2 项\"], \"reason\": \"记录中只有按「type」筛选的步骤，共两次筛选，未出现状态字段的筛选。\"}"
+  },
+  {
+   "需求": "C7 会议+6人",
+   "arm": "orig",
+   "inst": 0,
+   "truth_fields": [
+    "type",
+    "参会"
+   ],
+   "got_fields": [
+    "type",
+    "参会"
+   ],
+   "fields_hit": true,
+   "steps": 2,
+   "expect_steps": null,
+   "steps_ok": null,
+   "unable": false,
+   "answer": "{\"fields\": [\"type\", \"参会\"], \"steps\": 2, \"evidence\": [\"2. type=会议｜4 项｜相干\", \"3. 参会=6｜2 项｜相干\"], \"reason\": \"记录中与需求相关的筛选字段为 type 和参会，从需求到结果经过步骤2和步骤3共两步。\"}"
+  },
+  {
+   "需求": "C7 会议+6人",
+   "arm": "fold",
+   "inst": 0,
+   "truth_fields": [
+    "type",
+    "参会"
+   ],
+   "got_fields": [
+    "type",
+    "参会"
+   ],
+   "fields_hit": true,
+   "steps": 2,
+   "expect_steps": 3,
+   "steps_ok": false,
+   "unable": false,
+   "answer": "{\"fields\": [\"type\", \"参会\"], \"steps\": 2, \"evidence\": [\"2. 按「type」筛选（1 刀）｜ 到 4 项\", \"3. 按「参会」筛选（1 刀）｜ 到 2 项\"], \"reason\": \"记录显示先按type筛选、再按参会筛选，共两步筛选。\"}"
+  },
+  {
+   "需求": "C7 会议+6人",
+   "arm": "orig",
+   "inst": 1,
+   "truth_fields": [
+    "type",
+    "参会"
+   ],
+   "got_fields": [
+    "type",
+    "参会"
+   ],
+   "fields_hit": true,
+   "steps": 2,
+   "expect_steps": null,
+   "steps_ok": null,
+   "unable": false,
+   "answer": "{\"fields\": [\"type\", \"参会\"], \"steps\": 2, \"evidence\": [\"2. type=会议｜4 项｜相干\", \"3. 参会=6｜2 项｜相干\"], \"reason\": \"记录中与需求相关的筛选字段为 type 和 参会，分别对应步骤2和步骤3，共两步。\"}"
+  },
+  {
+   "需求": "C7 会议+6人",
+   "arm": "fold",
+   "inst": 1,
+   "truth_fields": [
+    "type",
+    "参会"
+   ],
+   "got_fields": [
+    "type",
+    "参会"
+   ],
+   "fields_hit": true,
+   "steps": 2,
+   "expect_steps": 3,
+   "steps_ok": false,
+   "unable": false,
+   "answer": "{\"fields\": [\"type\", \"参会\"], \"steps\": 2, \"evidence\": [\"2. 按「type」筛选（1 刀）｜ 到 4 项\", \"3. 按「参会」筛选（1 刀）｜ 到 2 项\"], \"reason\": \"记录显示先按type筛选、再按参会筛选，共两步，均与需求字段一致。\"}"
+  },
+  {
+   "需求": "C7 会议+6人",
+   "arm": "orig",
+   "inst": 2,
+   "truth_fields": [
+    "type",
+    "参会"
+   ],
+   "got_fields": [
+    "type",
+    "参会"
+   ],
+   "fields_hit": true,
+   "steps": 2,
+   "expect_steps": null,
+   "steps_ok": null,
+   "unable": false,
+   "answer": "{\"fields\": [\"type\", \"参会\"], \"steps\": 2, \"evidence\": [\"2. type=会议｜4 项｜相干\", \"3. 参会=6｜2 项｜相干\"], \"reason\": \"记录中与需求相关的筛选只有步骤2的type=会议和步骤3的参会=6，共两步。\"}"
+  },
+  {
+   "需求": "C7 会议+6人",
+   "arm": "fold",
+   "inst": 2,
+   "truth_fields": [
+    "type",
+    "参会"
+   ],
+   "got_fields": [
+    "type",
+    "参会"
+   ],
+   "fields_hit": true,
+   "steps": 2,
+   "expect_steps": 3,
+   "steps_ok": false,
+   "unable": false,
+   "answer": "{\"fields\": [\"type\", \"参会\"], \"steps\": 2, \"evidence\": [\"2. 按「type」筛选（1 刀）｜ 到 4 项\", \"3. 按「参会」筛选（1 刀）｜ 到 2 项\"], \"reason\": \"记录显示先按 type 筛选、再按参会筛选，共两步。\"}"
+  },
+  {
+   "需求": "C8 论文+NeurIPS",
+   "arm": "orig",
+   "inst": 0,
+   "truth_fields": [
+    "type",
+    "发表"
+   ],
+   "got_fields": [
+    "type",
+    "发表"
+   ],
+   "fields_hit": true,
+   "steps": 2,
+   "expect_steps": null,
+   "steps_ok": null,
+   "unable": false,
+   "answer": "{\"fields\": [\"type\", \"发表\"], \"steps\": 2, \"evidence\": [\"3. type=论文｜15 项｜相干\", \"4. 发表=NeurIPS｜2 项｜相干\"], \"reason\": \"与需求相关的筛选只有步骤3按type、步骤4按发表两步。\"}"
+  },
+  {
+   "需求": "C8 论文+NeurIPS",
+   "arm": "fold",
+   "inst": 0,
+   "truth_fields": [
+    "type",
+    "发表"
+   ],
+   "got_fields": [
+    "type",
+    "发表"
+   ],
+   "fields_hit": true,
+   "steps": 2,
+   "expect_steps": 3,
+   "steps_ok": false,
+   "unable": false,
+   "answer": "{\"fields\": [\"type\", \"发表\"], \"steps\": 2, \"evidence\": [\"2. 按「type」筛选（2 刀）｜ 到 15 项\", \"3. 按「发表」筛选（1 刀）｜ 到 2 项\"], \"reason\": \"记录显示先按type筛选、再按发表筛选，共两步，且这两个字段与需求约束对应。\"}"
+  },
+  {
+   "需求": "C8 论文+NeurIPS",
+   "arm": "orig",
+   "inst": 1,
+   "truth_fields": [
+    "type",
+    "发表"
+   ],
+   "got_fields": [
+    "type",
+    "发表"
+   ],
+   "fields_hit": true,
+   "steps": 2,
+   "expect_steps": null,
+   "steps_ok": null,
+   "unable": false,
+   "answer": "{\"fields\": [\"type\", \"发表\"], \"steps\": 2, \"evidence\": [\"3. type=论文｜15 项｜相干\", \"4. 发表=NeurIPS｜2 项｜相干\"], \"reason\": \"与需求相关的筛选只有步骤3按type、步骤4按发表两步。\"}"
+  },
+  {
+   "需求": "C8 论文+NeurIPS",
+   "arm": "fold",
+   "inst": 1,
+   "truth_fields": [
+    "type",
+    "发表"
+   ],
+   "got_fields": [
+    "type",
+    "发表"
+   ],
+   "fields_hit": true,
+   "steps": 2,
+   "expect_steps": 3,
+   "steps_ok": false,
+   "unable": false,
+   "answer": "{\"fields\": [\"type\", \"发表\"], \"steps\": 2, \"evidence\": [\"2. 按「type」筛选（2 刀）｜ 到 15 项\", \"3. 按「发表」筛选（1 刀）｜ 到 2 项\"], \"reason\": \"记录显示先按type筛选、再按发表筛选，共两步筛选。\"}"
+  },
+  {
+   "需求": "C8 论文+NeurIPS",
+   "arm": "orig",
+   "inst": 2,
+   "truth_fields": [
+    "type",
+    "发表"
+   ],
+   "got_fields": [
+    "type",
+    "发表"
+   ],
+   "fields_hit": true,
+   "steps": 2,
+   "expect_steps": null,
+   "steps_ok": null,
+   "unable": false,
+   "answer": "{\"fields\": [\"type\", \"发表\"], \"steps\": 2, \"evidence\": [\"3. type=论文｜15 项｜相干\", \"4. 发表=NeurIPS｜2 项｜相干\"], \"reason\": \"与需求相关的筛选只有步骤3的type=论文和步骤4的发表=NeurIPS两步。\"}"
+  },
+  {
+   "需求": "C8 论文+NeurIPS",
+   "arm": "fold",
+   "inst": 2,
+   "truth_fields": [
+    "type",
+    "发表"
+   ],
+   "got_fields": [
+    "type",
+    "发表"
+   ],
+   "fields_hit": true,
+   "steps": 2,
+   "expect_steps": 3,
+   "steps_ok": false,
+   "unable": false,
+   "answer": "{\"fields\": [\"type\", \"发表\"], \"steps\": 2, \"evidence\": [\"2. 按「type」筛选（2 刀）｜ 到 15 项\", \"3. 按「发表」筛选（1 刀）｜ 到 2 项\"], \"reason\": \"记录显示先按type筛选、再按发表筛选，共两步筛选。\"}"
+  }
+ ]
+}
