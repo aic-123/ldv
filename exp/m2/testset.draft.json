@@ -1,0 +1,252 @@
+{
+  "_schema": "m2-testset/1",
+  "status": "draft",
+  "frozen": false,
+  "written": "2026-11-02",
+  "corpus": "_data/self（120 条 / 8 类 / 2 个标记值）",
+  "vocabulary_note": "可用的值谓词只有 type 的 8 个取值与「我」的 2 个取值；其余谓词是字段存在性（有作者、有日期、有金额……）。题目只能落在这个词汇里，理由见 TESTSET.md §0.2。",
+  "items": [
+    {
+      "qid": "W1a", "cls": "改写", "pair": "W1", "same_as": "W1b",
+      "nl": "我读过的书都有哪些？",
+      "require": ["type=读书"], "forbid": [],
+      "expect_empty": false, "scored": true,
+      "probe": "领域用类型说",
+      "note": "答案 15 条；支按「有没有标记」切开（2 支）"
+    },
+    {
+      "qid": "W1b", "cls": "改写", "pair": "W1", "same_as": "W1a",
+      "nl": "我读过的书都有哪些？",
+      "require": ["作者"], "forbid": [],
+      "expect_empty": false, "scored": true,
+      "probe": "同一领域改用「有作者」说",
+      "note": "作者只有读书条目有 ⇒ 成员集与 W1a 相同，切法也必须相同"
+    },
+    {
+      "qid": "W2a", "cls": "改写", "pair": "W2", "same_as": "W2b",
+      "nl": "我记过的花销都有哪些？",
+      "require": ["type=财务"], "forbid": [],
+      "expect_empty": false, "scored": true,
+      "probe": "领域用类型说",
+      "note": "15 条，2 支"
+    },
+    {
+      "qid": "W2b", "cls": "改写", "pair": "W2", "same_as": "W2a",
+      "nl": "我记过的花销都有哪些？",
+      "require": ["金额"], "forbid": [],
+      "expect_empty": false, "scored": true,
+      "probe": "同一领域改用「有金额」说",
+      "note": "金额只有财务条目有 ⇒ 成员集应与 W2a 相同"
+    },
+    {
+      "qid": "W3a", "cls": "改写", "pair": "W3", "same_as": "W3b",
+      "nl": "开过的会都有哪些？",
+      "require": ["type=会议"], "forbid": [],
+      "expect_empty": false, "scored": true,
+      "probe": "领域用类型说",
+      "note": "15 条，3 支（未标记 11 / 标重要 3 / 标存疑 1）"
+    },
+    {
+      "qid": "W3b", "cls": "改写", "pair": "W3", "same_as": "W3a",
+      "nl": "开过的会都有哪些？",
+      "require": ["议题"], "forbid": [],
+      "expect_empty": false, "scored": true,
+      "probe": "同一领域改用「有议题」说",
+      "note": "议题只有会议条目有 ⇒ 成员集应与 W3a 相同"
+    },
+    {
+      "qid": "W4a", "cls": "改写", "pair": "W4", "same_as": "W4b",
+      "nl": "我会做的菜有哪些？",
+      "require": ["type=食谱"], "forbid": [],
+      "expect_empty": false, "scored": true,
+      "probe": "领域用类型说",
+      "note": "15 条，3 支"
+    },
+    {
+      "qid": "W4b", "cls": "改写", "pair": "W4", "same_as": "W4a",
+      "nl": "我会做的菜有哪些？",
+      "require": ["食材"], "forbid": [],
+      "expect_empty": false, "scored": true,
+      "probe": "同一领域改用「有食材」说",
+      "note": "食材只有食谱条目有 ⇒ 成员集应与 W4a 相同"
+    },
+    {
+      "qid": "W5a", "cls": "改写", "pair": "W5", "same_as": "W5b",
+      "nl": "我读过的论文有哪些？",
+      "require": ["type=论文"], "forbid": [],
+      "expect_empty": false, "scored": true,
+      "probe": "领域用类型说",
+      "note": "15 条，1 支（不切）——无标记，是「不切」的对照"
+    },
+    {
+      "qid": "W5b", "cls": "改写", "pair": "W5", "same_as": "W5a",
+      "nl": "我读过的论文有哪些？",
+      "require": ["发表"], "forbid": [],
+      "expect_empty": false, "scored": true,
+      "probe": "同一领域改用「有发表处」说",
+      "note": "发表只有论文条目有 ⇒ 成员集应与 W5a 相同，且同样不切"
+    },
+
+    {
+      "qid": "C1", "cls": "组合", "pair": null, "same_as": null,
+      "nl": "书里哪些是我标了重要的？",
+      "require": ["type=读书", "我=重要的"], "forbid": [],
+      "expect_empty": false, "scored": true,
+      "probe": "领域 × 标记（唯一的两个值维度）",
+      "note": "2 条，1 支"
+    },
+    {
+      "qid": "C2", "cls": "组合", "pair": null, "same_as": null,
+      "nl": "开销里哪些是我标了重要的？",
+      "require": ["type=财务", "我=重要的"], "forbid": [],
+      "expect_empty": false, "scored": true,
+      "probe": "领域 × 标记",
+      "note": "3 条，1 支"
+    },
+    {
+      "qid": "C3", "cls": "组合", "pair": null, "same_as": null,
+      "nl": "训练记录里哪些是我标了重要的？",
+      "require": ["type=健身", "我=重要的"], "forbid": [],
+      "expect_empty": false, "scored": true,
+      "probe": "领域 × 标记（稀疏：只有 1 条）",
+      "note": "1 条，1 支——测「只有一条时还敢不敢切」"
+    },
+    {
+      "qid": "C4", "cls": "组合", "pair": null, "same_as": null,
+      "nl": "训练记录里哪些是我拿不准的？",
+      "require": ["type=健身", "我=存疑的"], "forbid": [],
+      "expect_empty": false, "scored": true,
+      "probe": "领域 × 另一种标记",
+      "note": "1 条，1 支"
+    },
+    {
+      "qid": "C5", "cls": "组合", "pair": null, "same_as": null,
+      "nl": "会议里哪些是我标了重要的？",
+      "require": ["type=会议", "我=重要的"], "forbid": [],
+      "expect_empty": false, "scored": true,
+      "probe": "领域 × 标记（会议同时还有日期，是三维交集）",
+      "note": "3 条，1 支"
+    },
+    {
+      "qid": "C6", "cls": "组合", "pair": null, "same_as": null,
+      "nl": "会议里哪些是我拿不准的？",
+      "require": ["type=会议", "我=存疑的"], "forbid": [],
+      "expect_empty": false, "scored": true,
+      "probe": "领域 × 另一种标记",
+      "note": "1 条，1 支"
+    },
+    {
+      "qid": "C7", "cls": "组合", "pair": null, "same_as": null,
+      "nl": "菜谱里哪些是我标了重要的？",
+      "require": ["type=食谱", "我=重要的"], "forbid": [],
+      "expect_empty": false, "scored": true,
+      "probe": "领域 × 标记（此域 2 支：标重要 2 / 标存疑 1）",
+      "note": "2 条，2 支"
+    },
+    {
+      "qid": "C8", "cls": "组合", "pair": null, "same_as": null,
+      "nl": "菜谱里哪些是我拿不准的？",
+      "require": ["type=食谱", "我=存疑的"], "forbid": [],
+      "expect_empty": false, "scored": true,
+      "probe": "领域 × 另一种标记",
+      "note": "1 条，1 支"
+    },
+    {
+      "qid": "C9", "cls": "组合", "pair": null, "same_as": null,
+      "nl": "我标了重要的东西里，哪些是已经排了日期的？",
+      "require": ["我=重要的", "日期"], "forbid": [],
+      "expect_empty": false, "scored": true,
+      "probe": "标记 × 日期（跨会议/报修两域）",
+      "note": "5 条，4 支——本组最能拉开支数的一题"
+    },
+    {
+      "qid": "C10", "cls": "组合", "pair": null, "same_as": null,
+      "nl": "我拿不准的东西里，哪些是已经排了日期的？",
+      "require": ["我=存疑的", "日期"], "forbid": [],
+      "expect_empty": false, "scored": true,
+      "probe": "标记 × 日期（另一取值）",
+      "note": "1 条，1 支"
+    },
+
+    {
+      "qid": "E1", "cls": "外推", "pair": null, "same_as": null,
+      "nl": "接下来所有要排期的事，不分会议还是报修。",
+      "require": ["日期"], "forbid": [],
+      "expect_empty": false, "scored": true,
+      "probe": "语料里没有「排期」这一类，它是由「有日期」这个属性定义出来的跨域类",
+      "note": "30 条，5 支——切法横跨两个 type，是真正的跨域切"
+    },
+    {
+      "qid": "E2", "cls": "外推", "pair": null, "same_as": null,
+      "nl": "凡是我自己动过标记的，不管哪一类。",
+      "require": ["我"], "forbid": [],
+      "expect_empty": false, "scored": true,
+      "probe": "「我标记过的」横跨 6 个 type，语料里没有这个类，只有这个属性",
+      "note": "16 条（13 重要 + 3 存疑）"
+    },
+    {
+      "qid": "E3", "cls": "外推", "pair": null, "same_as": null,
+      "nl": "日历上除了会，还有别的吗？",
+      "require": ["日期"], "forbid": ["type=会议"],
+      "expect_empty": false, "scored": true,
+      "probe": "排除式：结构上必须靠 forbid 才拿得到，答案全是报修",
+      "note": "15 条，2 支"
+    },
+    {
+      "qid": "E4", "cls": "外推", "pair": null, "same_as": null,
+      "nl": "会议之外，这段时间还有哪些排期？",
+      "require": ["日期"], "forbid": ["type=报修"],
+      "expect_empty": false, "scored": true,
+      "probe": "E3 的反向排除，用于确认 forbid 不是「碰巧少了几条」",
+      "note": "15 条，3 支"
+    },
+    {
+      "qid": "E5", "cls": "外推", "pair": null, "same_as": null,
+      "nl": "开会记录里，哪些我一条都没标？",
+      "require": ["type=会议"], "forbid": ["我"],
+      "expect_empty": false, "scored": true,
+      "probe": "排除式：未标记的会议（11 条），与标过的 4 条互补",
+      "note": "11 条，1 支"
+    },
+    {
+      "qid": "E6", "cls": "外推", "pair": null, "same_as": null,
+      "nl": "训练记录里，哪些我没做标记？",
+      "require": ["type=健身"], "forbid": ["我"],
+      "expect_empty": false, "scored": true,
+      "probe": "同 E5，换一个域，确认排除式不是只在会议域成立",
+      "note": "13 条，1 支"
+    },
+    {
+      "qid": "E7", "cls": "外推", "pair": null, "same_as": null,
+      "nl": "菜谱里除了我标过的，还有哪些？",
+      "require": ["type=食谱"], "forbid": ["我=重要的"],
+      "expect_empty": false, "scored": true,
+      "probe": "排除一个取值（而非整个字段）：剩下的应当还包括「存疑」那条",
+      "note": "13 条，2 支——若把存疑那条也排掉，就是错"
+    },
+    {
+      "qid": "E8", "cls": "外推", "pair": null, "same_as": null,
+      "nl": "除了书，还有别的东西记了页数吗？",
+      "require": ["页数"], "forbid": ["type=读书"],
+      "expect_empty": true, "scored": false,
+      "probe": "结构上必然为空（页数只有书有）。测的是「空」与「结构上不可能」分不分得开",
+      "note": "0 条。不计入重合度，只记系统怎么报这个空"
+    },
+    {
+      "qid": "E9", "cls": "外推", "pair": null, "same_as": null,
+      "nl": "除了开销，还有别的地方记了金额吗？",
+      "require": ["金额"], "forbid": ["type=财务"],
+      "expect_empty": true, "scored": false,
+      "probe": "同 E8，换一个字段，检验是否只是碰巧",
+      "note": "0 条。不计入重合度"
+    },
+    {
+      "qid": "E10", "cls": "外推", "pair": null, "same_as": null,
+      "nl": "有没有一条既标了重要、又标了存疑？",
+      "require": ["我=重要的", "我=存疑的"], "forbid": [],
+      "expect_empty": true, "scored": false,
+      "probe": "两个取值互斥 ⇒ 逻辑上不可能，与「语料里恰好没有」不是一回事",
+      "note": "0 条。不计入重合度；这是唯一一条「矛盾」而不是「缺失」的空"
+    }
+  ]
+}
