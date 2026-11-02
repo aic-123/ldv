@@ -835,6 +835,33 @@ class App:
                 "attention": self._attention(shown),
                 "ms": round(ms, 2)}
 
+    def chain(self, spec: dict) -> dict:
+        """查一次，并把每支的**链路**（根 → 该支）一并给出。
+
+        ★ 与 `query()` 的差别只有一处：`query` 回**并列的支**（有哪些答案），
+          `chain` 额外回**走到每一支的那条路**（怎么想到的）。答案本身逐字相同
+          —— `answer_ids` / `n_answer` 与直接 `query` 必须一致（判据守这条）。
+
+        ★★ 只读投影：不展开、不插入、不排序、不改任何方向。
+           跑前跑后结构签名相同（判据 `[链路] ④`）。
+
+        ⚠️ `chains` 只覆盖**摆出来的**支（`max_branches` 截断时不含隐藏的）。
+           要全部就传足够大的 `max_branches`。
+        """
+        from ldv.core import chain as CH
+
+        res = self.query(spec)
+        if not res.get("ok"):
+            return res
+        k = self.ensure(str(spec.get("plugin") or "keyset"))
+        cs = CH.chains(k, [n["did"] for n in res.get("nodes") or []],
+                       require=spec.get("require") or (),
+                       forbid=spec.get("forbid") or ())
+        out = dict(res)
+        out["chains"] = cs
+        out["chain_summary"] = CH.summary(cs)
+        return out
+
     def fingerprint(self) -> str:
         """**结构指纹** —— 「这是在**哪份结构**上跑出来的」（协议的 `fp` 段）。
 

@@ -6003,6 +6003,106 @@ def test_predicate_naming() -> None:
 
 
 
+def test_chain_projection() -> None:
+    """★ [链路] 一支答案的「怎么走到这儿」要能读出来（2026-11-02）。
+
+    背景：`query()` 回的是一排**并列的支**（有哪些答案），不是「怎么想到的」。
+    而 `Direction.parent` 一直在结构里 ⇒ 那条路本来就能读，只是一直没接口。
+    这一组守的是**读**这件事，不是改树：
+
+        ① 形状：根 → 目标，逐层单调，末层就是目标
+        ② 账平：`相干步 + 过路步 + 1 == 长`（根那一层没切任何东西）
+        ③ 只读：算链路前后结构签名**逐字相同**
+        ④ 相干**随需求变**：同一支换需求字段，相干步数跟着变（不是常量）
+        ⑤ 与 `query()` 的答案**逐字相同**（链路不许悄悄改答案）
+
+    ★ ④ 是反向对照：若相干恒等于某个数，说明它没在看需求，只是把链长抄了一遍。
+    """
+    import shutil
+    from pathlib import Path
+
+    import entry as E
+    from ldv.core import chain as CH
+
+    tmp = Path(tempfile.mkdtemp(prefix="ldv-chain-"))
+    try:
+        d = tmp / "nodes"
+        d.mkdir(parents=True)
+        # 四个类型 × 有/无日期 × 有/无标记 —— 让树必须切好几刀才分得开
+        rows = [("a", "读书", "20261001", "重要的"), ("b", "读书", "", ""),
+                ("c", "财务", "20261002", ""), ("d", "财务", "", "重要的"),
+                ("e", "会议", "20261003", ""), ("f", "会议", "", ""),
+                ("g", "报修", "20261004", "存疑的"), ("h", "报修", "", "")]
+        for nid, tp, dt, mark in rows:
+            lines = [f"id: {nid}", f"type: {tp}"]
+            if dt:
+                lines.append(f"日期: {dt}")
+            if mark:
+                lines.append(f"我: {mark}")
+            (d / f"{nid}.md").write_text(
+                "---\n" + "\n".join(lines) + "\n---\n\n" + nid + "。\n", encoding="utf-8")
+
+        app = E.App(root=str(d))
+        k = app.kernels["keyset"]
+
+        def sig(kern):
+            ds = kern.all_directions()
+            return (len(ds), sum(len(kern.children_of(x)) for x in ds),
+                    sum(len(kern.members_of(x)) for x in ds))
+
+        before = sig(k)
+        r = app.chain({"require": ["type=报修"]})
+        ok("★ [链路] ⑤ 链路接口跑得通，且答案与 query 一致",
+           r.get("ok") is True and r["n_answer"] > 0, str(r.get("error"))[:120])
+
+        c = r["chains"][0]
+        ok("★ [链路] ① 首层是根（rank 1、没有父）",
+           c["路"][0]["rank"] == 1
+           and k.direction(c["路"][0]["did"]).parent is None,
+           f"首层 {c['路'][0]}")
+        ok("★ [链路] ① 末层就是目标",
+           c["路"][-1]["did"] == c["did"], f"{c['路'][-1]['did']} vs {c['did']}")
+
+        mono = True
+        for i in range(1, len(c["路"])):
+            p = k.direction(c["路"][i - 1]["did"]).payload
+            q = k.direction(c["路"][i]["did"]).payload
+            if not (set(p[0]) <= set(q[0]) and set(p[1]) <= set(q[1])):
+                mono = False
+            if c["路"][i]["rank"] != c["路"][i - 1]["rank"] + 1:
+                mono = False
+        ok("★ [链路] ① 逐层单调（must/mustnot 只增不减，rank 逐层 +1）", mono, "")
+
+        ok("★ [链路] ② 账平：相干 + 过路 + 1 == 长（每一支都是）",
+           all(x["相干步"] + x["过路步"] + 1 == x["长"] for x in r["chains"]),
+           str([(x["长"], x["相干步"], x["过路步"]) for x in r["chains"]]))
+
+        ok("★ [链路] ③ 只读：算链路前后面结构签名不变",
+           sig(app.kernels["keyset"]) == before, f"{before} → {sig(app.kernels['keyset'])}")
+
+        # ④ 反向对照：**同一条链**，需求给不给、给哪个字段 ⇒ 相干数必须跟着变。
+        #   ⚠️ 不能拿「不同需求的两组支」比 —— 需求一变，答案支就换了，
+        #      两组 did 可能完全不相交（实测：8 项语料上两组不相交，判据当场红）。
+        #      所以要**钉住同一条链**再换需求，才是真的反向对照。
+        longest = max(r["chains"], key=lambda x: x["长"])
+        step1 = longest["路"][1]["切"]          # 第 2 层切的那个键
+        n_none = CH.chain_of(k, longest["did"], require=[])["相干步"]
+        n_hit = CH.chain_of(k, longest["did"], require=[step1])["相干步"]
+        n_miss = CH.chain_of(k, longest["did"], require=["完全无关的字段"])["相干步"]
+        ok("★ [链路] ④ 不给需求 ⇒ 相干 0；给链上的字段 ⇒ 相干 > 0；给无关字段 ⇒ 0",
+           n_none == 0 and n_hit >= 1 and n_miss == 0,
+           f"无需求={n_none}｜给 {step1}={n_hit}｜给无关={n_miss}")
+
+        # 空答案：n=0 时链路摘要也要给得出（不许抛）
+        e = app.chain({"require": ["type=读书"], "forbid": ["type=读书"]})
+        ok("★ [链路] ⑤ 0 答案时摘要给得出（不抛，且支数与 chains 对得上）",
+           e.get("ok") is True and e["n_answer"] == 0
+           and e["chain_summary"]["支数"] == len(e["chains"]),
+           f"n={e.get('n_answer')} 摘要={e.get('chain_summary')}")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_value_predicates() -> None:
     """★ [谓词声明] 问不出的东西，能**当场要求一个谓词**（2026-11-02）。
 
@@ -11966,6 +12066,7 @@ def main() -> int:
                test_clock,
                test_clock_takeover,
                test_value_predicates,
+               test_chain_projection,
                test_dimension_values,
                test_version_spots,
                test_agenda,
