@@ -1272,10 +1272,14 @@ def test_equivalence() -> None:
        "（判据不再红 ≠ 现象消失；现象改由读数承担）",
        cyc_torn > 0,
        f"被拆开的等价类 {cyc_torn} 个 —— 若为 0，说明这条读数也是空转")
+    # ⚠️ 不写死 `D3`/`D4`：did 已改成**内容派生**（`kernel.did_of`），
+    #    这里要的是「{a,b} 那两个子方向」，不是「编号 3 和 4」。
+    _pair_parent = next(d for d in ck.all_directions()
+                        if ck.members_of(d) == frozenset({"a", "b"}))
+    _c1, _c2 = sorted(ck.children_of(_pair_parent), key=lambda d: d.did)
     ok("★ 且那一层是**重复覆盖**（两个子方向覆盖完全相同 ⇒ §K2 第二半的缺口）",
-       ck.plugin.reachable(ck.direction("D3").payload)
-       == ck.plugin.reachable(ck.direction("D4").payload),
-       f"D3 {sorted(ck.direction('D3').payload)} vs D4 {sorted(ck.direction('D4').payload)}")
+       ck.plugin.reachable(_c1.payload) == ck.plugin.reachable(_c2.payload),
+       f"{_c1.did} {sorted(_c1.payload)} vs {_c2.did} {sorted(_c2.payload)}")
 
     # ── ⑦ 合成对照：**三态各一例**（`run_checks` 的「覆盖证据」引的就是它） ──
     #   ⚠️ 前面 ①–⑥ 都读**真语料**；这一条**不碰内核、不碰语料** —— 它问的是
@@ -6679,7 +6683,7 @@ def test_impact() -> None:
     ids = sorted(k.placed)[:3]
     before = _sig(k)
     r1 = IM.removal_impact(k, ids)
-    br = IM.blast_radius(k, "D0")
+    br = IM.blast_radius(k, k.root.did)
     after = _sig(k)
 
     # ㊾ 只读
@@ -9070,7 +9074,7 @@ def test_multilevel() -> None:
         partition_of,
         quotient_spec,
     )
-    from ldv.run_checks import batch_kernel
+    from ldv.run_checks import batch_kernel, maintenance_kernel
 
     # ── ① 合成对照 ────────────────────────────────────────────────────────
     ctl = known_answer_controls()
@@ -9120,7 +9124,11 @@ def test_multilevel() -> None:
        f"{len(spec.relation)} → {len(spec1.relation)}")
 
     # ── ② 真折叠 ──────────────────────────────────────────────────────────
-    kernel, plugin, _qs, _mk = batch_kernel(which, nodes, edges)
+    # ★ 必须与 `run_checks` / `recognize` 问**同一棵树**：声明的 `universe`
+    #   是按**维护路径**编的号（旧 counter 下批建前 8 个编号恰好相同，掩盖了
+    #   这件事；改成内容派生 did 后立刻暴露 —— 同一 payload 在两个父下 id 不同）。
+    kernel = maintenance_kernel(which, nodes, edges)
+    plugin = batch_kernel(which, nodes, edges)[1]
     cover = coverage_of(which, nodes, edges)
     rep = Report(plugin="(L0)", expects=MULTILEVEL_CODES)
     levels = run_multilevel(spec, kernel, cover, plugin, rep)
@@ -10589,12 +10597,13 @@ def test_motivation() -> None:
     else:
         _nodes, _edges, _d = loaded
         k3 = make_keyset_root(_nodes)()
+        _root_did = k3.root.did
         before_later = [x for x in RF.report(k3)["分级"]["可延后"]
-                        if x["方向"] == "D0"]
+                        if x["方向"] == _root_did]
         n_before = len(k3.all_directions())
-        k3.expand(k3.direction("D0"))
+        k3.expand(k3.root)
         after_later = [x for x in RF.report(k3)["分级"]["可延后"]
-                       if x["方向"] == "D0"]
+                       if x["方向"] == _root_did]
         ok("★ [动机] ④ **闭环**：展开 D0 之后，它不再出现在「可延后」",
            len(before_later) == 1 and not after_later,
            f"只建根：{n_before} 个方向｜展开前「可延后」{len(before_later)} 条"
@@ -10615,12 +10624,13 @@ def test_motivation() -> None:
     else:
         _n3, _e3, _d3 = loaded3
         kl = _mkr(_n3)()
+        _root3 = kl.root.did
         before_dirs = len(kl.all_directions())
         p1 = RF.plan(kl, rounds=2)
         after_dirs = len(kl.all_directions())
         ok("★ [动机] ⑥ **建树计划**：惰性内核上一轮轮展开，方向数增长、待展开收敛",
            before_dirs == 1 and after_dirs > before_dirs
-           and p1["轮次"][0]["展开"] == ["D0"],
+           and p1["轮次"][0]["展开"] == [_root3],
            f"方向 {before_dirs} → {after_dirs}｜第1轮展开 {p1['轮次'][0]['展开']}"
            f"｜总展开 {p1['总展开']}｜剩余待展开 {p1['剩余待展开']}")
 
@@ -10798,14 +10808,15 @@ def test_motivation() -> None:
         rep13 = RF.report(k13)
         # 反向对照：真的没试过的方向**必须**还在「待展开」里
         k_root13 = _mk13(_n13)()
+        _kroot_did = k_root13.root.did
         pend_root = {r["方向"] for r in RF.graded(k_root13)["可延后"]
                      if r.get("来源") == "待展开"}
         ok("★ [动机] ⑬ **判空不许报成「待展开」**（以账本为准，不看 `is_expanded`）",
            len(uns13) > 0 and not (pend13 & uns13) and uns13 <= fail13
-           and rep13["待展开数"] == 0 and "D0" in pend_root,
+           and rep13["待展开数"] == 0 and _kroot_did in pend_root,
            f"账本判空 {len(uns13)} 条｜报成待展开 {len(pend13 & uns13)}（必须 0）"
            f"｜报成展开失败 {len(uns13 & fail13)}｜report 待展开数 {rep13['待展开数']}"
-           f"｜反向对照：只建根时 D0 仍待展开={'D0' in pend_root}")
+           f"｜反向对照：只建根时 {_kroot_did} 仍待展开={_kroot_did in pend_root}")
 
     # ⑭ **「没被收录进系统的数据」按类型拆**（2026-10-23，用户定）
     #    整类缺失（该类型**一条都没进**）⇒ 这类问题完全答不了 ⇒ 必须

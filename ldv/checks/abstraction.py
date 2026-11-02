@@ -1383,11 +1383,26 @@ def a7_old_q(spec: ViewSpec) -> tuple[frozenset[str], ...] | None:
     ⚠️ **生产路径与 `test_injections` 必须调这**一个**函数** —— 抄一份的做法
        实测已经漂过（`§A8` 那份副本原样保留了写死的 `universe[-13:]`，
        而生产那边已经改成按比例缩放了）。
+
+    ★ 2026-11-02：**优先挑「有兄弟」的方向**（父至少有两个子）。判据本身
+      不依赖这个选择（四种选法实测同结论），但 `§A7` 的**注入对照**
+      （`propagate_naive`：挂到父块、不重跑不动点）依赖它 —— 新边 `(父, 新)`
+      只有在**父还有别的子**时才把那一块撕成「跨内外」，独生子挑出来注入
+      是**恒稳定**的，于是「注入后没变红」被读成判据坏了。
+      did 改成内容派生后，`universe[-1]` 不再碰巧是「有兄弟」的那个 ⇒ 这里
+      按结构挑，不按 id 挑。
     """
     if len(spec.universe) < 2:
         return None
+    kids: dict[str, int] = {}
+    parent_of: dict[str, str] = {}
+    for a, b in spec.relation:
+        kids[a] = kids.get(a, 0) + 1
+        parent_of[b] = a
+    with_sib = [d for d in spec.universe if kids.get(parent_of.get(d, ""), 0) >= 2]
+    pick = (with_sib or list(spec.universe))[-1]
     return coarsest_stable_refinement(
-        restrict_spec(spec, frozenset({spec.universe[-1]})))
+        restrict_spec(spec, frozenset({pick})))
 
 
 def a7_propagate(

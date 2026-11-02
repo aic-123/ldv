@@ -371,10 +371,23 @@ def extend_q(
        （传播只许**细分**）判的就是「结果细化 `Q_ext`」—— 所以 `Q_ext` 必须
        由**一个**函数定义，判据与实现**共用**它，否则两边各写一份、
        写着写着就不一样了（`test_injections` 第 0 条防的是同一类事）。
+
+    ★ 2026-11-02：**先裁掉不在 `spec.universe` 的方向**。结构会变 ——
+      加材料后某个划分单元可能**不再存在**（被更细的划分替代）。旧 `Q` 里
+      留着它的 did，`|Q|` 就会**大于** `|U|`（实测 A8 退化曲线升到 2.5），
+      而「`Q` 是 `U` 的划分」这条最基本的前提当场破掉。
+      ⇒ 裁剪不是优化，是**维持类型**：视图只对当前 universe 说话。
+      仍在 universe 里的方向一个不丢（`§A7` 的「只细分」对交集成立）。
     """
-    known = frozenset().union(*old_q) if old_q else frozenset()
-    return partition_of(list(old_q) + [frozenset({d}) for d in spec.universe
-                                        if d not in known])
+    u = frozenset(spec.universe)
+    trimmed: list[frozenset[str]] = []
+    for b in old_q:
+        nb = frozenset(x for x in b if x in u)
+        if nb:                        # 整块都已被结构删掉 ⇒ 这块不再存在
+            trimmed.append(nb)
+    known = frozenset().union(*trimmed) if trimmed else frozenset()
+    return partition_of(trimmed + [frozenset({d}) for d in spec.universe
+                                    if d not in known])
 
 
 def propagate(

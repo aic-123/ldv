@@ -1320,7 +1320,11 @@ def _view_chain(nodes: Any, edges: Any, head: int | None = None):
     想让它真的**搜完**并且**搜出结果**，`universe` 必须小到 `Bell` 撑得住。
     """
     kernel, plugin = build_keyset(nodes)
-    dirs = kernel.all_directions()
+    # ⚠️ 按 `(rank, did)` 取，**不按 did 数字**：did 已改成内容派生
+    #   （`kernel.did_of`），数字大小不再等于创建顺序 ⇒ `all_directions()[:6]`
+    #   会取到六个互不为父子的方向 ⇒ `E` 为空 ⇒ 这条注入「未展开」。
+    #   `rank` 才是结构顺序（根 1、子 2、孙 3 …）。
+    dirs = sorted(kernel.all_directions(), key=lambda d: (d.rank, d.did))
     U = tuple(d.did for d in dirs)
     if head is not None:
         U = U[:head]
@@ -1854,14 +1858,18 @@ def _ml_chain(nodes, edges):
     """
     from ldv.checks.abstraction import load_spec_file, spec_for
     from ldv.checks.coverage import corpus_fingerprint
-    from ldv.run_checks import batch_kernel
+    from ldv.run_checks import batch_kernel, maintenance_kernel
 
     loaded = load()
     corpus = corpus_fingerprint(nodes, edges)
     doc = load_spec_file(find_corpus(), corpus)
     which = str(doc.get("方向") or "keyset")
     spec, _why = spec_for(doc, which, corpus)
-    kernel, plugin, _q, _mk = batch_kernel(which, nodes, edges)
+    # ★ 与 `run_checks` 那三处**同一棵树**（2026-11-02）：声明的 `universe`
+    #   是按**维护路径**编的号。旧 counter 下批建前 8 个号恰好相同，掩盖了
+    #   「一份声明问两棵树」；内容派生 did 后必然对不上（KeyError）。
+    kernel = maintenance_kernel(which, nodes, edges)
+    plugin = batch_kernel(which, nodes, edges)[1]
     cover = coverage_of(which, nodes, edges)
     return spec, kernel, plugin, cover
 
@@ -2210,7 +2218,8 @@ def inj_t4(nodes, edges, injected: bool) -> Report:
     """
     from ldv.checks.abstraction import spec_for
     from ldv.checks.retrieval import RETRIEVER_CODES, t4_profile
-    from ldv.run_checks import batch_kernel, corpus_fingerprint, load_spec_file
+    from ldv.run_checks import (batch_kernel, corpus_fingerprint, load_spec_file,
+                                 maintenance_kernel)
     from ldv.retriever import as_bar, retrieve
 
     # ⚠️ `load_spec_file` 必须带 `(find_corpus(), corpus)` —— 与 `run_checks` 里
@@ -2222,7 +2231,10 @@ def inj_t4(nodes, edges, injected: bool) -> Report:
     doc = load_spec_file(find_corpus(), _corpus)
     which = str(doc.get("方向") or "")
     spec, _why = spec_for(doc, which, _corpus)
-    kernel, plugin, queries, _mk = batch_kernel(which, nodes, edges)
+    # ★ 与声明**同一棵树**（`universe` 按维护路径编的号）——
+    #   旧 counter 下批建前 8 个号恰好相同，内容 did 后必然对不上。
+    kernel = maintenance_kernel(which, nodes, edges)
+    plugin, queries = batch_kernel(which, nodes, edges)[1:3]
     r = retrieve(kernel, plugin, {which: as_bar(queries[0])}, spec=spec)
     if injected:
         # 「三态混同」的可观测形态：**「还没长出来」被并进「分不开」**
@@ -2253,7 +2265,8 @@ def inj_t5(nodes, edges, injected: bool) -> Report:
     from ldv.checks.abstraction import spec_for
     from ldv.checks.retrieval import RETRIEVER_CODES, t5_usage_finetune
     from ldv.core import selfopt
-    from ldv.run_checks import batch_kernel, corpus_fingerprint, load_spec_file
+    from ldv.run_checks import (batch_kernel, corpus_fingerprint, load_spec_file,
+                                 maintenance_kernel)
     from ldv.retriever import as_bar, retrieve
     from ldv import flow
 
@@ -2266,7 +2279,10 @@ def inj_t5(nodes, edges, injected: bool) -> Report:
     doc = load_spec_file(find_corpus(), _corpus)
     which = str(doc.get("方向") or "")
     spec, _why = spec_for(doc, which, _corpus)
-    kernel, plugin, queries, _mk = batch_kernel(which, nodes, edges)
+    # ★ 与声明**同一棵树**（`universe` 按维护路径编的号）——
+    #   旧 counter 下批建前 8 个号恰好相同，内容 did 后必然对不上。
+    kernel = maintenance_kernel(which, nodes, edges)
+    plugin, queries = batch_kernel(which, nodes, edges)[1:3]
     for q0 in queries[:3]:                      # ★ 先攒记录（流程 A 本来就记）
         flow.run_query(kernel, q0)
     tendency = selfopt.tendency_by_direction(kernel)
@@ -2305,7 +2321,8 @@ def inj_t6(nodes, edges, injected: bool) -> Report:
     """
     from ldv.checks.abstraction import spec_for
     from ldv.checks.retrieval import RETRIEVER_CODES, t6_advice
-    from ldv.run_checks import batch_kernel, corpus_fingerprint, load_spec_file
+    from ldv.run_checks import (batch_kernel, corpus_fingerprint, load_spec_file,
+                                 maintenance_kernel)
     from ldv.retriever import as_bar, retrieve
 
     # ⚠️ `load_spec_file` 必须带 `(find_corpus(), corpus)` —— 与 `run_checks` 里
@@ -2317,7 +2334,10 @@ def inj_t6(nodes, edges, injected: bool) -> Report:
     doc = load_spec_file(find_corpus(), _corpus)
     which = str(doc.get("方向") or "")
     spec, _why = spec_for(doc, which, _corpus)
-    kernel, plugin, queries, _mk = batch_kernel(which, nodes, edges)
+    # ★ 与声明**同一棵树**（`universe` 按维护路径编的号）——
+    #   旧 counter 下批建前 8 个号恰好相同，内容 did 后必然对不上。
+    kernel = maintenance_kernel(which, nodes, edges)
+    plugin, queries = batch_kernel(which, nodes, edges)[1:3]
     r = retrieve(kernel, plugin, {which: as_bar(queries[0])}, spec=spec)
     if injected:
         # 「说的和事实不一样」的可观测形态：每条建议都翻成**另一档**（与事实相反）。
@@ -2355,7 +2375,8 @@ def inj_t7(nodes, edges, injected: bool) -> Report:
     from ldv.checks.abstraction import spec_for
     from ldv.checks.retrieval import RETRIEVER_CODES, t7_deepening
     from ldv.core import selfopt
-    from ldv.run_checks import batch_kernel, corpus_fingerprint, load_spec_file
+    from ldv.run_checks import (batch_kernel, corpus_fingerprint, load_spec_file,
+                                 maintenance_kernel)
     from ldv.retriever import as_bar, deepen, retrieve
     from ldv import flow
 
@@ -2368,7 +2389,10 @@ def inj_t7(nodes, edges, injected: bool) -> Report:
     doc = load_spec_file(find_corpus(), _corpus)
     which = str(doc.get("方向") or "")
     spec, _why = spec_for(doc, which, _corpus)
-    kernel, plugin, queries, _mk = batch_kernel(which, nodes, edges)
+    # ★ 与声明**同一棵树**（`universe` 按维护路径编的号）——
+    #   旧 counter 下批建前 8 个号恰好相同，内容 did 后必然对不上。
+    kernel = maintenance_kernel(which, nodes, edges)
+    plugin, queries = batch_kernel(which, nodes, edges)[1:3]
     # ★★ 2026-10-13（v0.1.21）：**选一条能让「深化」真的发生的查询**。
     #
     #   `T7` 在「本趟没有做深化」（`deepened` 为空）时**跳过**（`跳过 ≠ 通过`），
@@ -2382,7 +2406,7 @@ def inj_t7(nodes, edges, injected: bool) -> Report:
     #   ⚠️ **每条候选查询一棵新树** —— `deepen` 会 `expand`（唯一写动作）就地改结构。
     r = deep = None
     for _q in queries:
-        _k = batch_kernel(which, nodes, edges)[0]
+        _k = maintenance_kernel(which, nodes, edges)
         for _q0 in queries[:3]:
             flow.run_query(_k, _q0)
         _r = retrieve(_k, plugin, {which: as_bar(_q)}, spec=spec,
