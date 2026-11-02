@@ -1,0 +1,92 @@
+[C1-M1] PASS  原6→折4
+[C1-M2] PASS  原6→折4
+[C1-M3] PASS  原6→折4
+[C1-M4] PASS  原6→折4
+[C1-A1] PASS  筛选步数 3
+[C1-A3] PASS  检索 4 ≤ 到叶 4
+[C1-A4] PASS  兄弟 1 支
+[C1-A5] PASS  讲述首字段 标记
+[C1-A6] PASS  n_answer=2 支 1/1
+[C1-A7] PASS  删新字段后与 query() 逐字相同（ms 除外）
+[C1-A8] PASS  chain() 前后指纹逐字相同
+[C2-M1] PASS  原6→折5
+[C2-M2] PASS  原6→折5
+[C2-M3] PASS  原6→折5
+[C2-M4] PASS  原6→折5
+[C2-A1] PASS  筛选步数 2
+[C2-A3] PASS  检索 5 ≤ 到叶 5
+[C2-A4] PASS  兄弟 1 支
+[C2-A4b] PASS  C2 兄弟含非「背」分支（边界可见）
+[C2-A5] PASS  讲述首字段 type
+[C2-A6] PASS  n_answer=3 支 2/2
+[C2-A7] PASS  删新字段后与 query() 逐字相同（ms 除外）
+[C2-A8] PASS  chain() 前后指纹逐字相同
+[C3-M1] PASS  原6→折6
+[C3-M2] PASS  原6→折6
+[C3-M3] PASS  原6→折6
+[C3-M4] PASS  原6→折6
+[C3-A1] PASS  筛选步数 3
+[C3-A3] PASS  检索 6 ≤ 到叶 6
+[C3-A4] PASS  兄弟 1 支
+[C3-A5] PASS  讲述首字段 type
+[C3-A6] PASS  n_answer=1 支 1/1
+[C3-A7] PASS  删新字段后与 query() 逐字相同（ms 除外）
+[C3-A8] PASS  chain() 前后指纹逐字相同
+[C4-M1] PASS  原3→折3
+[C4-M2] PASS  原3→折3
+[C4-M3] PASS  原3→折3
+[C4-M4] PASS  原3→折3
+[C4-A1] PASS  筛选步数 2
+[C4-A3] PASS  检索 3 ≤ 到叶 3
+[C4-A4] PASS  兄弟 1 支
+[C4-A5] PASS  讲述首字段 type
+[C4-A6] PASS  n_answer=4 支 1/1
+[C4-A7] PASS  删新字段后与 query() 逐字相同（ms 除外）
+[C4-A8] PASS  chain() 前后指纹逐字相同
+[C5-M1] PASS  原8→折4
+[C5-M2] PASS  原8→折4
+[C5-M3] PASS  原8→折4
+[C5-M4] PASS  原8→折4
+[C5-A1] PASS  筛选步数 2
+[C5-A3] PASS  检索 4 ≤ 到叶 4
+[C5-A4] PASS  兄弟 1 支
+[C5-A5] PASS  讲述首字段 type
+[C5-A6] PASS  n_answer=3 支 1/1
+[C5-A7] PASS  删新字段后与 query() 逐字相同（ms 除外）
+[C5-A8] PASS  chain() 前后指纹逐字相同
+[C6-M1] PASS  原6→折4
+[C6-M2] PASS  原6→折4
+[C6-M3] PASS  原6→折4
+[C6-M4] PASS  原6→折4
+[C6-A1] PASS  筛选步数 2
+[C6-A3] PASS  检索 4 ≤ 到叶 4
+[C6-A4] PASS  兄弟 1 支
+[C6-A5] PASS  讲述首字段 type
+[C6-A6] PASS  n_answer=8 支 2/2
+[C6-A7] PASS  删新字段后与 query() 逐字相同（ms 除外）
+[C6-A8] PASS  chain() 前后指纹逐字相同
+[C7-M1] PASS  原3→折3
+[C7-M2] PASS  原3→折3
+[C7-M3] PASS  原3→折3
+[C7-M4] PASS  原3→折3
+[C7-A1] PASS  筛选步数 2
+[C7-A3] PASS  检索 3 ≤ 到叶 3
+[C7-A4] PASS  兄弟 1 支
+[C7-A5] PASS  讲述首字段 type
+[C7-A6] PASS  n_answer=2 支 1/1
+[C7-A7] PASS  删新字段后与 query() 逐字相同（ms 除外）
+[C7-A8] PASS  chain() 前后指纹逐字相同
+[C8-M1] PASS  原4→折3
+[C8-M2] PASS  原4→折3
+[C8-M3] PASS  原4→折3
+[C8-M4] PASS  原4→折3
+[C8-A1] PASS  筛选步数 2
+[C8-A3] PASS  检索 3 ≤ 到叶 3
+[C8-A4] PASS  兄弟 1 支
+[C8-A5] PASS  讲述首字段 type
+[C8-A6] PASS  n_answer=2 支 1/1
+[C8-A7] PASS  删新字段后与 query() 逐字相同（ms 除外）
+[C8-A8] PASS  chain() 前后指纹逐字相同
+[A2-总] PASS  与人的字段决策差 ≤1：7/7（V17 实测对照）
+
+=== 验收 90/90，all_pass=True → C:\Users\19253\WorkBuddy\ldv\repo\exp\m2\v18_accept.json

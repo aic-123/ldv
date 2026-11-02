@@ -860,6 +860,22 @@ class App:
         out = dict(res)
         out["chains"] = cs
         out["chain_summary"] = CH.summary(cs)
+        # ── 折叠视图（v0.1.55，`exp/m2/CHAIN_CHANGE_PLAN.md` §1.1–1.2）──
+        #    同字段连续二元切分合并为字段步；筛选步数与人的字段决策同单位
+        #    （V17 实测人均 1.86）。只读：`步` 的顺序不动，树不动。
+        n_ans = res.get("n_answer")
+        out["folded"] = CH.folded(k, [n["did"] for n in res.get("nodes") or []],
+                                  require=spec.get("require") or (),
+                                  forbid=spec.get("forbid") or (),
+                                  n_answer=n_ans)
+        # ── 答案完备性声明（§1.4；V17②：人漏检 3/7 题，完备性是本系统对人的
+        #    差异化优势，此前只在账目里没说出来）。无假阴（§K8）保证：
+        #    呈现支数 == 总支数 ⇒ 答案无遗漏；被截断时**如实说截断**。
+        n_shown = len(res.get("nodes") or [])
+        n_br = res.get("n_branches")
+        if n_br is not None:
+            out["答案完备性"] = {"n_answer": n_ans, "呈现支数": n_shown,
+                                 "总支数": n_br, "无遗漏": n_shown == n_br}
         return out
 
     def fingerprint(self) -> str:

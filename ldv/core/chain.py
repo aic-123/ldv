@@ -127,3 +127,113 @@ def summary(cs: list[dict[str, Any]]) -> dict[str, Any]:
         "相干步": sum(c["相干步"] for c in cs),
         "过路步": sum(c["过路步"] for c in cs),
     }
+
+
+def folded_of(kernel: Any, did: str, *, require: Iterable[str] = (),
+              forbid: Iterable[str] = (), n_answer: int | None = None,
+              max_siblings: int = 4) -> dict[str, Any]:
+    """折叠视图（v0.1.55）：把「同字段的连续二元切分」合并成一个**字段步**。
+
+    ## 为什么要有这个第二视图
+
+    树是二叉的 ⇒ 一个字段有 N 个值就要切 N−1 次，链上表现为连续多步
+    （实测 C5：`type◆ → type◆ → type◆ → type◆ → type◆` 五步其实是**一个**决策）。
+    于是「链长 5–10 vs 人 1–2」的差不在想得深——**字段决策数与人一致（实测 2）**——
+    而在**讲述单位**比人小（二元步 vs 字段决策）。
+
+    依据（全部先于本实现）：
+    - `exp/m2/PREREG_V16.md` 机械验收 M1–M4 全过（8/8 需求，C5 8→4 步）；
+    - `exp/m2/v16_blind/` 盲判 F1/F2 双 24/24（折叠无理解劣势）；
+    - `exp/m2/v17/` 出声思维实测：人字段决策均值 1.86、第一刀恒为基本层级；
+    - Green & Petre 1996：同字段连切 = **repetition viscosity**，折叠 = design maneuver。
+
+    ★★ **只读**。不展开、不插入、不排序、不改任何方向 —— 输入是
+       `chain_of()` 的同一条路，输出只是**换了个讲述粒度**。
+
+    ## 四个读数（`CHAIN_CHANGE_PLAN.md` §1.1–1.5）
+
+        筛选步数    相干字段步的个数（「分几步」数这个，与人的字段决策同单位）
+        检索深度    第一个「成员数 == n_answer」的折叠步位置（答案在这里就齐了）
+        到叶深度    折叠步总数（归档口径）
+        讲述顺序    相干字段按成员数降序（**人先看大类**——Rosch 基本层级；
+                    树的顺序不变，这只是呈现顺序）
+    兄弟分支：答案支的同父兄弟（被谓词排除的近邻），带成员数——
+    把「排除」变成**可见的**（人裁决「全身算不算练背」时 LDV 是沉默的；
+    列出来 ≠ 改候选集，`n_branches` 不动，§X2 合规）。
+    """
+    c = chain_of(kernel, did, require=require, forbid=forbid)
+    fields = set(c["需求字段"])
+    body = c["路"][1:]
+    steps: list[dict[str, Any]] = []
+    i = 0
+    while i < len(body):
+        s = body[i]
+        cut = s.get("切")
+        f = str(cut).split("=")[0] if cut else None
+        if f is None:                       # 子方向细分：树自己的历史
+            steps.append({"字段": None, "动作": "子类细分", "成员数": s["成员数"],
+                          "did": s["did"], "刀数": 1, "过路": True, "相干": False})
+            i += 1
+            continue
+        j, cuts, last = i, 0, s
+        while j < len(body):
+            cut2 = body[j].get("切")
+            f2 = str(cut2).split("=")[0] if cut2 else None
+            if f2 == f:
+                cuts += 1
+                last = body[j]
+                j += 1
+            else:
+                break
+        steps.append({"字段": f, "动作": f"按 {f} 筛选", "刀数": cuts,
+                      "成员数": last["成员数"], "did": last["did"],
+                      "过路": f not in fields, "相干": f in fields})
+        i = j
+    n_filter = sum(1 for x in steps if x["相干"])
+    # 1.2 两个深度
+    depth_answer = depth_leaf = len(steps)
+    if n_answer is not None:
+        for idx, x in enumerate(steps, 1):
+            if x["成员数"] == n_answer:
+                depth_answer = idx
+                break
+    # 1.5 讲述顺序：相干字段按成员数降序（稳定），`步` 的顺序不动
+    tell = [x["字段"] for x in sorted((x for x in steps if x["相干"]),
+                                      key=lambda x: (-x["成员数"], str(x["字段"])))]
+    # 1.3 兄弟分支可见：答案支的同父兄弟（排除自己）
+    leaf = kernel.direction(did)
+    sibs: list[dict[str, Any]] = []
+    if leaf.parent:
+        par = kernel.direction(leaf.parent)
+        pm, pn = par.payload
+        for sb in kernel.children_of(par):
+            if sb.did == did:
+                continue
+            sm, sn = sb.payload
+            add = sorted(set(sm) - set(pm)) or sorted(set(sn) - set(pn))
+            sibs.append({"切": add[0] if add else sb.did,
+                         "成员数": len(kernel.members_of(sb))})
+    sibs.sort(key=lambda x: -x["成员数"])
+    siblings: list[dict[str, Any]] = sibs[:max_siblings]
+    if len(sibs) > max_siblings:
+        siblings.append({"另有": len(sibs) - max_siblings})
+    return {
+        "did": did,
+        "折叠步数": len(steps),
+        "筛选步数": n_filter,
+        "检索深度": depth_answer,
+        "到叶深度": depth_leaf,
+        "讲述顺序": tell,
+        "兄弟分支": siblings,
+        "步": steps,
+        "长_原链": c["长"],
+    }
+
+
+def folded(kernel: Any, dids: Iterable[str], *, require: Iterable[str] = (),
+           forbid: Iterable[str] = (), n_answer: int | None = None,
+           max_siblings: int = 4) -> list[dict[str, Any]]:
+    """一次给多支算折叠视图（顺序跟随入参，不再另排）。"""
+    return [folded_of(kernel, d, require=require, forbid=forbid,
+                      n_answer=n_answer, max_siblings=max_siblings)
+            for d in dids]
