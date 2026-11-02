@@ -1,0 +1,250 @@
+{
+ "_note": "八条链，2026-11-02 由作者确认结构（'差不多了'）。steps 的 needs 是这一步要用的字段；in_memory 是这一步依据在不在记忆里。（第一版把 title 当判据，算出来 5 个缺；title 是展示名、不是判据，2026-11-02 去掉后重冻，缺字段降为 4。）",
+ "chains": [
+  {
+   "id": "C1",
+   "name": "读书",
+   "steps": [
+    {
+     "n": 0,
+     "ask": "今天要不要看",
+     "needs": [],
+     "in_memory": false
+    },
+    {
+     "n": 1,
+     "ask": "续看／重看／新开",
+     "needs": [
+      "在读",
+      "我=重要的"
+     ],
+     "in_memory": "partial"
+    },
+    {
+     "n": 2,
+     "ask": "看哪本",
+     "needs": [],
+     "in_memory": true
+    }
+   ]
+  },
+  {
+   "id": "C2",
+   "name": "健身",
+   "steps": [
+    {
+     "n": 0,
+     "ask": "今天练不练",
+     "needs": [],
+     "in_memory": false
+    },
+    {
+     "n": 1,
+     "ask": "练哪个部位",
+     "needs": [
+      "部位"
+     ],
+     "in_memory": true
+    },
+    {
+     "n": 2,
+     "ask": "上多少重量",
+     "needs": [
+      "重量"
+     ],
+     "in_memory": true
+    }
+   ]
+  },
+  {
+   "id": "C3",
+   "name": "食谱",
+   "steps": [
+    {
+     "n": 0,
+     "ask": "今天做不做",
+     "needs": [],
+     "in_memory": false
+    },
+    {
+     "n": 1,
+     "ask": "做哪道",
+     "needs": [
+      "耗时",
+      "食材"
+     ],
+     "in_memory": true
+    },
+    {
+     "n": 2,
+     "ask": "怎么搭",
+     "needs": [
+      "工序"
+     ],
+     "in_memory": false
+    }
+   ]
+  },
+  {
+   "id": "C4",
+   "name": "旅行",
+   "steps": [
+    {
+     "n": 0,
+     "ask": "这次几天",
+     "needs": [
+      "天数"
+     ],
+     "in_memory": "partial"
+    },
+    {
+     "n": 1,
+     "ask": "预算多少",
+     "needs": [
+      "预算"
+     ],
+     "in_memory": true
+    },
+    {
+     "n": 2,
+     "ask": "去哪",
+     "needs": [],
+     "in_memory": true
+    },
+    {
+     "n": 3,
+     "ask": "什么时候去",
+     "needs": [
+      "季节"
+     ],
+     "in_memory": true
+    }
+   ]
+  },
+  {
+   "id": "C5",
+   "name": "财务",
+   "steps": [
+    {
+     "n": 0,
+     "ask": "这个月超没超",
+     "needs": [
+      "预算"
+     ],
+     "in_memory": false
+    },
+    {
+     "n": 1,
+     "ask": "哪一类超",
+     "needs": [
+      "类别"
+     ],
+     "in_memory": true
+    },
+    {
+     "n": 2,
+     "ask": "哪几笔",
+     "needs": [
+      "金额"
+     ],
+     "in_memory": true
+    },
+    {
+     "n": 3,
+     "ask": "砍不砍",
+     "needs": [],
+     "in_memory": false
+    }
+   ]
+  },
+  {
+   "id": "C6",
+   "name": "报修",
+   "steps": [
+    {
+     "n": 0,
+     "ask": "有没有没修的",
+     "needs": [
+      "状态"
+     ],
+     "in_memory": true
+    },
+    {
+     "n": 1,
+     "ask": "哪个拖最久",
+     "needs": [
+      "日期"
+     ],
+     "in_memory": true
+    },
+    {
+     "n": 2,
+     "ask": "谁来修",
+     "needs": [
+      "责任人"
+     ],
+     "in_memory": false
+    }
+   ]
+  },
+  {
+   "id": "C7",
+   "name": "会议",
+   "steps": [
+    {
+     "n": 0,
+     "ask": "下周有什么会",
+     "needs": [
+      "日期"
+     ],
+     "in_memory": true
+    },
+    {
+     "n": 1,
+     "ask": "哪个要我准备",
+     "needs": [
+      "议题",
+      "我=重要的"
+     ],
+     "in_memory": "partial"
+    },
+    {
+     "n": 2,
+     "ask": "准备什么",
+     "needs": [],
+     "in_memory": false
+    }
+   ]
+  },
+  {
+   "id": "C8",
+   "name": "论文",
+   "steps": [
+    {
+     "n": 0,
+     "ask": "我关心哪个方向",
+     "needs": [
+      "主题"
+     ],
+     "in_memory": false
+    },
+    {
+     "n": 1,
+     "ask": "有哪些带这个标签的",
+     "needs": [
+      "方法",
+      "发表",
+      "年份"
+     ],
+     "in_memory": true
+    },
+    {
+     "n": 2,
+     "ask": "哪篇有用",
+     "needs": [],
+     "in_memory": false
+    }
+   ]
+  }
+ ]
+}
