@@ -49,6 +49,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from ..core import clock as _clock
+
 DIRNAME = "usage"
 #: 缓冲区子目录 —— 查询先落这里，**不参与倾向**（`load` 不递归进来）
 STAGE = "_staging"
@@ -106,7 +108,12 @@ def append(corpus_dir: Any, *, did: str, outcome: float, propensity: float,
                 "why": "已有同一 (qfp, did) 的记录 —— 只追加，不覆写"}
     # `at` 是**遗忘的输入**：没有它就只能不衰减（见 decay_weight）。
     # 判据要固定 now ⇒ 允许注入。
-    at = at or datetime.now().isoformat(timespec="microseconds")
+    # ⚠️ 默认走 `clock.now()`，**不再直接读 wall clock**（2026-11-02）：
+    #    `clock.now()` 的默认实现就是 `datetime.now()` ⇒ 行为逐字不变；
+    #    区别是**能被 `clock.frozen()/set_source()` 接管**。
+    #    不接管会怎样：C 组（虚拟时间）写入真实时间戳、读取用虚拟时间 ⇒
+    #    年龄为负 ⇒ `0.5 ** (负/30) > 1`，权重反向增长，实验曲线是炸的不是平的。
+    at = at or _clock.now().isoformat(timespec="microseconds")
     snap_line = f"snapshot: {snapshot}\n" if snapshot else ""
     body = (
         "---\n"
@@ -184,7 +191,7 @@ def decay_weight(at: str, *, now: datetime | None = None,
         t = datetime.fromisoformat(at)
     except ValueError:
         return 1.0
-    now = now or datetime.now()
+    now = now or _clock.now()
     age_days = max(0.0, (now - t).total_seconds() / 86400.0)
     return 0.5 ** (age_days / half_life_days)
 
@@ -262,7 +269,8 @@ def stage(corpus_dir: Any, *, qfp: str, shown: list[str], note: str = "") -> dic
     d.mkdir(parents=True, exist_ok=True)
     p = d / f"{_qfp8(qfp)}.md"
     existed = p.exists()
-    at = datetime.now().isoformat(timespec="microseconds")
+    # 同上：走 `clock.now()`，判据能接管（`at` 只在缓冲区，不参与倾向计算）
+    at = _clock.now().isoformat(timespec="microseconds")
     body = (
         "---\n"
         f"id: {p.stem}\n"
@@ -310,7 +318,7 @@ def stage_load(corpus_dir: Any) -> list[dict]:
 
 def promote(corpus_dir: Any, *, qfp: str, did: str, propensity: float,
             note: str = "drill", snapshot: str = "",
-            outcome: float = 1.0) -> dict:
+            outcome: float = 1.0, at: str | None = None) -> dict:
     """缓冲 → 正式：把 `did` 标成一次**真实交互**，并从这批的 `shown` 里移除。
 
     ★★ **不在缓冲里的 did 不许 promote** —— 否则就是把「翻到了」当成「用了」。
@@ -321,6 +329,10 @@ def promote(corpus_dir: Any, *, qfp: str, did: str, propensity: float,
       默认 `1.0` ⇒ 旧调用方逐字不变。
       ⚠️ 负值**只进倾向**（排序与跳过阈值），**不改候选集** ——
          见 `entry._rejected_dirs` 与 `kernel.py:851` 的假阴警告。
+
+    ★ `at`（2026-11-02）：写入时间戳。**必须可注入**，否则「缓冲 → 正式」
+      这一跳的时间绕不过去 —— 而它正是 `at` 唯一的来源。
+      不传 ⇒ `clock.now()`（默认就是 `datetime.now()`，旧行为逐字不变）。
 
     `snapshot` 透传给 `append`（§I7 的方向状态留痕）。
     """
@@ -333,7 +345,7 @@ def promote(corpus_dir: Any, *, qfp: str, did: str, propensity: float,
         return {"ok": False, "written": False,
                 "why": "这一支不在这次查询的展示里，不记"}
     out = append(corpus_dir, did=did, outcome=outcome, propensity=propensity,
-                 qfp=qfp, note=note, snapshot=snapshot)
+                 qfp=qfp, note=note, snapshot=snapshot, at=at)
     rest = [x for x in cur["shown"] if x != did]
     if rest:
         stage(corpus_dir, qfp=qfp, shown=rest, note="（已 promote 一支，剩余）")

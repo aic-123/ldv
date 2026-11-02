@@ -72,6 +72,7 @@ from urllib.parse import parse_qs, urlparse
 
 from ldv import protocol as PROTO
 from ldv.checks._fixtures import build_keyset, build_reach
+from ldv.core import clock
 from ldv.core.interfaces import WeightedRecord
 from ldv.corpus.loader import load_edges, load_nodes
 from ldv.tools import usage_store
@@ -287,7 +288,10 @@ class App:
         if self._usage_dir is None:
             return {"basis": "default", "half_life_days": hl,
                     "n_with_records": 0, "rows": []}
-        now = self._usage_now or datetime.now()
+        # ⚠️ 默认走 `clock.now()`（2026-11-02）：`clock.now()` 默认就是
+        #    `datetime.now()` ⇒ 输出逐字不变；但它能被 `clock.frozen()` 接管，
+        #    否则这一行会让「虚拟时间」在读数里漏回 wall clock。
+        now = self._usage_now or clock.now()
         per: dict[str, dict] = {}
         for r in usage_store.load(self._usage_dir):
             did = str(r.get("did") or "")
@@ -346,9 +350,15 @@ class App:
         if rec is None:
             return None
         snap = json.dumps(k.plugin.record(d), ensure_ascii=False, sort_keys=True)
+        # ⚠️ `at` 必须与**读数**用同一个「现在」（2026-11-02）：本 App 注入了
+        #    `usage_now` 就跟着它走，否则交给 `promote` 的 `clock.now()`。
+        #    写入用 A、读取用 B ⇒ 年龄算错；若 A > B，年龄为负，
+        #    `0.5 ** (负/30) > 1` —— 权重反向增长，曲线是炸的不是平的。
+        use_at = (self._usage_now.isoformat(timespec="microseconds")
+                  if self._usage_now is not None else None)
         out = usage_store.promote(self._usage_dir, qfp=self._last_qfp, did=d.did,
                                   propensity=rec.propensity, snapshot=snap,
-                                  outcome=outcome,
+                                  outcome=outcome, at=use_at,
                                   note="drill-wrong" if outcome < 0 else "drill")
         if out.get("written"):
             self._last_shown = [x for x in self._last_shown if x != d.did]

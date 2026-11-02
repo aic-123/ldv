@@ -11700,6 +11700,113 @@ def test_clock() -> None:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_clock_takeover() -> None:
+    """★ 时间压缩的前提：判定路径上的「现在」只有一个来源（2026-11-02）。
+
+    为什么单独一组：`test_clock` 测的是「时钟自己会走、能推 k」；
+    这一组测的是**别的模块有没有绕过时钟**。绕过的后果不是「偏一点」：
+
+        写入用真实时间、读取用虚拟时间 ⇒ 年龄为**负** ⇒ `0.5 ** (负/30) > 1`
+        ⇒ 权重**反向增长**，曲线是炸的不是平的，而且**不会报错**。
+
+    ★ 最后一条是**反向对照**：接管路径的结果必须与「显式传 at / now」逐字相同 ——
+      否则「接管」就成了第二条真值路径（本仓库最忌的那种）。
+    """
+    import ast
+    import shutil
+    import tempfile
+    from datetime import datetime, timedelta
+
+    from ldv.core import clock as CLK
+    from ldv.tools import usage_store as US
+
+    tmp = Path(tempfile.mkdtemp(prefix="ldv-clk2-"))
+    t0 = datetime(2026, 1, 1, 9, 0, 0)
+    try:
+        # 58 写入的 `at` 来自冻结时钟（原来 4 处里的第 1 处）
+        d1 = tmp / "a"
+        with CLK.frozen(t0):
+            US.append(d1, did="D1", outcome=1.0, propensity=1.0, qfp="q58")
+        at58 = next(l[4:] for l in next((d1 / "usage").glob("*.md"))
+                    .read_text(encoding="utf-8").splitlines() if l.startswith("at: "))
+        ok("★ [时钟接管] 58 写入的 `at` 取自冻结时钟（不是 wall clock）",
+           at58 == t0.isoformat(timespec="microseconds"), f"at={at58}")
+
+        # 59 读数也跟冻结时钟：30 天 = 正好一个半衰期 ⇒ 0.5
+        with CLK.frozen(t0 + timedelta(days=30)):
+            aged59 = US.aged_tendency(d1)
+        ok("★ [时钟接管] 59 读数跟冻结时钟走：30 天后 aged_tendency = 0.5",
+           abs(aged59.get("D1", -1.0) - 0.5) < 1e-9, f"{aged59}")
+
+        # 60 `promote` 那一跳（`at` 唯一的来源 —— 原来它**没有**这个参数）
+        d2 = tmp / "b"
+        t1 = datetime(2026, 2, 1, 10, 30, 0)
+        with CLK.frozen(t1):
+            US.stage(d2, qfp="q60", shown=["D2"])
+            US.promote(d2, qfp="q60", did="D2", propensity=1.0)
+        at60 = next(l[4:] for l in next((d2 / "usage").glob("*.md"))
+                    .read_text(encoding="utf-8").splitlines() if l.startswith("at: "))
+        ok("★ [时钟接管] 60 `promote` 的时间可注入（缓冲→正式那一跳不再绕不过去）",
+           at60 == t1.isoformat(timespec="microseconds"), f"at={at60}")
+
+        # 61 负年龄**夹到 0**，不许放大权重（写入晚于「现在」= 时钟回拨）
+        d3 = tmp / "c"
+        future = (t0 + timedelta(days=10)).isoformat(timespec="microseconds")
+        US.append(d3, did="D3", outcome=1.0, propensity=1.0, qfp="q61", at=future)
+        w61 = US.decay_weight(future, now=t0)
+        ok("★ [时钟接管] 61 写入晚于「现在」⇒ 权重夹到 1.0（不许 >1 反向增长）",
+           w61 == 1.0 and US.aged_tendency(d3, now=t0).get("D3") == 1.0,
+           f"w={w61}")
+
+        # 62 默认行为逐字不变：reset 后不传 at ⇒ 仍是系统时钟
+        CLK.reset()
+        d4 = tmp / "d"
+        US.append(d4, did="D4", outcome=1.0, propensity=1.0, qfp="q62")
+        at62 = next(l[4:] for l in next((d4 / "usage").glob("*.md"))
+                    .read_text(encoding="utf-8").splitlines() if l.startswith("at: "))
+        gap = abs((datetime.fromisoformat(at62) - datetime.now()).total_seconds())
+        ok("★ [时钟接管] 62 不冻结时仍走系统时钟（默认行为零变化，差 < 5 秒）",
+           gap < 5, f"差 {gap:.1f}s｜at={at62}")
+
+        # 63 静态：判定路径上不许再有裸 `datetime.now()`
+        #    ⚠️ 白名单只两条，各有理由：
+        #       clock.py   —— 默认源本身（它就是 datetime.now）；
+        #       cli.py     —— `--agenda N` 造的是**人工给的演示历史**，是输入不是判定。
+        root = Path(__file__).resolve().parents[2]
+        bad = []
+        for p in sorted((root / "ldv").rglob("*.py")) + [root / "entry.py"]:
+            if "tests" in p.parts or p.name in ("clock.py", "cli.py"):
+                continue
+            try:
+                tree = ast.parse(p.read_text(encoding="utf-8"))
+            except SyntaxError:
+                continue
+            for node in ast.walk(tree):
+                if (isinstance(node, ast.Call)
+                        and isinstance(node.func, ast.Attribute)
+                        and node.func.attr == "now"
+                        and isinstance(node.func.value, ast.Name)
+                        and node.func.value.id == "datetime"):
+                    bad.append(f"{p.relative_to(root)}:{node.lineno}")
+        ok("★ [时钟接管] 63 判定路径上没有裸 `datetime.now()`（唯一来源是 clock.py）",
+           not bad, f"漏回墙钟：{bad}")
+
+        # 64 ★ 反向对照：接管路径 ≡ 显式传参路径（逐字相同）
+        dA, dB = tmp / "e", tmp / "f"
+        with CLK.frozen(t0):
+            US.append(dA, did="D9", outcome=1.0, propensity=1.0, qfp="q64")
+        US.append(dB, did="D9", outcome=1.0, propensity=1.0, qfp="q64",
+                  at=t0.isoformat(timespec="microseconds"))
+        with CLK.frozen(t0 + timedelta(days=7)):
+            a64 = US.aged_tendency(dA)
+        b64 = US.aged_tendency(dB, now=t0 + timedelta(days=7))
+        ok("★ [时钟接管] 64 反向对照：接管路径与显式传参路径逐字相同（不是第二条真值）",
+           bool(a64) and a64 == b64, f"{a64} vs {b64}")
+    finally:
+        CLK.reset()
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def main() -> int:
     for fn in (test_tri, test_loader, test_kernel, test_exposure_model, test_selfopt,
                test_sequence, test_flows, test_emergence, test_divergence,
@@ -11733,6 +11840,7 @@ def main() -> int:
                test_combine_budget,
                test_predicate_naming,
                test_clock,
+               test_clock_takeover,
                test_dimension_values,
                test_version_spots,
                test_agenda,

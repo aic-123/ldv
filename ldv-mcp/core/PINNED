@@ -64,5 +64,19 @@
     ⚠️ **升级内核时这一处会被覆盖**，必须重放，并对既有 usage 记录重跑迁移
        （旧 did → 新 did 的映射必须先在旧内核上导出，改完就导不出来了）。
 
+    core/ldv/tools/usage_store.py  时间源统一到 clock.now()，promote 加 at   2026-11-02
+
+    `append` / `decay_weight` / `stage` 的默认时间源 `datetime.now()` → `clock.now()`，
+    `promote` 补 `at: str | None = None` 透传。`entry._record_use` 让写入与读数
+    用同一个「现在」。
+
+    不这么改，「虚拟时间」在**写入那一跳**漏回 wall clock：C 组写真实时间、
+    读虚拟时间 ⇒ 年龄为**负** ⇒ `0.5 ** (负/30) > 1` ⇒ 权重反向增长，
+    曲线是炸的不是平的，而且不报错。
+
+    `clock.now()` 的默认实现就是 `datetime.now()` ⇒ 现有行为逐字不变。
+    判据在 `ldv/tests/run_tests.py` 的 `[时钟接管]` 58–64（含静态扫描：
+    判定路径上再出现裸 `datetime.now()` 就红）。
+
 ⚠️ **升级内核 = 改这个文件 + 重跑本仓库的 smoke 测试 + 重跑内核自带的全套判据。**
    不许「顺手跟进」—— 内核的保证矩阵、判据读数、版本落点都以它自己的提交为准。
