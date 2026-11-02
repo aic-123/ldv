@@ -73,11 +73,16 @@ from urllib.parse import parse_qs, urlparse
 from ldv import protocol as PROTO
 from ldv.checks._fixtures import build_keyset, build_reach
 from ldv.core import clock
+from ldv.core import declare as DECL
 from ldv.core.interfaces import WeightedRecord
 from ldv.corpus.loader import load_edges, load_nodes
 from ldv.tools import usage_store
 
 FIELDS = ("require", "forbid", "impact", "max_branches", "reject_below")
+
+#: `spec` 里允许出现、但**不是查询维度**的键（`auto_declare` 要在校验前放行，
+#: 否则「带自动声明的重发」会被自己的字段白名单挡掉 —— 实测踩过）。
+SPEC_EXTRA = ("plugin", "auto_declare", "why")
 UI_PLUGINS = ("keyset",)
 
 #: 默认语料 —— 实测**内容最多、节点也不少**的那份（7115 项 ⇒ 37 个方向 / 8 层）。
@@ -182,27 +187,24 @@ class App:
                 # derived_at）。`file` 是补的：调用方要知道是哪份 sidecar。
                 self.derived_meta[field] = dict(doc.get("_meta") or {},
                                                 file=f.name)
+        # ★ 值谓词声明（`predicates.json` 的 `字段谓词` 段，2026-11-02）
+        #   与 `derived/` 同一侧：**只加键，不改材料**。删掉那一段，结构立刻回到原状。
+        #   ⚠️ 只在 `_data/` 下的语料允许**再写**（与 usage 同一条守卫）：
+        #      仓库内语料是基线输入，不能让一次查询把它改了。
+        self._corpus_root = _croot
+        self._can_declare = ("_data" in Path(_croot).parts)
+        self.declared: list[dict] = DECL.load(_croot)
+        self._decl_ledger: dict = {}
+        self.declared_added = 0
+        if self.declared:
+            self.declared_added = DECL.apply(self.nodes, self.declared, self._decl_ledger)
         # 只建 keyset；reach 按需（实测：3783 项把 reach 也建了 ⇒ 启动 333 s → 3.6 s）
         self.kernels: dict[str, object] = {}
-        self.kernels["keyset"] = build_keyset(self.nodes)[0]
         self._known = ("keyset", "reach")
-        self.boot_s = time.time() - t0
-        # 树的规模（方向数 / 最大叶）—— 加维度前后要能对比，所以报出来
-        _k = self.kernels["keyset"]
-        _ds = _k.all_directions()
-        _leaves = [d for d in _ds if not _k.children_of(d)]
-        self.tree = {"方向数": len(_ds), "层数": max(d.rank for d in _ds),
-                     "最大叶": max((len(_k.members_of(d)) for d in _leaves), default=0)}
-        self.titles = {nid: str(n.fields.get("title") or n.fields.get("name") or nid)
-                       for nid, n in self.nodes.items()}
-        self.keys_of = {nid: frozenset(n.keys) for nid, n in self.nodes.items()}
-        #: 全语料出现过的键 —— 用来**拒收拼错的键**。
-        #  ⚠️ 不拒收会怎样：`type=出度1-4`（打错一个数字）⇒ 答案 0 ⇒ 界面上与
-        #     「材料里真没有」**长得一模一样**。那是这个仓库最忌的「退化与正常长得一样」。
-        self.all_keys = frozenset().union(*self.keys_of.values()) if self.keys_of else frozenset()
-        self.facets, self.n_constant = self._facets()
         self.lock = threading.Lock()
         self.n_queries = 0
+        self._rebuild_structure(reload_usage=False)
+        self.boot_s = time.time() - t0
         # ── 使用记录（§4.6 G5 表里「使用者入口」那一格）────────────────────
         # ⚠️ 只在 **`_data/` 下**的语料启用：内置语料的 root 也是 `.../nodes`
         #    （`ldv/corpus/nodes`），按 name == "nodes" 判会把**仓库目录**当成
@@ -380,6 +382,60 @@ class App:
         return {**n, "次序": "已回到默认（无倾向）"}
 
     # ── facet：剔掉「对全部项都成立」的键（那是常量，不是维度） ────────────
+    # ── 结构：建 / 重建 ─────────────────────────────────────────────────
+    def _rebuild_structure(self, *, reload_usage: bool = True) -> None:
+        """键集变了就整棵重建（声明谓词之后要调）。
+
+        ⚠️ 只重建 `keyset`；`reach` 若已建过就丢掉 —— 它读的是同一份 `keys`，
+           留着就是**旧键的树**，比没有更坏。
+        """
+        self.kernels = {"keyset": build_keyset(self.nodes)[0]}
+        _k = self.kernels["keyset"]
+        _ds = _k.all_directions()
+        _leaves = [d for d in _ds if not _k.children_of(d)]
+        self.tree = {"方向数": len(_ds), "层数": max(d.rank for d in _ds),
+                     "最大叶": max((len(_k.members_of(d)) for d in _leaves), default=0)}
+        self.titles = {nid: str(n.fields.get("title") or n.fields.get("name") or nid)
+                       for nid, n in self.nodes.items()}
+        self.keys_of = {nid: frozenset(n.keys) for nid, n in self.nodes.items()}
+        #: 全语料出现过的键 —— 用来**拒收拼错的键**。
+        #  ⚠️ 不拒收会怎样：`type=出度1-4`（打错一个数字）⇒ 答案 0 ⇒ 界面上与
+        #     「材料里真没有」**长得一模一样**。那是这个仓库最忌的「退化与正常长得一样」。
+        self.all_keys = frozenset().union(*self.keys_of.values()) if self.keys_of else frozenset()
+        self.facets, self.n_constant = self._facets()
+        if reload_usage:
+            self._load_usage()
+
+    # ── 值谓词：声明 / 提案 ─────────────────────────────────────────────
+    def propose(self, keys: list[str]) -> list[dict]:
+        """对不认识的键逐条给证据：是**拼错**、**缺维度**，还是**缺谓词**。"""
+        return [DECL.evidence(self.nodes, k) for k in keys]
+
+    def declare(self, key: str, why: str = "", *, by: str = "agent",
+                allow_empty: bool = False) -> dict:
+        """声明一条值谓词并**立刻**重建结构（只对 `_data/` 下的语料开放）。
+
+        返回里 `生效` 才是关键：0 命中的谓词永远不会进 `all_keys`，
+        所以「写进文件了」不等于「能用了」。这两件事必须分开报。
+        """
+        if not self._can_declare:
+            return {"ok": False, "error": "这份语料不是可写语料（不在 `_data/` 下）—— "
+                                          "声明只对用户语料开放，仓库内基线语料一个字都不改"}
+        r = DECL.add(self._corpus_root, key, why=why, by=by,
+                     nodes=self.nodes, allow_empty=allow_empty)
+        if not r.get("ok"):
+            return r
+        if r.get("already"):
+            r["生效"] = key in self.all_keys
+            return r
+        self.declared = DECL.load(self._corpus_root)
+        self.declared_added = DECL.apply(self.nodes, [r["记录"]], self._decl_ledger)
+        self._rebuild_structure()
+        r["生效"] = key in self.all_keys
+        r["加键"] = self.declared_added
+        r["树"] = dict(self.tree)
+        return r
+
     def _facets(self) -> tuple[dict[str, list[dict]], int]:
         counts: dict[str, dict[str, int]] = {}
         for ks in self.keys_of.values():
@@ -622,7 +678,7 @@ class App:
         plugin = str(spec.get("plugin") or "keyset")
         if plugin not in self._known:
             return {"ok": False, "error": f"没有插件 {plugin!r}（有 {list(self._known)}）"}
-        extra = sorted(set(spec) - set(FIELDS) - {"plugin"})
+        extra = sorted(set(spec) - set(FIELDS) - set(SPEC_EXTRA))
         if extra:
             return {"ok": False, "error": f"不认识的字段 {extra} —— 只认 {list(FIELDS)}"}
         req = frozenset(spec.get("require") or ())
@@ -642,18 +698,39 @@ class App:
                     "hint": "先往 `<语料>/nodes/` 放节点（一节点一个 `.md`），再问一次。"}
         # ★ 拼错的键要**当场拒收**，不能静默返回 0 条 ——
         #   「键写错了」与「材料里真没有」在界面上长得一模一样。
+        # ★★ 2026-11-02：不认识的键**不再一律当拼错**。三种要分开：
+        #     ① 拼错（有相近的键）             ⇒ 建议改名
+        #     ② 缺谓词（`金额>=3000` 这种形状，字段在、值在）⇒ **当场给提案**，
+        #        批准后立刻可用（`declare`）；这才是「回答的同时要求新谓词」
+        #     ③ 缺维度（字段根本不在材料里）   ⇒ 指向 `request.py` 那条路
         unknown = sorted(k for k in (req | forb) if k not in self.all_keys)
         if unknown:
             import difflib
             hint = {k: difflib.get_close_matches(k, self.all_keys, n=3, cutoff=0.5)
                     for k in unknown}
+            props = self.propose(unknown)
+            # 提案里「可声明」的那些，才是真正能闭环的
+            ready = [p["键"] for p in props if p.get("可声明")]
+            if spec.get("auto_declare") and ready:
+                did = [self.declare(k, why=str(spec.get("why") or "查询时自动声明"))
+                       for k in ready]
+                if any(d.get("生效") for d in did):
+                    retry = {k: v for k, v in spec.items() if k != "auto_declare"}
+                    out = self.query(retry)
+                    out["declared"] = did
+                    return out
             return {"ok": False,
-                    "error": ("这些键在语料里不存在：" +
-                              "、".join(f"`{k}`" for k in unknown) +
-                              "。可能是拼错了 —— 最近的几个：" +
-                              "；".join(f"`{k}` → " + ("、".join(f"`{x}`" for x in v) or "（没有相近的）")
-                                       for k, v in hint.items())),
+                    "error": ("这些键不在词汇表里：" +
+                              "、".join(f"`{k}`" for k in unknown) + "。" +
+                              (f"其中 {len(ready)} 条**可以当场声明**"
+                               f"（字段和取值都在材料里，只是还没有这个谓词）："
+                               f"重发时带 `auto_declare: true`，或先调 `POST /api/declare`。"
+                               if ready else
+                               "没有一条能靠声明解决 —— 见 need_predicate 里的理由。")),
                     "unknown_keys": unknown, "suggest": hint,
+                    # `need_predicate` 是**请求**，不是错误码：每条都带证据，
+                    # 说明它属于上面哪一种，以及能不能就地声明。
+                    "need_predicate": props,
                     # ★★ **超出结构 ≠ 查不到**（2026-10-22 新增）。
                     #    「键不在词汇表」是一个**结构信号** —— 不需要理解语义，
                     #    所以它不撞「不做语义推理」。而「键在、组合为空」是另一回事：
@@ -894,8 +971,17 @@ class App:
                 "nodes[].precision": "这一支里有多少是答案（准不准）",
                 "nodes[].coverage": "答案有多少落在这一支（散没散）",
                 "relax": "只有 0 结果时给：去掉哪个键就有几项（逐键试过，确定性）",
+                "need_predicate": "键不在词汇表时给：逐条证据（拼错 / 缺谓词 / 缺维度），"
+                                  "`可声明=true` 的可以当场 `POST /api/declare` 或带 "
+                                  "`auto_declare:true` 重发",
             },
-            "boundaries": ["只读", "单进程串行（query 会 expand）", "只绑 127.0.0.1，无鉴权"],
+            "declare": {
+                "POST /api/declare": '{"key":"金额>=3000","why":"…","by":"agent"}',
+                "边界": "只追加不覆盖；0 命中拒收；只对 `_data/` 下的用户语料开放",
+                "生效": "响应里的 `生效` 才是关键 —— 写进文件 ≠ 进得了 `all_keys`",
+            },
+            "boundaries": ["只读（`/api/declare` 是唯一例外，且只写用户语料）",
+                           "单进程串行（query 会 expand）", "只绑 127.0.0.1，无鉴权"],
             "batch": "--batch in.jsonl --out out.jsonl（不起服务，一行一条需求）",
         }
 
@@ -987,6 +1073,12 @@ class Handler(BaseHTTPRequestHandler):
                     self._json(APP.batch(body))
                 else:
                     self._json(APP.query(body))
+            elif u.path == "/api/declare":     # 值谓词声明（agent 填内容的那一格）
+                self._json(APP.declare(
+                    str(body.get("key") or ""),
+                    why=str(body.get("why") or ""),
+                    by=str(body.get("by") or "agent"),
+                    allow_empty=bool(body.get("allow_empty"))))
             else:
                 self._json({"ok": False, "error": "没有这个路径"}, 404)
         except Exception:

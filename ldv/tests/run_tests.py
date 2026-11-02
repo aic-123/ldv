@@ -6003,6 +6003,118 @@ def test_predicate_naming() -> None:
 
 
 
+def test_value_predicates() -> None:
+    """★ [谓词声明] 问不出的东西，能**当场要求一个谓词**（2026-11-02）。
+
+    这一组守的是「回答的同时要求新谓词」这条闭环，四件事缺一不可：
+
+        ① 分得清**拼错 / 缺谓词 / 缺维度** —— 三者的处置完全不同
+        ② 声明后**立刻**可用（`生效`），不是「写进文件就算数」
+        ③ 0 命中**拒收** —— 空维度与「没这个词」在输出上长得一样
+        ④ 删掉声明 ⇒ 结构**逐字**回到原状（可移除性）
+
+    ★ ④ 是反向对照：若删不掉或删了不一样，说明声明不是「只加键」，
+      而是**改了材料**——那就不再是词汇问题，是数据污染。
+    """
+    import json
+    import shutil
+    import tempfile
+
+    import entry as E
+    from ldv.core import declare as DECL
+
+    def make(base: Path, under_data: bool = True) -> Path:
+        d = (base / "_data" / "c" / "nodes") if under_data else (base / "c" / "nodes")
+        d.mkdir(parents=True)
+        rows = [(4500, "已修", "财务"), (320, "待修", "财务"), (9800, "待修", "财务"),
+                (150, "已修", "财务")]
+        for i, (amt, st, typ) in enumerate(rows):
+            (d / f"n{i}.md").write_text(
+                f"---\nid: n{i}\ntype: {typ}\n金额: {amt}\n状态: {st}\n---\n\n第 {i} 条。\n",
+                encoding="utf-8")
+        return d
+
+    tmp = Path(tempfile.mkdtemp(prefix="ldv-decl-"))
+    try:
+        # ① 形状：六个算子；`>=` 不许被拆成 `>` + `=xxx`
+        ok("★ [谓词声明] ① `>=` 整体匹配，不被拆成 `>`",
+           DECL.parse("金额>=3000") == ("金额", ">=", "3000"),
+           f"实得 {DECL.parse('金额>=3000')}")
+        ok("★ [谓词声明] ① 六个算子都认",
+           all(DECL.parse(f"a{o}1") == ("a", o, "1")
+               for o in ("=", "!=", ">", "<", ">=", "<=")),
+           str([DECL.parse(f"a{o}1") for o in ("=", "!=", ">", "<", ">=", "<=")]))
+        ok("★ [谓词声明] ① 区间形状**不猜**（`1<金额<9` ⇒ None）",
+           DECL.parse("1<金额<9") is None, f"实得 {DECL.parse('1<金额<9')}")
+
+        nodes_dir = make(tmp / "user")
+        app = E.App(root=str(nodes_dir))
+        ok("★ [谓词声明] ① 语料在 `_data/` 下 ⇒ 允许声明",
+           app._can_declare is True, f"_can_declare={app._can_declare}")
+
+        # 分清三种：缺谓词 / 0 命中 / 缺字段
+        r = app.query({"require": ["金额>=3000"]})
+        prop = (r.get("need_predicate") or [{}])[0]
+        ok("★ [谓词声明] ② 缺谓词：字段在、值在 ⇒ 可声明，且**还没**改结构",
+           r["ok"] is False and prop.get("可声明") is True and prop.get("命中") == 2
+           and "金额>=3000" not in app.all_keys, f"{prop.get('理由')}")
+        miss = DECL.evidence(app.nodes, "星级>=3")
+        zero = DECL.evidence(app.nodes, "金额>=99999")
+        ok("★ [谓词声明] ② 缺维度 与 0 命中 分得开",
+           miss.get("可声明") is False and "没有字段" in (miss.get("理由") or "")
+           and zero.get("可声明") is False and "空维度" in (zero.get("理由") or ""),
+           f"缺维度={miss.get('理由')}｜0命中={zero.get('理由')}")
+
+        # ③ 声明 ⇒ 立刻可用
+        before = dict(app.tree)
+        d = app.declare("金额>=3000", why="大额支出")
+        q = app.query({"require": ["金额>=3000"]})
+        ok("★ [谓词声明] ③ 声明后 `生效`，且**同一个 App 实例**就能答",
+           d.get("生效") is True and q["ok"] is True and q["n_answer"] == 2,
+           f"生效={d.get('生效')}｜n={q.get('n_answer')}｜{q.get('error')}")
+        ok("★ [谓词声明] ③ 结构真的变了（方向数增加）",
+           app.tree["方向数"] > before["方向数"],
+           f"{before} → {app.tree}")
+        ok("★ [谓词声明] ③ 写入带 来源/依据/at（可审计）",
+           all(k in d["记录"] for k in ("来源", "依据", "at"))
+           and d["记录"]["来源"] == "agent",
+           str(d.get("记录")))
+
+        # 幂等 + 只追加
+        n_before = len(DECL.load(app._corpus_root))
+        again = app.declare("金额>=3000")
+        ok("★ [谓词声明] ③ 同名再声明 ⇒ `already`，不重复追加",
+           again.get("already") is True and len(DECL.load(app._corpus_root)) == n_before,
+           f"already={again.get('already')}｜条数 {n_before}→{len(DECL.load(app._corpus_root))}")
+
+        # ③ 0 命中拒收
+        rej = app.declare("金额>=99999")
+        ok("★ [谓词声明] ③ 0 命中**拒收**，且不写进文件",
+           rej.get("ok") is False and len(DECL.load(app._corpus_root)) == n_before,
+           f"{rej.get('reason')}")
+
+        # ④ 可移除性：删掉段 ⇒ 树回到原样
+        pf = Path(app._corpus_root) / "predicates.json"
+        doc = json.loads(pf.read_text(encoding="utf-8"))
+        doc["字段谓词"] = []
+        pf.write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
+        app2 = E.App(root=str(nodes_dir))
+        ok("★ [谓词声明] ④ 反向对照：删掉声明 ⇒ 树逐字回到原样",
+           app2.tree == before and "金额>=3000" not in app2.all_keys,
+           f"{app2.tree} vs {before}")
+
+        # 只对用户语料开放
+        repo_dir = make(tmp / "repo", under_data=False)
+        app3 = E.App(root=str(repo_dir))
+        bad = app3.declare("金额>=3000")
+        ok("★ [谓词声明] ⑤ 仓库内语料**拒绝**声明（基线不被一次查询改掉）",
+           app3._can_declare is False and bad.get("ok") is False
+           and not (Path(app3._corpus_root) / "predicates.json").exists(),
+           f"_can_declare={app3._can_declare}｜{bad.get('error')}")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_dimension_values() -> None:
     """★ 维度**取值**的写法校验（`request.apply_approved`，2026-10-20）。
 
@@ -10908,7 +11020,12 @@ def test_no_unsourced_strings() -> None:
                     #      §S1 当场抓到 ⇒ 按规矩显式进白名单。
                     "答案横跨",
                     # 2026-10-25：支级跳过后的空结果说明（外部评审 C2）
-                    "满足约束的项")
+                    "满足约束的项",
+                    # 2026-11-02：`need_predicate` 的**判读结论**（`declare.evidence`）。
+                    #   全是固定模板，数字与字段名来自数据；句子本身是代码写的
+                    #   ⇒ 按规矩显式进白名单，新增一句就红一次。
+                    "语料里没有字段", "request.py", "字段有",
+                    "可用：", "不是「字段", "同名谓词", "这份语料不是可写语料")
 
     # ⚠️ **只查值，不查键** —— 键是协议（代码写的字段名：`rank` / `n_members` / `must`…），
     #    值是数据（应来自材料）。第一版连键一起查 ⇒ 报 139 个「无出处」，全是字段名。
@@ -10929,8 +11046,15 @@ def test_no_unsourced_strings() -> None:
         #    不是系统生成的内容 ⇒ 回显合法，把这一趟的 require/forbid 计入材料。
         material |= set(spec.get("require") or ())
         material |= set(spec.get("forbid") or ())
+        # ⚠️ 2026-11-02：`need_predicate` 会把用户的键**拆开回显**
+        #    （`金额>=3000` ⇒ 字段「金额」/ 算子「>=」/ 值「3000」）。
+        #    碎片仍是**用户自己的话**，不是系统生成的内容 ⇒ 按键的碎片放行；
+        #    判据本身不放松：整句凭空生成仍然抓得到（下面那条合成对照钉着）。
+        echo = " ".join([*(spec.get("require") or ()), *(spec.get("forbid") or ())])
         for s in walk_values(app.query(spec)):
             if not s or s in material or s in protocol:
+                continue
+            if len(s) <= 60 and s in echo:
                 continue
             if s.startswith(fixed_prefix):
                 continue
@@ -11841,6 +11965,7 @@ def main() -> int:
                test_predicate_naming,
                test_clock,
                test_clock_takeover,
+               test_value_predicates,
                test_dimension_values,
                test_version_spots,
                test_agenda,

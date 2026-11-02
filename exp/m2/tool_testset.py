@@ -50,7 +50,9 @@ def _load(path: Path) -> dict:
 def _app() -> App:
     if STORE is None:
         raise SystemExit("找不到语料：设 LDV_STORE=/path/to/store（其下有 _data/self/nodes）")
-    return App(root=str(STORE))
+    # ⚠️ 必须给 **nodes 目录**：给 store 根的话 `rglob("*.md")` 会把 usage/ 与
+    #    answers/ 一起收进来（实测 120 → 144），那不是语料，是账本。
+    return App(root=str(STORE / "_data" / "self" / "nodes"))
 
 
 def _partition(app: App, item: dict) -> dict:
