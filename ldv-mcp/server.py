@@ -41,11 +41,19 @@ usage_status）沉成内部机制：**透镜首次使用即自动冻结**，没�
 """
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import os
 import re
+import socket
+import ssl
+import subprocess
 import sys
+import threading
+import time
+import urllib.error
+import urllib.request
 from datetime import datetime
 from pathlib import Path
 
@@ -636,6 +644,9 @@ def _tool_orient(a: dict) -> dict:
             us = US.status(app._usage_dir)
             out["usage"] = {k: us.get(k) for k in
                             ("记录数", "覆盖方向数", "缓冲批次数", "最多的方向")}
+            # ★ 死账读数（v0.2.66）：账本里有多少条还指向**现在的树**。
+            #   did 随内容派生、树常重建 ⇒ 死账只报数不删不重指（可审计/防错位）
+            out["usage_health"] = app.usage_health()
             out["actor_split"] = _actor_split(app)
         # ★ 会话：缓冲 / 已 promote / 挤出 / 漏检率（报数不判断）
         out["sessions"] = SESS.sessions(nodes.parent)
@@ -713,6 +724,8 @@ def _tool_ask(a: dict) -> dict:
 
     内部顺序（全是机制，不是流程）：
         ① 键校验    未知键当场拒 —— 在入口**之前**
+                    （2026-11-13 三层口径例外：原文在场且教了 conc/1018 ⇒
+                     先对词表切一次，全没命中才还给人）
         ② 透镜      没有冻结的 ⇒ 本次带了 `lens` 就**自动冻结**（首次使用即冻结），
                     之后只读文件；带了的插件名先过白名单
         ③ 支序原样  重排即推荐，可判
@@ -724,11 +737,79 @@ def _tool_ask(a: dict) -> dict:
     req = _key_list(a.get("require"), "require")
     forb = _key_list(a.get("forbid"), "forbid")
 
+    nodes_dir, _ = _corpus_dir(corpus)
+    _txt = str(a.get("text") or "").strip()
+    if _txt and nodes_dir:
+        # ★ 原话级路由在内核（v0.2.49 正位，用户 2026-11-14「工具应该放在路由组合」）：
+        #   闲聊交外/JA4自探/爬到落盘/无头直取/限速连调/直连端口 —— 规矩写语料、
+        #   算子在 entry.App._ask_routes；桥只递原话，不带业务判断。
+        #   没带 `text` 的调用方（老调用方/回归测试）零影响——旧行为逐字保留。
+        _hit = app._ask_routes(_txt, req, forb,
+                               max_chars=int(a.get("max_chars") or 600))
+        if _hit:
+            return _hit
+
     chk = V.check_keys(app.all_keys, req, forb)
+    _seg_note = None
+    if _txt and nodes_dir and app._route_node("整句对词表"):
+        # ★ 《整句对词表》（conc/1018，v0.2.44 三层口径；2026-11-16 用户拍板①）：
+        #   带原话且教过 ⇒ **先对词表切一次，不再被「键校验已过」短路**——前端
+        #   LLM 兜底填的合法宽键（如 type=概念）会盖住词表里教过的词（实测
+        #   「设计一个登录系统」：《登录》在词表，却查出 818 条不相关概念）。
+        #   seg 切出的键为主、原有合法键合并对照；seg 没切出但原键合法 ⇒ 照旧查。
+        #   没带 `text` 的调用方零影响——「未知键当场拒」旧行为逐字保留。
+        _sg = app._seg_rule(_txt)
+        if _sg is not None and not _sg["切出"]:
+            # 没切出：原键合法 ⇒ 照旧查（如实留痕）；原键也不成 ⇒ 还给人
+            if chk["ok"] and (req or forb):
+                _seg_note = {"节点": "conc/1018", "切出": [],
+                             "为什么": _sg["为什么"]}
+            else:
+                return {"ok": False, "还给人": True, "节点": "conc/1018",
+                        "候选": chk.get("unknown") or [],
+                        "suggest": chk.get("suggest") or {},
+                        "error": "这句话对照词表切了一遍，一个词都没对上。",
+                        "为什么": "词表（含开过词还没正文的）里没有这句里的词——"
+                                  "LDV 不猜，交回人：标出特有词汇，决定要不要开词。"}
+        elif _sg is not None:
+            _unused = [k for k in (req + forb) if k in (chk.get("unknown") or [])]
+            _new = [h["键"] for h in _sg["切出"]]
+            for k in req:
+                if k not in _new and k not in (chk.get("unknown") or []):
+                    _new.append(k)           # 原本就**合法**的键保留；词表外的不回填
+            forb = [k for k in forb if k not in (chk.get("unknown") or [])]
+            req = _new
+            chk = V.check_keys(app.all_keys, req, forb)
+            _seg_note = {"节点": "conc/1018", "切出": _sg["切出"],
+                         "没用llm填的": _unused, "为什么": _sg["为什么"]}
+            if not chk["ok"]:
+                # 切出的键里有「开过词还没正文」的 ⇒ 不进查询，如实标——
+                # 登记了、教了内容才生效（0 命中的谓词进不了 all_keys）。
+                _decl = {str(d.get("名") or "")
+                         for d in (DECL.load(Path(app._corpus_root)) or [])}
+                _un = chk.get("unknown") or []
+                if all(k in _decl for k in _un):
+                    _seg_note["开词未生效"] = _un
+                    req = [k for k in req if k not in _un]
+                    forb = [k for k in forb if k not in _un]
+                    chk = V.check_keys(app.all_keys, req, forb)
+                if not chk["ok"]:
+                    return {"ok": False, "out_of_structure": True, **chk}
     if not chk["ok"]:
         return {"ok": False, "out_of_structure": True, **chk}
-
-    nodes_dir, _ = _corpus_dir(corpus)
+    if _txt and not req and not forb:
+        # 切过、开过词的正文的都落空之后，这里只剩「真没有」——老实报。
+        # （conc/1018 没教时维持原状：没键 ⇒ 没认出键。）
+        if _seg_note is None and app._route_node("整句对词表") == "":
+            return {"ok": False, "没认出键": True,
+                    "error": "这句话里没有我认识的键，LDV 没查。",
+                    "为什么": "词表和正文里都没有这句里的词。",
+                    "下一步": "换个说法试节点名，或直接给 字段=值。"}
+        return {"ok": True, "n_answer": 0, "items": [],
+                "对词表切分": _seg_note,
+                "items_note": "这句话对照词表切了一遍、对上的键查下去是空的——"
+                              "词表里有形、没有正文（开过词还没教内容），"
+                              "教了内容才查得到。"}
     spec = S.load(_spec_dir(corpus)) if nodes_dir is not None else None
     lens = a.get("lens") or {}
     if spec is None and lens and nodes_dir is not None:
@@ -825,7 +906,10 @@ def _tool_ask(a: dict) -> dict:
         node = app.nodes[nid]
         f = node.fields or {}
         body = (node.body or "").strip()
-        title = str(f.get("title", "") or "")
+        # ★ title 回退到 name（v0.2.65）：内核 self.titles 本就是
+        #   `title or name or nid`——这里逐字对齐，教课节点没写 title 字段
+        #   时不至于摆空题。
+        title = str(f.get("title") or f.get("name") or "")
         items.append({"n": i + 1, "title": title,
                       "text": body[:max_chars] if with_body else "",
                       "source": f.get("source", ""),
@@ -844,6 +928,17 @@ def _tool_ask(a: dict) -> dict:
         # 句柄表：本地记「第 n 条是哪一条」，agent 只看到 n
         SESS.save_handles(nodes_dir.parent, meta, qfp=app._last_qfp,
                           require=req, forbid=forb)
+    # ★ 路由确认进账（v0.2.74 合取口径，2026-11-19 用户拍板）：原路答出
+    #   =浮出节点的能力被消费 ⇒ 一次确认**一笔账**（did=K=本轮浮出节点
+    #   id 的合取，一次查询不再散成逐节点多条；节点 id 稳定钥匙，qfp 带
+    #   route: 前缀可审计）。items 空=没能用上，不记。记失败不拦主流程。
+    _route_confirm = 0
+    if nodes_dir is not None and meta:
+        try:
+            _route_confirm = app._confirm_usable(
+                [m["id"] for m in meta], "原路答出")
+        except Exception:
+            _route_confirm = 0
     out = {"ok": True, "corpus": app.corpus_name, "actor": _actor(a),
            "session": sess_info,
            "n_answer": r.get("n_answer"),
@@ -856,6 +951,12 @@ def _tool_ask(a: dict) -> dict:
            "branches_total": r.get("branches_total"),
            "branches_shown": r.get("branches_shown"),
            "branches_hidden": r.get("branches_hidden"),
+           # ★ 本题带倾向的支数（v0.2.66）：只报计数不报分数——单支题没有
+           #   「先看哪支」（ordered_by 仍 default），但这一格能看出「这题有历史」
+           "tended_branches": r.get("tended_branches") or 0,
+           # ★ 路由确认进账笔数（v0.2.74 合取口径）：一次消费一笔账
+           #   （did=K=本轮浮出节点合取）——0/1，与人工下钻同账不同来源
+           "路由确认": _route_confirm or None,
            "items": items,
            # ★ 三条「不许猜」的规矩（2026-10-24 用户定）
            #   ① 多条同时能回答 ⇒ **都列出来**，让 agent 兼并后给出回答，
@@ -867,6 +968,8 @@ def _tool_ask(a: dict) -> dict:
                     "要看分支与谓词用 structure=true。"
                     "**多条同时能回答时，把它们都列出来** —— 不许挑一条当真的"),
            "query": {"require": req, "forbid": forb, "plugin": plugin or "keyset"},
+           # ★ 《整句对词表》留痕：切了才给，没切是 None（原样，不藏动作）
+           "对词表切分": _seg_note,
            "derived_used": derived_used,
            # ★ 每个用到的派生维度**从哪来**（2026-10-26）：`derived_note` 原来只会
            #   笼统说「当线索用，别当事实」—— 而 `derived_from` 里早就写着
@@ -899,6 +1002,33 @@ def _tool_ask(a: dict) -> dict:
     elif not items:
         out["items_note"] = ("这一格是空的 —— 要么材料里真没有，要么**这个维度不存在**；"
                              "后者交给 agent 补（derive 一个维度 / 换问法），不许猜")
+    # ★ 合取 0 命中 ⇒ 析取回退（v0.2.65 定稿口径，2026-11-18 用户拍板：
+    #   「前端不需要认识，改 ldv 内部对标签的映射路径，llm 只负责填好协议」）：
+    #   内核在「析取回退」格里按每个词分别查好并集——标签→资料的映射在
+    #   LDV 内部走完：回退项**直接填进协议的 items 本体**，调用方照常读到
+    #   资料，不认识任何特殊格。合取没中就是没中：n_answer 仍是 0；
+    #   items_note 如实标「按单词分别查到，任一命中不是推荐」。
+    if not items and r.get("析取回退"):
+        _fb = r["析取回退"]
+        for _nid in (_fb.get("answer_ids") or []):
+            if len(items) >= limit:
+                break
+            _nd = app.nodes.get(_nid)
+            if _nd is None:
+                continue
+            _f = _nd.fields or {}
+            _body = (_nd.body or "").strip()
+            items.append({"n": len(items) + 1,
+                          "title": str(_f.get("title") or _f.get("name") or ""),
+                          "text": _body[:max_chars] if with_body else "",
+                          "source": _f.get("source", ""),
+                          "filled_by": str(_f.get("filled_by", "") or ""),
+                          "truncated": bool(with_body and max_chars > 0
+                                            and len(_body) > max_chars)})
+        if items:
+            out["items_note"] = ("合取没中——上面是 LDV 按每个词分别查到的命中项"
+                                 "（任一命中，不是推荐）；要更准就拆成单词问，"
+                                 "或直接点名。")
     # ★ 答案缓存：先查树（级联的「便宜那一级」）。命中 ⇒ 不必再问 agent。
     #   ⚠️ 命中必须**明说**：from_cache=true + filled_by: agent，
     #      不混在材料答案里 —— 那是语义缓存的已知坑（相似问题误命中）。
@@ -1615,6 +1745,31 @@ def _tool_next(a: dict) -> dict:
         out["议程"]["自问句"] = SF.report(k, nodes_dir=nodes, cap=3)["问句"]
     return out
 
+def _tool_declare(a: dict) -> dict:
+    """开词：往词表声明一条谓词键（App.declare，只追加不覆盖）。
+    登记 ≠ 生效——0 命中的谓词进不了 all_keys，教了正文才查得到。"""
+    corpus = a.get("corpus", "")
+    sid = str(a.get("session") or "")
+    app, in_store = _app(corpus, sid)
+    key = str(a.get("key") or "").strip()
+    if not key:
+        return {"ok": False, "error": "缺 key —— 要开的词，形状 name=词 或 字段=值"}
+    r = app.declare(key,
+                    why=str(a.get("why") or ""),
+                    by=_actor(a),
+                    allow_empty=bool(a.get("allow_empty")))
+    if not r.get("ok"):
+        return r
+    if r.get("already"):
+        return {"ok": True, "key": key, "already": True, "生效": r.get("生效"),
+                "说明": "同名谓词已在词表里，未覆盖（只追加）。"}
+    return {"ok": True, "key": key, "生效": r.get("生效"),
+            "加键": r.get("加键"),
+            "说明": ("已进词表，现在能查。" if r.get("生效")
+                     else "已登记进词表声明，但还没有正文命中——登记 ≠ 生效，"
+                          "教了内容（有了节点）才查得到。")}
+
+
 TOOLS = [
     {"name": "orient",
      "description": "「我记得」—— 私人语料 / 冻结的透镜（理由+指纹+是否过期）/ "
@@ -1630,6 +1785,11 @@ TOOLS = [
      "inputSchema": {"type": "object",
                      "properties": {
                          "corpus": {"type": "string"},
+                         "text": {"type": "string",
+                                  "description": ("原文（可选）：带上它，LDV 才能按"
+                                                  "《闲聊交外》判这单要不要查——"
+                                                  "寒暄/闲聊交回外层答，带事实问头"
+                                                  "照常查；没认出键老实报")},
                          "require": {"type": "array", "items": {"type": "string"}},
                          "forbid": {"type": "array", "items": {"type": "string"}},
                          "lens": {"type": "object",
@@ -1663,6 +1823,21 @@ TOOLS = [
                                    "description": "已有冻结透镜时显式换掉它（换透镜会让切分变，"
                                                   "新旧答案不可比）—— 不传就是拒"}},
                      "required": ["require"]}},
+    {"name": "declare",
+     "description": "开词：往词表声明一条谓词键（如 name=死锁）。0 命中也登记得进"
+                    "（allow_empty=true）——登记 ≠ 生效：0 命中的谓词进不了"
+                    " all_keys，教了正文才查得到；`生效` 如实报。",
+     "inputSchema": {"type": "object",
+                     "properties": {
+                         "corpus": {"type": "string"},
+                         "key": {"type": "string",
+                                 "description": "要开的词，形状 name=词 或 字段=值"},
+                         "why": {"type": "string",
+                                 "description": "为什么开这个词（依据）"},
+                         "allow_empty": {"type": "boolean",
+                                         "description": "0 命中也登记（预登记，"
+                                                        "教了内容才生效）"}},
+                     "required": ["key"]}},
     {"name": "remember",
      "description": "往自己的私人语料写一个节点（只追加不覆写）。"
                     "**写什么都直接进、直接能查能用的** —— 使用不看来源。"
@@ -1794,6 +1969,7 @@ TOOLS = [
 ]
 
 _IMPL = {"orient": _tool_orient, "ask": _tool_ask,
+         "declare": _tool_declare,
          "remember": _tool_remember, "drill": _tool_drill,
          "derive": _tool_derive, "remember_answer": _tool_remember_answer,
          "undo": _tool_undo, "next": _tool_next,

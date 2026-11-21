@@ -7338,6 +7338,22 @@ def test_compose() -> None:
             def log_message(self, *a):
                 pass
 
+            gets: list = []
+            gscript: list = []
+
+            def _send(self, code, obj):
+                raw = _json.dumps(obj).encode("utf-8")
+                self.send_response(code)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
+
+            def do_GET(self):          # v0.2.36：接口目录走 GET，也要能编排故障
+                _RetryH.gets.append(self.path)
+                i = min(len(_RetryH.gets) - 1, len(_RetryH.gscript) - 1)
+                self._send(*_RetryH.gscript[i])
+
             def do_POST(self):
                 n = int(self.headers.get("Content-Length") or 0)
                 _RetryH.hits.append(_json.loads(self.rfile.read(n) or b"{}"))
@@ -7352,6 +7368,7 @@ def test_compose() -> None:
 
         _srv2 = _THS(("127.0.0.1", 0), _RetryH)
         _URL = f"http://127.0.0.1:{_srv2.server_address[1]}/x"
+        _BASEX = f"http://127.0.0.1:{_srv2.server_address[1]}"
         _th.Thread(target=_srv2.serve_forever, daemon=True).start()
 
         class _N:
@@ -7361,10 +7378,12 @@ def test_compose() -> None:
         _TAUGHT = {"conc/533": _N("改格式重发"), "conc/534": _N("对方故障有界重试"),
                    "conc/532": _N("回执凭据层")}
 
-        def _mkapp(nodes: dict):
+        def _mkapp(nodes: dict, *, with_base=True):
             d = Path(_temp.mkdtemp())
-            (d / "trigger.json").write_text(_json.dumps({"url": _URL}),
-                                            encoding="utf-8")
+            _cfg = {"url": _URL}
+            if with_base:
+                _cfg["base"] = _BASEX
+            (d / "trigger.json").write_text(_json.dumps(_cfg), encoding="utf-8")
             a = E.App.__new__(E.App)
             a._usage_dir = d
             a._corpus_root = d
@@ -7601,6 +7620,1054 @@ def test_compose() -> None:
                _kinds == ["缺一个中间结论", "缺一个观测值"] or
                _kinds == ["缺一个观测值", "缺一条路"],
                f"{_kinds}")
+
+            # ── 组合路由（v0.2.29，用户：教它怎么组合路由，把上一步结论带回到入口）──
+            _CH3 = ("- 从「甲观测：A=1」→ 到「中间结论：A 成立（限定：只在乙条件下）」"
+                    "｜规则：独立重复｜依据：arXiv:0000.00011\n"
+                    "- 从「中间结论：A 成立（限定：只在乙条件下）」→ 到「末结论：A 可用」"
+                    "｜规则：范围收窄｜依据：arXiv:0000.00012\n")
+            _CB = {"conc/538": _IF("推演的路"),
+                   "conc/545": _IF("结论回入口"),
+                   "conc/601": _IF("组合链", _CH3, **{"形态": "推演", "链": "c"}),
+                   "conc/602": _IF("装配目标", "① 判据一\n② 判据二\n")}
+            _cb1 = _mkapp(_CB).query({"组合": {"步": [
+                {"推演": {"从": "甲观测：A=1", "到": "中间结论：A 成立（限定：只在乙条件下）"}},
+                {"推演": {"从": "«上一步»", "到": "末结论：A 可用"}}]}})
+            ok("★ [路由] D-Comb1 教过《结论回入口》⇒ 上一段结论原文回填下一段入口",
+               bool(_cb1.get("ok")) and _cb1.get("段数") == 2
+               and (_cb1["段"][1]["填入"] or {}).get("从")
+               == "中间结论：A 成立（限定：只在乙条件下）",
+               f"ok={_cb1.get('ok')} 段={_cb1.get('段数')} 填入={(_cb1.get('段') or [{}, {}])[1].get('填入')}")
+
+            _cb2 = _mkapp({"conc/538": _IF("推演的路")}).query(
+                {"组合": {"步": [{"推演": {"从": "甲观测：A=1", "到": "中间结论：A 成立（限定：只在乙条件下）"}}]}})
+            ok("★ [路由] D-Comb2 没教过《结论回入口》⇒ 组合不成立（行为由教导授权）",
+               (not _cb2.get("ok")) and "没有《结论回入口》" in str(_cb2.get("弃答")),
+               str(_cb2.get("弃答"))[:34])
+
+            _cb3 = _mkapp(_CB).query({"组合": {"步": [
+                {"推演": {"从": "甲观测：A=1", "到": "根本不存在的话"}},
+                {"推演": {"从": "«上一步»", "到": "末结论：A 可用"}}]}})
+            ok("★ [路由] D-Comb3 某段走不通 ⇒ 停在该段，后面一段都不走",
+               (not _cb3.get("ok")) and _cb3.get("段数") == 1 and _cb3.get("停在哪") == 1,
+               f"段数={_cb3.get('段数')} 停在哪={_cb3.get('停在哪')}")
+
+            _cb4 = _mkapp(_CB).query({"组合": {"步": [
+                {"推演": {"从": "«上一步»", "到": "末结论：A 可用"}}]}})
+            ok("★ [路由] D-Comb4 第 1 段用占位符 ⇒ 弃答（上面没有结论可取）",
+               (not _cb4.get("ok")) and "占位符" in str(_cb4.get("弃答")),
+               str(_cb4.get("弃答"))[:34])
+
+            _cb5 = _mkapp(_CB).query({"组合": {"步": [
+                {"推演": {"从": "甲观测：A=1", "到": "中间结论：A 成立（限定：只在乙条件下）"}}] * 6}})
+            ok("★ [路由] D-Comb5 超过 5 段 ⇒ 弃答「路太长」，不硬并",
+               (not _cb5.get("ok")) and "超过" in str(_cb5.get("弃答")),
+               str(_cb5.get("弃答"))[:34])
+
+            _cb6 = _mkapp(_CB).query({"组合": {"步": [
+                {"推演": {"从": "甲观测：A=1", "到": "中间结论：A 成立（限定：只在乙条件下）"}},
+                {"预测": {"从": "«上一步»"}}]}})
+            ok("★ [路由] D-Comb6 不认识的路由 ⇒ 先验形状，一段都不跑（不发明路由）",
+               (not _cb6.get("ok")) and (_cb6.get("段") or []) == []
+               and "不认识" in str(_cb6.get("弃答")),
+               f"段={_cb6.get('段')} 弃答={str(_cb6.get('弃答'))[:24]}")
+
+            # 用户 2026-11-10：「路由的结果就是一次结论啊，推演的结果和回执，单子没有区别」
+            # ⇒ 装配的单子也是这一步的结论：原样带走、原样回填，接不接得上由下一段自己判。
+            _cb7 = _mkapp(_CB).query({"组合": {"步": [
+                {"推演": {"从": "甲观测：A=1", "到": "中间结论：A 成立（限定：只在乙条件下）"}},
+                {"装配": {"名称": "装配目标"}},
+                {"推演": {"从": "«上一步»", "到": "末结论：A 可用"}}]}})
+            _cb7_fill = (_cb7.get("段") or [{}, {}, {}])[2].get("填入") or {}
+            _cb7_slip = {}
+            try:
+                _cb7_slip = json.loads(_cb7_fill.get("从") or "")
+            except Exception:
+                _cb7_slip = {}
+            ok("★ [路由] D-Comb7 单子也算结论：装配单原样带回第 3 段入口（不挑形状）",
+               (_cb7.get("段") or [{}])[1].get("交出结论") is True
+               and (_cb7.get("段") or [{}])[1].get("结论取自") == "整个返回（原样序列化）"
+               and isinstance(_cb7_slip, dict)
+               and "目标" in (_cb7_slip.get("装配单") or {}),
+               f"取自={(_cb7.get('段') or [{}, {}])[1].get('结论取自')} "
+               f"回填={str(_cb7_fill.get('从'))[:40]}")
+
+            _cb8 = _mkapp(_CB).query({"组合": {"步": [
+                {"推演": {"从": "甲观测：A=1", "到": "中间结论：A 成立（限定：只在乙条件下）"}},
+                {"装配": {"名称": "装配目标"}}]}})
+            _cb8_concl = {}
+            try:
+                _cb8_concl = json.loads(_cb8.get("结论") or "")
+            except Exception:
+                _cb8_concl = {}
+            ok("★ [路由] D-Comb8 末段是单子 ⇒ 组合走完，结论就是那份单子（不冒充空）",
+               bool(_cb8.get("ok")) and _cb8.get("末段交出结论") is True
+               and isinstance(_cb8_concl, dict)
+               and "目标" in (_cb8_concl.get("装配单") or {}),
+               f"ok={_cb8.get('ok')} 末段交出结论={_cb8.get('末段交出结论')} "
+               f"结论={str(_cb8.get('结论'))[:36]}")
+
+            # 三型同一把尺：有「结论」字段的取字段，没有的整个返回原样带走（键序不变、值不改）
+            _acb = _mkapp(_CB)
+            _rec = {"ok": True, "状态": 201, "凭据": {"invoice.id": "INV-0001"},
+                    "重试": [503, 201]}
+            _slip = {"ok": True, "目标": "装配目标", "判据": [{"主句": "判据一", "态": "有"}]}
+            _c_rec, _w_rec = _acb._step_conclusion(_rec)
+            _c_slip, _w_slip = _acb._step_conclusion(_slip)
+            _c_inf, _w_inf = _acb._step_conclusion({"ok": True, "结论": "A 可用"})
+            ok("★ [路由] D-Comb9 回执 / 单子 / 推演结论同一把尺：跑成了就有结论带走",
+               (_w_rec == _w_slip == "整个返回（原样序列化）") and _w_inf == "「结论」字段"
+               and json.loads(_c_rec) == _rec and list(json.loads(_c_rec)) == list(_rec)
+               and json.loads(_c_slip) == _slip and _c_inf == "A 可用"
+               and "INV-0001" in _c_rec,
+               f"回执={_w_rec} 单子={_w_slip} 推演={_w_inf}")
+
+            _cb10 = _mkapp(_CB).query({"组合": {"步": [
+                {"推演": {"从": "甲观测：A=1", "到": "中间结论：A 成立（限定：只在乙条件下）"}},
+                {"推演": {"从": "«上一步»", "到": "根本没有这条边的话"}},
+                {"推演": {"从": "«上一步»", "到": "末结论：A 可用"}}]}})
+            ok("★ [路由] D-Comb10 只有弃答才停：第 2 段弃答 ⇒ 停在第 2 段，第 3 段不跑",
+               (not _cb10.get("ok")) and _cb10.get("停在哪") == 2
+               and _cb10.get("段数") == 2
+               and _cb10.get("上一段结论") == "中间结论：A 成立（限定：只在乙条件下）",
+               f"停在哪={_cb10.get('停在哪')} 段数={_cb10.get('段数')}")
+
+            # ── 段留痕 + 结束.手里是（v0.2.39，口径：「组合段留痕补全」，纯信息完整性、
+            #    不动路由语义）：端口那一路的 `改动`／`尝试` 要进段记录，
+            #    port_calls.jsonl 也要存 `改动`；末段弃答时前几段真拿到的结论不能跟着消失。──
+            _MK = {"conc/532": _IF("回执凭据层"),
+                   "conc/533": _IF("改格式重发"),
+                   "conc/545": _IF("结论回入口"),
+                   "conc/546": _IF("什么叫结束"),
+                   "conc/547": _IF("结束之后")}
+            _PH = {"做什么": "开一张", "为什么": "测留痕", "请谁处理": "对方",
+                   "目标": "a.json"}
+            _RetryH.hits, _RetryH.script = [], [
+                  (422, {"error": "invalid_date_format", "field": "date",
+                         "message": "要 YYYY-MM-DD", "example": "2026-08-11"}),
+                  (201, {"ok": True, "invoice": {"id": "INV-7"}}),
+                  (503, {"error": "temporarily_unavailable"})]
+            _RetryH.gets, _RetryH.gscript = [], []
+            _mk = _mkapp(_MK)
+            _mkr = _mk.query({"组合": {"要": "一张开好的发票（INV-7）", "步": [
+                {"端口": {**_PH, "定义": {"date": "11/08/2026", "currency": "GBP"}}},
+                {"端口": {**_PH, "定义": {"date": "2026-08-12", "currency": "GBP"}}}]}})
+            _m0 = (_mkr.get("段") or [{}])[0]
+            ok("★ [留痕] D-Mark1 组合的「段」带走端口的 `改动`／`尝试`"
+               "（原先段里看不见它按样例改过写法、发过两次）",
+               _m0.get("改动") == ["date 11/08/2026 → 2026-08-11"]
+               and len(_m0.get("尝试") or []) == 2
+               and (_m0["尝试"][1].get("status") == 201),
+               f"改动={_m0.get('改动')}｜尝试={len(_m0.get('尝试') or [])}")
+
+            _plk = Path(_mk._corpus_root) / "port_calls.jsonl"
+            _lns = [json.loads(x) for x in _plk.read_text(encoding="utf-8").splitlines()
+                    if x.strip()] if _plk.is_file() else []
+            ok("★ [留痕] D-Mark2 port_calls.jsonl 里每次尝试都存 `改动`："
+               "第 1 次空、改过写法的那次有",
+               len(_lns) >= 2 and _lns[0].get("改动") == []
+               and _lns[1].get("改动") == ["date 11/08/2026 → 2026-08-11"],
+               f"落盘 {len(_lns)} 条｜第2条改动={_lns[1].get('改动') if len(_lns) > 1 else '无'}")
+
+            _finm = _mkr.get("结束") or {}
+            _held = _finm.get("之前交出的") or []
+            ok("★ [留痕] D-Mark3 末段弃答 ⇒ `手里是` 仍是末段那句（口径没动），"
+               "但第 1 段真开出的 INV-7 进了「之前交出的」",
+               _finm.get("到了没") == "没到"
+               and _finm.get("手里是") == (_mkr.get("段") or [{}, {}])[1].get("得到")
+               and len(_held) == 1 and _held[0].get("序") == 1
+               and "INV-7" in str(_held[0].get("得到")),
+               f"手里是={str(_finm.get('手里是'))[:16]}｜之前={len(_held)} 段"
+               f"｜含 INV-7={'INV-7' in str(_held)}")
+
+            _aftm = _finm.get("后续") or {}
+            ok("★ [留痕] D-Mark4 后续照搬「之前交出的」：下一步要接的往往正是它",
+               _aftm.get("之前交出的") == _held and bool(_held)
+               and _aftm.get("手里是") == _finm.get("手里是"),
+               f"后续态={_aftm.get('态')}｜带 {len(_aftm.get('之前交出的') or [])} 段")
+
+            _RetryH.hits, _RetryH.script = [], [(201, {"ok": True,
+                                                       "invoice": {"id": "INV-7"}})]
+            _RetryH.gets, _RetryH.gscript = [], []
+            _nk = _mkapp({"conc/532": _IF("回执凭据层"),
+                          "conc/533": _IF("改格式重发"),
+                          "conc/545": _IF("结论回入口")})
+            _nkr = _nk.query({"组合": {"步": [
+                {"端口": {**_PH, "定义": {"date": "2026-08-11", "currency": "GBP"}}}]}})
+            ok("★ [留痕] D-Mark5 没教过《什么叫结束》⇒ 结束与「之前交出的」都不出现"
+               "（I5：新增字段也由教导授权）",
+               bool(_nkr.get("ok")) and "结束" not in _nkr
+               and "之前交出的" not in json.dumps(_nkr, ensure_ascii=False),
+               f"ok={_nkr.get('ok')}｜有结束={'结束' in _nkr}")
+
+            # ── 什么叫结束（v0.2.31，用户：教它什么叫结束不就行了）──
+            _CH4 = ("- 从「甲观测：A=1」→ 到「中间结论：A 成立（限定：只在乙条件下）」"
+                    "｜规则：独立重复｜依据：arXiv:0000.00011\n"
+                    "- 从「中间结论：A 成立（限定：只在乙条件下）」→ 到「末结论：A 可用」"
+                    "｜规则：范围收窄｜依据：arXiv:0000.00012\n"
+                    "- 从「末结论：A 可用」→ 到「后续一：可用性已入账」"
+                    "｜规则：记账｜依据：arXiv:0000.00013\n"
+                    "- 从「后续一：可用性已入账」→ 到「后续二：入账已复核」"
+                    "｜规则：复核｜依据：arXiv:0000.00014\n"
+                    "- 从「后续二：入账已复核」→ 到「后续三：可对外引用」"
+                    "｜规则：发布｜依据：arXiv:0000.00015\n")
+            _CF = dict(_CB)
+            _CF["conc/546"] = _IF("什么叫结束")
+            _CF["conc/603"] = _IF("长链", _CH4, **{"形态": "推演", "链": "f"})
+
+            _f0 = _mkapp(_CF).query({"组合": {"步": [
+                {"推演": {"从": "甲观测：A=1", "到": "中间结论：A 成立（限定：只在乙条件下）"}}]}})
+            ok("★ [路由] D-Fin1 教过《什么叫结束》但没给「要」⇒ 一段都不跑（不说要什么，谈不上结束）",
+               (not _f0.get("ok")) and (_f0.get("段") or []) == []
+               and "要" in str(_f0.get("弃答")),
+               str(_f0.get("弃答"))[:44])
+
+            _f1 = _mkapp(_CB).query({"组合": {"步": [
+                {"推演": {"从": "甲观测：A=1", "到": "中间结论：A 成立（限定：只在乙条件下）"}},
+                {"推演": {"从": "«上一步»", "到": "末结论：A 可用"}}]}})
+            ok("★ [路由] D-Fin2 没教过《什么叫结束》⇒ 不要求「要」、不判结束，与上一版逐字相同",
+               bool(_f1.get("ok")) and "结束" not in _f1,
+               f"ok={_f1.get('ok')} 有结束={'结束' in _f1}")
+
+            _f2 = _mkapp(_CF).query({"组合": {"要": "一句结论（A 可用）", "步": [
+                {"推演": {"从": "甲观测：A=1", "到": "中间结论：A 成立（限定：只在乙条件下）"}},
+                {"推演": {"从": "«上一步»", "到": "末结论：A 可用"}}]}})
+            _fin2 = _f2.get("结束") or {}
+            ok("★ [路由] D-Fin3 跑完但没走满 ⇒ 判不了：三样摊开（要什么 / 手里是什么 / 凭什么）",
+               _fin2.get("到了没") == "判不了"
+               and _fin2.get("任务书要") == "一句结论（A 可用）"
+               and _fin2.get("手里是") == "末结论：A 可用"
+               and bool(_fin2.get("凭什么")),
+               f"{_fin2.get('到了没')}｜{str(_fin2.get('凭什么'))[:28]}")
+
+            _f3 = _mkapp(_CF).query({"组合": {"要": "可对外引用的结论", "步": [
+                {"推演": {"从": "甲观测：A=1", "到": "中间结论：A 成立（限定：只在乙条件下）"}},
+                {"推演": {"从": "«上一步»", "到": "末结论：A 可用"}},
+                {"推演": {"从": "«上一步»", "到": "后续一：可用性已入账"}},
+                {"推演": {"从": "«上一步»", "到": "后续二：入账已复核"}},
+                {"推演": {"从": "«上一步»", "到": "后续三：可对外引用"}}]}})
+            ok("★ [路由] D-Fin4 走满 5 段 ⇒ 用完了，不是完成（段数用完不算做完）",
+               bool(_f3.get("ok")) and (_f3.get("结束") or {}).get("到了没") == "用完了"
+               and "段数用完" in str((_f3.get("结束") or {}).get("凭什么")),
+               f"{(_f3.get('结束') or {}).get('到了没')}")
+
+            _f4 = _mkapp(_CF).query({"组合": {"要": "一句结论（A 可用）", "步": [
+                {"推演": {"从": "甲观测：A=1", "到": "中间结论：A 成立（限定：只在乙条件下）"}},
+                {"推演": {"从": "«上一步»", "到": "根本没有这条边的话"}}]}})
+            _fin4 = _f4.get("结束") or {}
+            ok("★ [路由] D-Fin5 末段弃答 ⇒ 没到，理由指到第几段（不把弃答算成完成）",
+               (not _f4.get("ok")) and _fin4.get("到了没") == "没到"
+               and "第 2 段" in str(_fin4.get("凭什么")),
+               f"{_fin4.get('到了没')}｜{str(_fin4.get('凭什么'))[:30]}")
+
+            _f5 = _mkapp(_CF).query({"组合": {"要": "  一句结论，含限定语  ", "步": [
+                {"推演": {"从": "甲观测：A=1", "到": "中间结论：A 成立（限定：只在乙条件下）"}}]}})
+            ok("★ [路由] D-Fin6 「要」原样摊出：去掉首尾空白但不改写、不概括",
+               ((_f5.get("结束") or {}).get("任务书要")) == "一句结论，含限定语",
+               repr((_f5.get("结束") or {}).get("任务书要")))
+
+            # ── v0.2.32 结束之后（user 2026-11-10「给结束的后续动作也通过教学做成一个路由」）
+            _CA = dict(_CF)
+            _CA["conc/547"] = _IF("结束之后")
+
+            _a1 = _mkapp(_CA).query({"组合": {"要": "可对外引用的结论", "步": [
+                {"推演": {"从": "甲观测：A=1", "到": "中间结论：A 成立（限定：只在乙条件下）"}},
+                {"推演": {"从": "«上一步»", "到": "末结论：A 可用"}},
+                {"推演": {"从": "«上一步»", "到": "后续一：可用性已入账"}},
+                {"推演": {"从": "«上一步»", "到": "后续二：入账已复核"}},
+                {"推演": {"从": "«上一步»", "到": "后续三：可对外引用"}}]}})
+            _aft1 = ((_a1.get("结束") or {}).get("后续") or {})
+            ok("★ [路由] D-Aft1 用完了 ⇒ 后续只有一条出口：停手交人，且明写不许「换条路再跑一遍」",
+               _aft1.get("动作") == "停手交人"
+               and any("换条路" in str(x) for x in (_aft1.get("不许") or []))
+               and "不从这里进" in str(_aft1.get("接完从哪进")),
+               f"{_aft1.get('动作')}｜{_aft1.get('不许')}")
+
+            _a2 = _mkapp(_CA).query({"组合": {"要": "一句结论（A 可用）", "步": [
+                {"推演": {"从": "甲观测：A=1", "到": "中间结论：A 成立（限定：只在乙条件下）"}},
+                {"推演": {"从": "«上一步»", "到": "根本没有这条边的话"}}]}})
+            _aft2 = ((_a2.get("结束") or {}).get("后续") or {})
+            _gap2 = (_aft2.get("拿什么接") or [{}])[0]
+            ok("★ [路由] D-Aft2 没到 ⇒ 后续是报缺：一条缺口五项齐，续入点指到停下的那一段",
+               _aft2.get("动作") == "报缺"
+               and all(_gap2.get(k) for k in ("缺什么", "哪一类", "对方原话", "要谁给", "给了怎么用"))
+               and _aft2.get("接完从哪进") == "第 2 段"
+               and "第 2 段" in str(_gap2.get("给了怎么用")),
+               f"{_aft2.get('动作')}｜进={_aft2.get('接完从哪进')}｜{str(_gap2.get('给了怎么用'))[:30]}")
+
+            ok("★ [路由] D-Aft3 后续不摘要：手里是 与结束时逐字相同（不清理、不改名）",
+               bool(_aft2.get("手里是"))
+               and _aft2.get("手里是") == (_a2.get("结束") or {}).get("手里是"),
+               f"{str(_aft2.get('手里是'))[:34]!r}")
+
+            _a4 = _mkapp(_CA).query({"组合": {"要": "一句结论（A 可用）", "步": [
+                {"推演": {"从": "甲观测：A=1", "到": "中间结论：A 成立（限定：只在乙条件下）"}}]}})
+            _aft4 = ((_a4.get("结束") or {}).get("后续") or {})
+            ok("★ [路由] D-Aft4 判不了 ⇒ 后续是问一句人话：把任务书那一句原样问回去，等一句",
+               _aft4.get("动作") == "问一句人话"
+               and "一句结论（A 可用）" in str(_aft4.get("要人答")),
+               f"{_aft4.get('动作')}｜{str(_aft4.get('要人答'))[:44]}")
+
+            _a5 = _mkapp(_CF).query({"组合": {"要": "x", "步": [
+                {"推演": {"从": "甲观测：A=1", "到": "中间结论：A 成立（限定：只在乙条件下）"}}]}})
+            ok("★ [路由] D-Aft5 没教过《结束之后》⇒ 有结束、没有后续（与 v0.2.31 逐字相同）",
+               "结束" in _a5 and "后续" not in (_a5.get("结束") or {}),
+               f"有结束={'结束' in _a5} 有后续={'后续' in (_a5.get('结束') or {})}")
+
+            _a6 = _mkapp(_CA).query({"后续": {"到了没": "用完了", "任务书要": "一条补法",
+                                             "手里是": "一份噪声单"}})
+            _a6b = _mkapp(_CF).query({"后续": {"到了没": "用完了"}})
+            ok("★ [路由] D-Aft6 单独问「后续」：教过才答，没教过弃答（不自己编下一步）",
+               _a6.get("ok") and _a6.get("动作") == "停手交人"
+               and (not _a6b.get("ok")) and "没有《结束之后》" in str(_a6b.get("弃答")),
+               f"{_a6.get('动作')}｜{str(_a6b.get('弃答'))[:26]}")
+
+            ok("★ [路由] D-Aft7 后续不自转：三态都不给一条新路（没有「步」字段，且都写明不许再跑）",
+               all(("步" not in _x
+                    and any(("再跑" in str(y) or "加段" in str(y)) for y in (_x.get("不许") or [])))
+                   for _x in (_aft1, _aft2, _aft4)),
+               f"{[_x.get('动作') for _x in (_aft1, _aft2, _aft4)]}")
+
+            _a8 = _mkapp(_CA).query({"后续": {
+                "到了没": "没到", "任务书要": "回执",
+                "手里是": "没办成，缺 1 条客观事实（缺对方可用性：对方可用性）"}})
+            _a8b = _mkapp(_CA).query({"后续": {
+                "到了没": "没到", "任务书要": "回执",
+                "手里是": "到不了「订单已入账」：没有哪条教过的边"}})
+            _k1 = ((_a8.get("拿什么接") or [{}])[0]).get("哪一类")
+            _k2 = ((_a8b.get("拿什么接") or [{}])[0]).get("哪一类")
+            ok("★ [路由] D-Aft8 弃答卷里写了类别就照抄，没写才报「说不清哪一类」（不自己归类）",
+               _k1 == "缺对方可用性" and _k2 == "说不清哪一类", f"{_k1} / {_k2}")
+
+            # ── 值入形态（v0.2.33）：外面只交值，句子由 LDV 自己出 ──────────
+            _CHF = ("- 从「台账：refund.id=RF-0001 的状态为 settled（2026-11-10T17:40:02 结算）」"
+                    "→ 到「退款 RF-0001 已入账」｜规则：以台账为准｜依据：台账样例\n"
+                    "- 从「退款 RF-0001 已入账」→ 到「这笔退款可以结案」"
+                    "｜规则：两件齐才结案｜依据：台账样例\n")
+            _FB = {"conc/538": _IF("推演的路"),
+                   "conc/700": _IF("测试事务链", _CHF, **{"形态": "推演", "链": "f"})}
+            _FT = dict(_FB)
+            _FT["conc/551"] = _IF("值入形态")
+            _SRC = ("台账：refund.id=RF-0001 的状态为 settled（2026-11-10T17:40:02 结算）")
+            _OBS9 = ("台账：refund.id=RF-0009 的状态为 settled（2026-11-10T17:40:02 结算）")
+            _FILL9 = [{"原": "RF-0001", "成": "RF-0009"}]
+
+            _fl0 = _mkapp(_FB).query({"推演": {"从": [_OBS9], "到": "这笔退款可以结案",
+                                              "填": _FILL9}})
+            _fl0b = _mkapp(_FB).query({"推演": {"从": [_OBS9], "到": "这笔退款可以结案"}})
+            ok("★ [路由] D-Fill1 没教过《值入形态》⇒ `填` 不生效，与不带填逐字相同（I5）",
+               "填入" not in _fl0 and not _fl0.get("ok")
+               and str(_fl0.get("弃答")) == str(_fl0b.get("弃答")),
+               f"有填入={'填入' in _fl0} 弃答同={str(_fl0.get('弃答')) == str(_fl0b.get('弃答'))}")
+
+            _fl1 = _mkapp(_FT).query({"推演": {
+                "从": ["回执：refund.id=RF-0009，对方收下"], "到": "这笔退款可以结案"}})
+            _m1 = (_fl1.get("报缺") or [{}])[0]
+            ok("★ [路由] D-Fill2 教过 ⇒ 报缺摊出「入边形态 + 值位 + 怎么填」（句子不用外面写）",
+               _m1.get("入边形态") == _SRC
+               and {"类": "编号", "原值": "RF-0001"} in (_m1.get("值位") or [])
+               and "填" in str(_m1.get("怎么填")),
+               f"形态={str(_m1.get('入边形态'))[:34]} 值位={_m1.get('值位')}")
+
+            _fl2 = _mkapp(_FT).query({"推演": {"从": [_OBS9], "到": "这笔退款可以结案",
+                                              "填": _FILL9}})
+            _path = _fl2.get("路径") or []
+            ok("★ [路由] D-Fill3 照形态填值 ⇒ 两跳走通，中间结论里是新值（不是旧的）",
+               _fl2.get("ok") and _fl2.get("跳数") == 2
+               and "RF-0009" in str((_path or [{}])[0].get("结论"))
+               and "RF-0001" not in str((_path or [{}])[0].get("结论")),
+               f"ok={_fl2.get('ok')} 首跳结论={str((_path or [{}])[0].get('结论'))}")
+
+            ok("★ [路由] D-Fill4 只换值不换措辞：代入后的前提 = 语料前提换掉那个值，一字不多",
+               (_path or [{}])[0].get("前提") == _SRC.replace("RF-0001", "RF-0009"),
+               f"{str((_path or [{}])[0].get('前提'))[:50]}")
+
+            _f4 = (_fl2.get("填入") or [{}])[0]
+            ok("★ [路由] D-Fill5 前提与结论一起换（只换一半下一跳就断）：命中两侧、共 3 处",
+               _f4.get("几处") == 3
+               and any("前提" in h for h in (_f4.get("命中") or []))
+               and any("结论" in h for h in (_f4.get("命中") or [])),
+               f"几处={_f4.get('几处')} 命中={_f4.get('命中')}")
+
+            _fl3 = _mkapp(_FT).query({"推演": {"从": [_OBS9], "到": "这笔退款可以结案",
+                                              "填": [{"原": "XX-9999", "成": "RF-0007"}]}})
+            ok("★ [路由] D-Fill6 填不中（库里没这个位）⇒ 不新建位、不硬塞，明说找不到位",
+               not _fl3.get("ok") and (_fl3.get("填入") or [{}])[0].get("几处") == 0
+               and "找不到位" in str(_fl3.get("弃答")),
+               str(_fl3.get("弃答"))[-40:])
+
+            _fl4 = _mkapp(_FT).query({"推演": {"从": [_OBS9], "到": "这笔退款可以结案",
+                                              "填": ["RF-0009"]}})
+            ok("★ [路由] D-Fill7 只给值不给替换关系 ⇒ 弃答并给出写法（不猜要换哪一位）",
+               not _fl4.get("ok") and "只给值" in str(_fl4.get("弃答")),
+               str(_fl4.get("弃答"))[:40])
+
+            _ap7 = _mkapp(_FT)
+            _n7 = len(_ap7._infer_edges())
+            _fl5 = _ap7.query({"推演": {"从": [_OBS9], "到": "这笔退款可以结案", "填": _FILL9}})
+            ok("★ [路由] D-Fill8 填值是代入不是造边：边数不变，且留痕写明「值来自外部」",
+               len(_ap7._infer_edges()) == _n7
+               and "外部" in str(_fl5.get("填值来源")),
+               f"边数 {_n7}→{len(_ap7._infer_edges())}｜{str(_fl5.get('填值来源'))[:30]}")
+
+            # ── 不知道（v0.2.34）：不验真假，但必须说得出来 ──────────────
+            _FU = dict(_FT)                       # 值入形态 + 不知道
+            _FU["conc/552"] = _IF("不知道")
+            _FBu = dict(_FB)                      # 只有 不知道，没有 值入形态
+            _FBu["conc/552"] = _IF("不知道")
+
+            ok("★ [路由] D-Unk1 没教《不知道》⇒ 两个字段都不出现（与上一版逐字相同，I5）",
+               "不知道" not in _fl2 and "诚实" not in _fl2,
+               f"字段={sorted(_fl2.keys())}")
+
+            _uk = _mkapp(_FU).query({"推演": {"从": [_OBS9], "到": "这笔退款可以结案",
+                                             "填": _FILL9}})
+            _u0 = (_uk.get("不知道") or [{}])[0]
+            ok("★ [路由] D-Unk2 教过 ⇒ 填进去的值逐条报「不知道它真假」，四件齐全",
+               _uk.get("ok") and _u0.get("哪一类") == "值"
+               and "RF-0009" in str(_u0.get("不知道什么"))
+               and all(k in _u0 for k in ("不知道什么", "哪一类", "我凭什么说到这", "谁能补"))
+               and "没验" in str(_uk.get("诚实")),
+               f"条数={len(_uk.get('不知道') or [])} 首条={str(_u0.get('不知道什么'))[:26]}")
+
+            _uk2 = _mkapp(_FBu).query({"推演": {"从": [_OBS9], "到": "这笔退款可以结案",
+                                               "填": _FILL9}})
+            ok("★ [路由] D-Unk3 遮《值入形态》又给填 ⇒ 明说「一条都没用上」，不拿原值冒充",
+               not _uk2.get("ok") and "用上" in str(_uk2.get("诚实"))
+               and "冒充" in str(_uk2.get("弃答")) and not _uk2.get("路径"),
+               str(_uk2.get("弃答"))[:34])
+
+            _uk3 = _mkapp(_FU).query({"推演": {"从": [_SRC], "到": "这笔退款可以结案",
+                                              "填": _FILL9}})
+            _u3 = [u for u in (_uk3.get("不知道") or []) if isinstance(u, dict)]
+            ok("★ [路由] D-Unk4 起点没跟着换 ⇒ 另报「起点要不要换」，不把自己换出来的句子当外部缺口",
+               any(u.get("不知道什么") == "起点要不要跟着换" for u in _u3)
+               and any(m.get("哪一类") == "自填不一致" for m in (_uk3.get("报缺") or [])),
+               f"不知道条={[u.get('不知道什么')[:12] for u in _u3]}")
+
+            _uk4 = _mkapp(_FU).query({"推演": {"从": [_OBS9], "到": "语料里没有这个结论"}})
+            _u4 = (_uk4.get("不知道") or [{}])[0]
+            ok("★ [路由] D-Unk5 到不了 ⇒ 说「不知道有没有这条路」，不说「没有这条路」",
+               _u4.get("哪一类") == "路" and "有没有来路" in str(_u4.get("不知道什么"))
+               and "不知道" in str(_uk4.get("诚实")),
+               str(_u4.get("不知道什么"))[:34])
+
+            _uk5 = _mkapp(_FU).query({"推演": {"从": ["回执：refund.id=RF-0009，对方收下"],
+                                              "到": "退款 RF-0001 已入账"}})
+            _u5 = _uk5.get("不知道") or []
+            ok("★ [路由] D-Unk6 缺口是起点观测 ⇒ 另报「这个值是不是真的，我不知道」",
+               any(u.get("哪一类") == "值" and "是不是真的" in str(u.get("不知道什么"))
+                   for u in _u5),
+               f"不知道条={[str(u.get('不知道什么'))[:14] for u in _u5]}")
+
+            _uk6 = _mkapp({"conc/538": _IF("推演的路"),
+                           "conc/552": _IF("不知道")}).query(
+                {"推演": {"从": ["随便"], "到": "随便"}})
+            ok("★ [路由] D-Unk7 一条边都没有 ⇒ 报「没教过」，不报「不存在」",
+               "不知道" in _uk6 and "不是「不存在」" in str(_uk6.get("不知道")),
+               str(_uk6.get("不知道"))[:60])
+
+            # ── 起点来源（v0.2.38）：边是接法，起点是观测，两件事不共用一句话 ──
+            _SS = dict(_FB)                                   # 推演的路 + 链
+            _SS["conc/560"] = _IF("起点来源")
+            _SSU = dict(_SS)                                  # 再加 不知道
+            _SSU["conc/552"] = _IF("不知道")
+
+            _s0 = _mkapp(_FB).query({"推演": {"从": [_SRC], "到": "这笔退款可以结案"}})
+            ok("★ [来源] D-Src1 没教过《起点来源》⇒ 字段不出现（与 v0.2.37 逐字相同，I5）",
+               "起点来源" not in _s0 and "诚实" not in _s0,
+               f"字段={sorted(_s0.keys())}")
+
+            _s1 = _mkapp(_SS).query({"推演": {"从": [_SRC], "到": "这笔退款可以结案"}})
+            _x1 = (_s1.get("起点来源") or [{}])[0]
+            ok("★ [来源] D-Src2 教过 ⇒ 一条起点一行，四件齐（谁给的/形对不对得上/真不真）",
+               _s1.get("ok") and len(_s1.get("起点来源") or []) == 1
+               and _x1.get("谁给的") == "调用方"
+               and _x1.get("形对不对得上") == "对得上"
+               and _x1.get("真不真") == "我不知道",
+               f"{_x1}")
+
+            _s2 = _mkapp(_SS).query({"推演": {"从": ["外来说法：A 已经被观测到"],
+                                              "到": "结论：A 可信"}})
+            _x2 = (_s2.get("起点来源") or [{}])[0]
+            ok("★ [来源] D-Src3 语料里没这句 ⇒ 标「对不上」并说明只按整句接住（不拆不猜）",
+               _x2.get("形对不对得上") == "对不上" and "整句接住" in str(_x2.get("说明")),
+               str(_x2.get("说明"))[:34])
+
+            _s3 = _mkapp(_SSU).query({"推演": {"从": [_SRC], "到": "这笔退款可以结案"}})
+            ok("★ [来源] D-Src4 起点与语料前提逐字相同也照样标「外面给的」；不再说「全部由语料原文」",
+               _s3.get("ok") and "全部由语料原文" not in str(_s3.get("诚实"))
+               and "起点 1 条" in str(_s3.get("诚实")),
+               str(_s3.get("诚实"))[:50])
+
+            ok("★ [来源] D-Src5 只教《起点来源》、没教《不知道》⇒ 标来源但不代写「诚实」（不越权）",
+               "起点来源" in _s1 and "诚实" not in _s1, f"字段={sorted(_s1.keys())}")
+
+            _CS = {**_CB, "conc/560": _IF("起点来源")}
+            _s4 = _mkapp(_CS).query({"组合": {"步": [
+                {"推演": {"从": "甲观测：A=1", "到": "中间结论：A 成立（限定：只在乙条件下）"}},
+                {"推演": {"从": "«上一步»", "到": "末结论：A 可用"}}]}})
+            _x4 = ((_s4.get("段") or [{}, {}])[1].get("起点来源") or [{}])[0]
+            ok("★ [来源] D-Src6 组合第 2 段的起点标「组合上一步（第1段 推演）」，不标成调用方",
+               str(_x4.get("谁给的") or "").startswith("组合上一步（第1段 推演）"),
+               str(_x4.get("谁给的"))[:30])
+
+            # ── 长线：接口目录 / 结算 / 取数 / 分段引用 / 回单验收（v0.2.35）──
+            class _NI:
+                def __init__(self, nm, body="", **kw):
+                    self.fields = {"name": nm, **kw}
+                    self.body = body
+
+            _ALG = (
+                "- 行: 行本币 = round(qty * price * (1 - discount_pct / 100), 2)\n"
+                "- 汇总: 营收 = 行本币 求和\n"
+                "- 汇总: 应付 = round(营收 / 2, 2)\n"
+                "- 费率: A 0.005\n")
+            _CAT = ("- 汇率 ｜ GET /fx ｜ 参数：date\n"
+                    "- 结算提交 ｜ POST /statements ｜ 参数：period, payroll_cny\n"
+                    "- 结算对账 ｜ GET /statements ｜ 参数：period\n")
+            _LN = {"conc/545": _NI("结论回入口"), "conc/546": _NI("什么叫结束"),
+                   "conc/554": _NI("结算算法", _ALG), "conc/555": _NI("取数"),
+                   "conc/556": _NI("分段引用"), "conc/557": _NI("回单验收"),
+                   "conc/553": _NI("接口目录", _CAT)}
+            _rows = [{"order_id": "A1", "qty": 2, "price": "10.00", "discount_pct": 0,
+                      "currency": "CNY", "state": "confirmed"},
+                     {"order_id": "A2", "qty": 1, "price": "2.675", "discount_pct": 0,
+                      "currency": "CNY", "state": "confirmed"},
+                     {"order_id": "A3", "qty": 9, "price": "99.00", "discount_pct": 0,
+                      "currency": "CNY", "state": "cancelled"}]
+            _se = _mkapp(_LN).query({"结算": {"订单": _rows, "退款": [],
+                                              "汇率": {"rates": {"CNY": "1"}}}})
+            ok("★ [结算] D-Stl1 逐行代入 + 只计 confirmed（cancelled 剔除，不默认 0）",
+               _se.get("ok") and _se.get("行数") == 2 and _se.get("剔除") == 1
+               and _se["汇总"]["营收"] == 22.68,
+               f"行={_se.get('行数')} 剔除={_se.get('剔除')} 营收={(_se.get('汇总') or {}).get('营收')}")
+
+            ok("★ [结算] D-Stl2 舍入是 half-up：2.675 → 2.68（不是 float 的 2.67）",
+               any(x["本币"] == 2.68 for x in (_se.get("表") or [])),
+               str([x["本币"] for x in (_se.get("表") or [])]))
+
+            _se2 = _mkapp({"conc/554": _NI("结算算法", _ALG)}).query(
+                {"结算": {"订单": _rows, "汇率": {}}})
+            ok("★ [结算] D-Stl3 没有汇率 ⇒ 不算（跨币种的本币额不猜）",
+               not _se2.get("ok") and "没有汇率" in str(_se2.get("弃答")),
+               str(_se2.get("弃答"))[:30])
+
+            _pk = _mkapp(_LN).query({"取": {"自": {"a": {"b": 7}}, "键": "a.b"}})
+            _pk2 = _mkapp(_LN).query({"取": {"自": {"a": 1}, "键": "z"}})
+            ok("★ [取数] D-Pick1 取到就原样交；取不到就列出这一层有哪些键（不猜同义键）",
+               _pk.get("值") == 7 and not _pk2.get("ok")
+               and _pk2.get("这一层有") == ["a"],
+               f"{_pk.get('值')} / {_pk2.get('这一层有')}")
+
+            _ac = _mkapp(_LN).query({"验收": {"在": {"status": "accepted", "n": 22},
+                                             "核": {"status": "accepted", "n": 22}}})
+            _ac2 = _mkapp(_LN).query({"验收": {"在": {"status": "accepted"},
+                                              "核": {"status": "accepted", "n": 22}}})
+            _ac3 = _mkapp(_LN).query({"验收": {"在": {"status": "settled"},
+                                              "核": {"status": "accepted"}}})
+            ok("★ [验收] D-Acp1 全过=到了；回单没写=核不了；对不上=没到（三态分开）",
+               _ac.get("到了没") == "到了" and _ac2.get("到了没") == "核不了"
+               and _ac3.get("到了没") == "没到" and _ac3.get("没过的") == ["status"],
+               f"{_ac.get('到了没')} / {_ac2.get('到了没')} / {_ac3.get('到了没')}")
+
+            _cmb = {"组合": {"要": "x", "步": [
+                {"取": {"自": {"k": 5}, "键": "k"}},
+                {"取": {"自": "«第1段»", "键": "值"}}]}}
+            _cr = _mkapp(_LN).query(_cmb)
+            _cr2 = _mkapp(_LN).query({"组合": {"要": "x", "步": [
+                {"取": {"自": {"k": 5}, "键": "k"}},
+                {"取": {"自": "«第2段»", "键": "值"}}]}})
+            ok("★ [引用] D-Ref1 教过《分段引用》⇒ «第N段» 可回填；引没跑到的段 ⇒ 建形状时就停",
+               _cr.get("ok") and _cr.get("段") and _cr["段"][-1]["走通"]
+               and not _cr2.get("ok") and "还没跑到" in str(_cr2.get("弃答")),
+               f"{_cr.get('ok')} / {str(_cr2.get('弃答'))[:24]}")
+
+            _api = _mkapp({"conc/553": _NI("接口目录", _CAT)}, with_base=False)
+            _a1 = _api.query({"端口": {"接口": "汇率", "参数": {"date": "2026-10-31"}}})
+            _a2 = _api.query({"端口": {"接口": "没有这个", "参数": {}}})
+            ok("★ [接口] D-Api1 目录里没这个名字 ⇒ 不猜路径；没配 base ⇒ 不发明地址",
+               (not _a1.get("ok") and "base" in str(_a1.get("弃答")))
+               and (not _a2.get("ok") and "名字是唯一钥匙" in str(_a2.get("弃答"))),
+               f"{str(_a1.get('弃答'))[:18]} / {str(_a2.get('弃答'))[:18]}")
+
+            # ── 接口目录这条路的 503（v0.2.36）：授权 / 不重发 / 措辞 / 报缺 / 留痕 ──
+            #    v0.2.35 的病根：retry_ok = bool(_port_retry_rule()) 对非空 dict 恒真
+            #    ⇒ 重试恒开、跟语料无关；503 还被说成「哪一项不对」。
+            _MRT = ("| 类别 | 情形 | 谁能给 | 给了之后怎么用 |\n"
+                    "| --- | --- | --- | --- |\n"
+                    "| 缺对方可用性 | 5xx | 接口方（运维） | 对方恢复后原样再发一次 |\n")
+            _BK = {"conc/536": _NI("报缺单"),
+                   "conc/535": _NI("客观事实与可推事实", _MRT)}
+            _API_OK = {"conc/553": _NI("接口目录", _CAT), **_BK}
+            _RT534 = {"conc/534": _NI("对方故障有界重试")}
+            _OKOBJ = {"date": "2026-10-31", "rates": {"USD": 7.12}}
+
+            def _g(code, obj, tail=None):
+                _RetryH.gets, _RetryH.hits = [], []
+                _RetryH.gscript = [(code, obj)] + (
+                    [(200, _OKOBJ)] if tail is None else tail)
+                _RetryH.script = list(_RetryH.gscript)   # POST 用 script，两条都要铺
+
+            _g(503, {"error": "transient"})
+            _A2 = _mkapp({**_API_OK, **_RT534}).query(
+                {"端口": {"接口": "汇率", "参数": {"date": "2026-10-31"}}})
+            ok("★ [接口] D-Api2 教过《对方故障有界重试》⇒ 503 后重发；「尝试」列出两次",
+               _A2.get("ok") and len(_RetryH.gets) == 2
+               and len(_A2.get("尝试") or []) == 2,
+               f"请求 {len(_RetryH.gets)}｜尝试 {len(_A2.get('尝试') or [])}")
+
+            _g(503, {"error": "transient"})
+            _A3 = _mkapp(_API_OK).query(
+                {"端口": {"接口": "汇率", "参数": {"date": "2026-10-31"}}})
+            ok("★ [接口] D-Api3 没教过重试 ⇒ 一次都不重发（删节点=行为退回，I5）",
+               not _A3.get("ok") and len(_RetryH.gets) == 1,
+               f"请求 {len(_RetryH.gets)}")
+
+            _g(503, {"error": "temporarily_unavailable"},
+               tail=[(503, {"error": "temporarily_unavailable"})] * 3)
+            _A4 = _mkapp({**_API_OK, **_RT534}).query(
+                {"端口": {"接口": "汇率", "参数": {"date": "2026-10-31"}}})
+            _b4 = (_A4.get("报缺") or [{}])[0]
+            ok("★ [接口] D-Api4 503 说的是「对方自己挂了」，不是「哪一项不对」；并出报缺单",
+               "自己挂了" in str(_A4.get("弃答"))
+               and "哪一项不对" not in str(_A4.get("弃答"))
+               and _b4.get("哪一类") == "缺对方可用性",
+               f"{str(_A4.get('弃答'))[:26]}｜{_b4.get('哪一类')}")
+
+            _g(503, {"error": "transient"})
+            _A5 = _mkapp({**_API_OK, **_RT534, "conc/558": _NI("写操作不重发")}).query(
+                {"端口": {"接口": "结算提交", "参数": {"period": "2026-10"}}})
+            _b5 = (_A5.get("报缺") or [{}])[0]
+            ok("★ [接口] D-Api5 写操作只发一次：503 也不重发，报缺写明「先查再定」",
+               not _A5.get("ok") and len(_RetryH.hits) == 1
+               and "写操作只发一次" in str(_A5.get("弃答"))
+               and "先查这一单" in str(_b5.get("给了之后怎么用")),
+               f"请求 {len(_RetryH.hits)}｜{str(_b5.get('给了之后怎么用'))[:14]}")
+
+            _g(503, {"error": "transient"})
+            _A6 = _mkapp({**_API_OK, **_RT534}).query(
+                {"端口": {"接口": "结算提交", "参数": {"period": "2026-10"}}})
+            ok("★ [接口] D-Api6 遮掉《写操作不重发》⇒ 写也照 534 重发（授权链两头都通）",
+               len(_RetryH.hits) == 2, f"请求 {len(_RetryH.hits)}")
+
+            _g(503, {"error": "transient"})
+            _ap7 = _mkapp({**_API_OK, **_RT534})
+            _ap7.query({"端口": {"接口": "汇率", "参数": {"date": "2026-10-31"}}})
+            _pl = Path(_ap7._corpus_root) / "port_calls.jsonl"
+            _ln = (_pl.read_text(encoding="utf-8").strip().splitlines()
+                   if _pl.is_file() else [])
+            ok("★ [接口] D-Api7 每次尝试都落 port_calls.jsonl（重发过要事后查得到）",
+               len(_ln) == 2 and all("api000" in x for x in _ln),
+               f"落盘 {len(_ln)} 条")
+
+            # ── 挂了先查再定（v0.2.37）：只在写失败时查，查只定性、不重发 ──
+            #    用户口径：「可以写这个路由，但是需要的时候才去调用」
+            _VERT = {**_API_OK, **_RT534, "conc/558": _NI("写操作不重发")}
+            _VER = {**_VERT, "conc/559": _NI("挂了先查再定")}
+            _VB = {"period": "2026-10", "payroll_cny": 1}
+            _CHK = {"接口": "结算对账", "参数": {"period": "2026-10"},
+                    "核": {"period": "2026-10", "lines_count": 22}}
+            _ROWA = {"statement_id": "ST-TEST0001", "period": "2026-10",
+                     "lines_count": 22}
+            _F503 = (503, {"error": "temporarily_unavailable"})
+
+            def _arr(post, get_):
+                _RetryH.hits, _RetryH.gets = [], []
+                _RetryH.script, _RetryH.gscript = list(post), list(get_)
+
+            _arr([_F503], [])
+            _v1 = _mkapp(_VERT).query({"端口": {"接口": "结算提交", "参数": _VB,
+                                              "查": _CHK}})
+            ok("★ [查] D-Ver1 没教过《挂了先查再定》⇒ 「查」一个字都不执行（I5 退回）",
+               "查过" not in _v1 and len(_RetryH.gets) == 0,
+               f"查过在不在={'查过' in _v1}｜读了 {len(_RetryH.gets)} 次")
+
+            _arr([_F503], [(200, {"items": [_ROWA]})])
+            _v2 = _mkapp(_VER).query({"端口": {"接口": "结算提交", "参数": _VB,
+                                              "查": _CHK}})
+            ok("★ [查] D-Ver2 写回 503 但查到核项全对 ⇒ 三态「在」、ok 转真、凭据是对方的号",
+               _v2.get("ok") and (_v2.get("查过") or {}).get("三态") == "在"
+               and (_v2.get("查过") or {}).get("凭据") == "ST-TEST0001"
+               and len(_RetryH.hits) == 1,
+               f"ok={_v2.get('ok')}｜{_v2.get('查过', {}).get('三态')}"
+               f"｜写 {len(_RetryH.hits)} 次")
+
+            _arr([_F503], [(200, {"items": []})])
+            _v3 = _mkapp(_VER).query({"端口": {"接口": "结算提交", "参数": _VB,
+                                              "查": _CHK}})
+            _b3 = (_v3.get("报缺") or [{}])[0]
+            ok("★ [查] D-Ver3 查通了却是空的 ⇒ 「不在」；要不要再发由人说，不自作主张",
+               (not _v3.get("ok")) and (_v3.get("查过") or {}).get("三态") == "不在"
+               and "没有这一单" in str(_v3.get("弃答"))
+               and "由人说" in str(_b3.get("给了之后怎么用"))
+               and len(_RetryH.hits) == 1,
+               f"{_v3.get('查过', {}).get('三态')}｜{str(_b3.get('给了之后怎么用'))[:16]}")
+
+            _arr([_F503], [(200, {"items": [{**_ROWA, "lines_count": 23}]})])
+            _v4 = _mkapp(_VER).query({"端口": {"接口": "结算提交", "参数": _VB,
+                                              "查": _CHK}})
+            ok("★ [查] D-Ver4 查到的不对 ⇒ 「认不准」，不许折成「不在」",
+               (_v4.get("查过") or {}).get("三态") == "认不准"
+               and "不在" not in str(_v4.get("弃答")),
+               f"{_v4.get('查过', {}).get('三态')}｜{str(_v4.get('弃答'))[:26]}")
+
+            _arr([_F503], [_F503, _F503, _F503])
+            _v5 = _mkapp(_VER).query({"端口": {"接口": "结算提交", "参数": _VB,
+                                              "查": _CHK}})
+            ok("★ [查] D-Ver5 查也挂了 ⇒ 「查不了」，报缺照样挂着（查不通≠没落账）",
+               (_v5.get("查过") or {}).get("三态") == "查不了"
+               and (_v5.get("查过") or {}).get("三态") != "不在"
+               and bool(_v5.get("报缺")),
+               f"{_v5.get('查过', {}).get('三态')}｜报缺 {len(_v5.get('报缺') or [])} 条")
+
+            _arr([_F503], [])
+            _v6 = _mkapp(_VER).query({"端口": {"接口": "结算提交", "参数": _VB}})
+            ok("★ [查] D-Ver6 没给查法 ⇒ 「没查」，一次读都不发（不猜表名）",
+               (_v6.get("查过") or {}).get("三态") == "没查"
+               and len(_RetryH.gets) == 0 and len(_RetryH.hits) == 1,
+               f"{_v6.get('查过', {}).get('三态')}｜读 {len(_RetryH.gets)} 次")
+
+            _arr([(201, {"statement_id": "ST-TEST0002"})], [])
+            _v7 = _mkapp(_VER).query({"端口": {"接口": "结算提交", "参数": _VB,
+                                              "查": _CHK}})
+            ok("★ [查] D-Ver7 写成功了就不查：需要才调用，不是每次调用都过一遍",
+               _v7.get("ok") and "查过" not in _v7 and len(_RetryH.gets) == 0,
+               f"ok={_v7.get('ok')}｜读了 {len(_RetryH.gets)} 次")
+
+            _arr([_F503], [(200, {"items": [_ROWA]})])
+            _v8 = _mkapp(_VER)
+            _v8.query({"端口": {"接口": "结算提交", "参数": _VB, "查": _CHK}})
+            _pl8 = Path(_v8._corpus_root) / "port_calls.jsonl"
+            _tx8 = _pl8.read_text(encoding="utf-8") if _pl8.is_file() else ""
+            ok("★ [查] D-Ver8 查的那一次读在留痕里标「挂了先查」，跟普通调用分得开",
+               '"来源": "挂了先查"' in _tx8 and '"来源": "接口目录"' in _tx8,
+               f"留痕 {len(_tx8.splitlines())} 行")
+
+            _arr([(422, {"error": "mismatch", "field": "payable_cny"})], [])
+            _v9 = _mkapp(_VER).query({"端口": {"接口": "结算提交", "参数": _VB,
+                                              "查": _CHK}})
+            ok("★ [查] D-Ver9 4xx 明确拒收 ⇒ 不去查（账一定没记，查是白花一次请求）",
+               "查过" not in _v9 and len(_RetryH.gets) == 0,
+               f"查过在不在={'查过' in _v9}｜读了 {len(_RetryH.gets)} 次")
+
+            # ── 三态的可行动作写成判据（v0.2.39，口径：「把三态各自的可行动作写成判据，
+            #    仍不代发、仍由人拍；认不准也要带上它到底查了什么」）──
+            _arr([_F503], [(200, {"items": [_ROWA]})])
+            _v10 = _mkapp(_VER).query({"端口": {"接口": "结算提交", "参数": _VB,
+                                               "查": _CHK}})
+            _q10 = _v10.get("查过") or {}
+            _rows10 = {str(r.get("项")): r for r in (_q10.get("判据") or [])}
+            ok("★ [查] D-Ver10 「在」三条判据一条不缺（查法给了 / 查通了 / 核项全对上），"
+               "每条都带值",
+               list(_rows10) == ["查法给了", "查通了", "核项全对上"]
+               and all(str(r.get("算数")) == "是" for r in _rows10.values())
+               and "lines_count=22" in str(_rows10["核项全对上"].get("值")),
+               f"{[ (k, v.get('算数')) for k, v in _rows10.items() ]}")
+
+            _arr([_F503], [(200, {"items": []})])
+            _v11 = _mkapp(_VER).query({"端口": {"接口": "结算提交", "参数": _VB,
+                                               "查": _CHK}})
+            _q11 = _v11.get("查过") or {}
+            _rows11 = {str(r.get("项")): r for r in (_q11.get("判据") or [])}
+            ok("★ [查] D-Ver11 「不在」的判据是三条同时成立，动作里写明「由人说」、"
+               "「不许自己重发」",
+               _q11.get("三态") == "不在"
+               and list(_rows11) == ["查法给了", "查通了", "返回是空的"]
+               and all(str(r.get("算数")) == "是" for r in _rows11.values())
+               and "由人说" in str(_q11.get("能做什么"))
+               and "自己重发" in (_q11.get("不许") or []),
+               f"{str(_q11.get('能做什么'))[:22]}｜{_q11.get('不许')}")
+
+            _arr([_F503], [(200, {"items": [
+                {**_ROWA, "lines_count": 23},
+                {**_ROWA, "statement_id": "ST-TEST0009", "period": "2026-09"}]})])
+            _v12 = _mkapp(_VER).query({"端口": {"接口": "结算提交", "参数": _VB,
+                                               "查": _CHK}})
+            _q12 = _v12.get("查过") or {}
+            _look12 = _q12.get("看过的") or []
+            ok("★ [查] D-Ver12 「认不准」也说得准卡在哪：查过的每条都列「对上的／差在」",
+               _q12.get("三态") == "认不准" and len(_look12) == 2
+               and any("lines_count" in d for d in (_look12[0].get("差在") or []))
+               and any("period" in d for d in (_look12[1].get("差在") or []))
+               and any("lines_count" in s for s in (_look12[1].get("对上的") or [])),
+               f"{(_look12[0].get('差在') if _look12 else '没看过')}")
+
+            _arr([_F503], [(200, {"items": [_ROWA]})])
+            _v13 = _mkapp(_VER).query({"端口": {"接口": "结算提交", "参数": _VB,
+                                               "查": {"接口": "结算对账",
+                                                      "参数": {"period": "2026-10"}}}})
+            _q13 = _v13.get("查过") or {}
+            ok("★ [查] D-Ver13 没给「核」⇒ 认不准，判据里点名卡在「核项给了=没给」"
+               "（不猜哪一条是这一单）",
+               _q13.get("三态") == "认不准"
+               and any(str(r.get("项")) == "核项给了" and str(r.get("算数")) == "否"
+                       for r in (_q13.get("判据") or [])),
+               f"{[ (r.get('项'), r.get('算数')) for r in (_q13.get('判据') or []) ]}")
+
+            _acts = E.App._VER_ACT
+            ok("★ [查] D-Ver14 五态都有「能做什么 / 不许」；要人拍的那几条都写明「由人说」",
+               set(_acts) == {"不在", "在", "认不准", "查不了", "没查"}
+               and all(str(v.get("能做什么") or "").strip()
+                       and (v.get("不许") or []) for v in _acts.values())
+               and "由人说" in str(_acts["不在"].get("能做什么"))
+               and "自己重发" in (_acts["不在"].get("不许") or []),
+               f"{sorted(_acts)}")
+
+            _arr([_F503],
+                 [(200, {"items": [_ROWA]})])
+            _v15 = _mkapp(_VER).query({"端口": {"接口": "结算提交", "参数": _VB,
+                                               "查": {"接口": "对账明细",
+                                                      "参数": {"period": "2026-10"},
+                                                      "核": {"lines_count": 22}}}})
+            _q15 = _v15.get("查过") or {}
+            ok("★ [查] D-Ver15 查法本身不成（目录里没这个接口）⇒ 仍是「查不了」，"
+               "但动作是「先改查法」，不是「等对方恢复」",
+               _q15.get("三态") == "查不了"
+               and "改查法" in str(_q15.get("能做什么"))
+               and "等对方恢复" not in str(_q15.get("能做什么"))
+               and len(_RetryH.gets) == 0,
+               f"{str(_q15.get('能做什么'))[:26]}")
+
+            # 段留痕：写失败那一段交出来的是弃答句，「查过」不加到段上就全看不见
+            _VC = {**_VER, "conc/545": _NI("结论回入口"), "conc/546": _NI("什么叫结束")}
+            _arr([_F503], [(200, {"items": []})])
+            _v16 = _mkapp(_VC).query({"组合": {"要": "2026-10 结算单被受理", "步": [
+                {"端口": {"接口": "结算提交", "参数": _VB, "查": _CHK}}]}})
+            _s16 = (_v16.get("段") or [{}])[0]
+            ok("★ [查] D-Ver16 弃答那一段的 `查过` 也进段记录"
+               "（否则组合里只看得到一句「说不准」，看不到判据）",
+               (_s16.get("查过") or {}).get("三态") == "不在"
+               and bool((_s16.get("查过") or {}).get("判据"))
+               and len(_s16.get("查过", {}).get("判据") or []) == 3,
+               f"{(_s16.get('查过') or {}).get('三态')}")
+
+            # ── 小说分析管线（v0.2.41，用户 2026-11-12「教 ldv 怎么调接口让它自己爬」）──
+            #    规矩在 conc/918：发起→等就绪→按目录序逐段调；一段一挂就停手交回。
+            _CATN = ("- 抓取小说 ｜ POST /novel/fetch ｜ 参数：小说名\n"
+                     "- 任务列表 ｜ GET /novel/tasks ｜ 参数：小说名\n"
+                     "- 文本预处理 ｜ POST /novel/preprocess ｜ 参数：任务号\n"
+                     "- 词频统计 ｜ GET /novel/freq ｜ 参数：任务号,前\n"
+                     "- 关键词提取 ｜ GET /novel/keywords ｜ 参数：任务号,前,算法\n"
+                     "- 主题建模 ｜ GET /novel/topics ｜ 参数：任务号,主题数\n"
+                     "- 生成图表 ｜ POST /novel/charts ｜ 参数：任务号\n"
+                     "- 分析汇总 ｜ GET /novel/report ｜ 参数：任务号\n")
+            _PIPE = {"conc/553": _NI("接口目录", _CATN),
+                     "conc/918": _NI("小说分析管线")}
+            _READY = {"items": [{"任务号": "SN-9001", "状态": "就绪"}]}
+            _BUSY = {"items": [{"任务号": "SN-9001", "状态": "爬取中"}]}
+
+            _arr([(200, {"任务号": "SN-9001", "状态": "爬取中"})],
+                 [(200, _BUSY)])
+            _p0 = _mkapp({"conc/553": _NI("接口目录", _CATN)}).query(
+                {"小说分析": {"小说名": "三体"}})
+            ok("★ [管线] D-Pipe1 没教过《小说分析管线》⇒ 弃答，一个请求都不发（I5）",
+               not _p0.get("ok") and "没教过" in str(_p0.get("弃答"))
+               and len(_RetryH.hits) == 0 and len(_RetryH.gets) == 0,
+               f"{str(_p0.get('弃答'))[:30]}｜发 {len(_RetryH.hits)}+{len(_RetryH.gets)}")
+
+            _arr([(200, {"任务号": "SN-9001", "状态": "爬取中"})],
+                 [(200, _BUSY)])
+            _p2 = _mkapp(_PIPE).query(
+                {"小说分析": {"小说名": "三体", "轮数": 2, "间隔": 0}})
+            ok("★ [管线] D-Pipe2 轮询到上限没就绪 ⇒ 停手交回：任务号在、写只发一次、"
+               "进度留在回执里（爬取在服务那边继续）",
+               _p2.get("ok") and _p2.get("任务号") == "SN-9001"
+               and "停手交回" in str(_p2.get("管线"))
+               and bool(_p2.get("进度"))
+               and len(_RetryH.hits) == 1 and len(_RetryH.gets) == 2,
+               f"{str(_p2.get('管线'))[:20]}｜写 {len(_RetryH.hits)} 读 {len(_RetryH.gets)}")
+
+            _arr([(200, {"任务号": "SN-9001", "状态": "爬取中"}),
+                  (200, {"任务号": "SN-9001", "状态": "预处理完成"})],
+                 [(200, _READY),
+                  (200, {"总词形数": 100, "高频词": [{"词": "三体", "次数": 9}]}),
+                  (200, {"算法": "TF-IDF", "关键词": ["三体"]}),
+                  (200, {"算法": "TextRank", "关键词": ["文明"]}),
+                  (200, {"主题数": 3, "主题": ["危机纪年", "面壁计划", "黑暗森林"]}),
+                  (200, {"任务号": "SN-9001", "结论": "报告就绪"})])
+            _p3 = _mkapp(_PIPE).query(
+                {"小说分析": {"小说名": "三体", "轮数": 5, "间隔": 0}})
+            ok("★ [管线] D-Pipe3 就绪 ⇒ 按目录序七段全走：段名与次序照目录，"
+               "不并发、不跳段、不发明段",
+               _p3.get("ok") and _p3.get("管线") == "完成"
+               and list(_p3.get("已完成的段") or []) == [
+                   "文本预处理", "词频统计", "关键词提取", "关键词提取(TextRank)",
+                   "主题建模", "生成图表", "分析汇总"]
+               and len(_RetryH.hits) == 3 and len(_RetryH.gets) == 6,
+               f"{str(_p3.get('管线'))[:10]}｜发 {len(_RetryH.hits)}+{len(_RetryH.gets)}｜"
+               f"段={list(_p3.get('已完成的段') or [])}")
+
+            _arr([(200, {"任务号": "SN-9001", "状态": "爬取中"}),
+                  (200, {"任务号": "SN-9001", "状态": "预处理完成"})],
+                 [(200, _READY),
+                  (503, {"error": "transient"})])
+            _p4 = _mkapp(_PIPE).query(
+                {"小说分析": {"小说名": "三体", "轮数": 5, "间隔": 0}})
+            ok("★ [管线] D-Pipe4 某段挂了 ⇒ 停手交回：报是哪一段与状态码，"
+               "后面的段一个都不再发（重试归各段自己的规矩）",
+               not _p4.get("ok") and "词频统计" in str(_p4.get("管线"))
+               and _p4.get("状态码") == 503
+               and list(_p4.get("已完成的段") or []) == ["文本预处理"]
+               and len(_RetryH.hits) == 2 and len(_RetryH.gets) == 2,
+               f"{str(_p4.get('管线'))[:22]}｜码={_p4.get('状态码')}｜"
+               f"发 {len(_RetryH.hits)}+{len(_RetryH.gets)}")
+
+            _arr([(200, {"任务号": "SN-9001", "状态": "爬取中"}),
+                  (200, {"任务号": "SN-9001", "状态": "预处理完成"})],
+                 [(200, _READY),
+                  (200, {"总词形数": 100, "高频词": []}),
+                  (200, {"算法": "TF-IDF", "关键词": []}),
+                  (200, {"算法": "TextRank", "关键词": []}),
+                  (200, {"主题": []}),
+                  (200, {"任务号": "SN-9001", "结论": "报告就绪"})])
+            _p5 = _mkapp(_PIPE)
+            _p5.query({"小说分析": {"小说名": "三体", "轮数": 5, "间隔": 0}})
+            _pl5 = Path(_p5._corpus_root) / "port_calls.jsonl"
+            _tx5 = _pl5.read_text(encoding="utf-8").strip().splitlines() \
+                if _pl5.is_file() else []
+            ok("★ [管线] D-Pipe5 每一段都落 port_calls.jsonl（抓取1+轮询1+七段=9，"
+               "事后查得到走到哪）",
+               len(_tx5) == 9 and all("/novel/" in x for x in _tx5),
+               f"落盘 {len(_tx5)} 行")
+
+            _arr([(200, {"任务号": "SN-9001"})], [])
+            _p6 = _mkapp({"conc/918": _NI("小说分析管线")}).query(
+                {"小说分析": {"小说名": "三体"}})
+            ok("★ [管线] D-Pipe6 没教《接口目录》⇒ 第一段就停手：路径不猜，"
+             "一个请求都不发",
+               not _p6.get("ok") and "发起失败" in str(_p6.get("管线"))
+               and len(_RetryH.hits) == 0 and len(_RetryH.gets) == 0,
+               f"{str(_p6.get('管线'))[:20]}｜发 {len(_RetryH.hits)}+{len(_RetryH.gets)}")
+
+            # ── 对比分析管线（v0.2.42，用户 2026-11-12「换一个同等级学生题目重新做；
+            #    不能光换爬源，结构要不同」）── 规矩在 conc/971：双分支汇合——
+            #    两个任务号、支线段各带各的、汇合段两把一起带、任一支没就绪不交半张对比。
+            _CATD = ("- 发起采集 ｜ POST /cmp/fetch ｜ 参数：书名\n"
+                     "- 采集任务列表 ｜ GET /cmp/tasks ｜ 参数：书名\n"
+                     "- 章节预处理 ｜ POST /cmp/preprocess ｜ 参数：任务号\n"
+                     "- 人物出场统计 ｜ GET /cmp/chars ｜ 参数：任务号,前\n"
+                     "- 高频词统计 ｜ GET /cmp/words ｜ 参数：任务号,前\n"
+                     "- 对比分析 ｜ GET /cmp/compare ｜ 参数：任务号A,任务号B\n"
+                     "- 对比图表 ｜ POST /cmp/charts ｜ 参数：任务号A,任务号B\n"
+                     "- 对比汇总 ｜ GET /cmp/report ｜ 参数：任务号A,任务号B\n")
+            _PIPED = {"conc/553": _NI("接口目录", _CATD),
+                      "conc/971": _NI("对比分析管线")}
+            _RA = {"items": [{"任务号": "DB-0001", "书名": "西游记", "状态": "就绪"}]}
+            _RB = {"items": [{"任务号": "DB-0002", "书名": "三国演义", "状态": "就绪"}]}
+            _BUSYA = {"items": [{"任务号": "DB-0001", "书名": "西游记", "状态": "爬取中",
+                                 "进度": "3/100章"}]}
+            _BUSYB = {"items": [{"任务号": "DB-0002", "书名": "三国演义", "状态": "爬取中",
+                                 "进度": "2/120章"}]}
+
+            _arr([(200, {"任务号": "DB-0001"})], [])
+            _db0 = _mkapp({"conc/553": _NI("接口目录", _CATD)}).query(
+                {"对比分析": {"书名A": "西游记", "书名B": "三国演义"}})
+            ok("★ [对比管线] D-DB1 没教过《对比分析管线》⇒ 弃答，一个请求都不发（I5）",
+               not _db0.get("ok") and "没教过" in str(_db0.get("弃答"))
+               and len(_RetryH.hits) == 0 and len(_RetryH.gets) == 0,
+               f"{str(_db0.get('弃答'))[:30]}｜发 {len(_RetryH.hits)}+{len(_RetryH.gets)}")
+
+            _arr([], [])
+            _db1 = _mkapp(_PIPED).query(
+                {"对比分析": {"书名A": "西游记", "书名B": "西游记"}})
+            ok("★ [对比管线] D-DB2 两本书同名 ⇒ 弃答：不拿同一条支线冒充两侧",
+               not _db1.get("ok") and "可比" in str(_db1.get("弃答"))
+               and len(_RetryH.hits) == 0 and len(_RetryH.gets) == 0,
+               f"{str(_db1.get('弃答'))[:30]}")
+
+            _arr([(200, {"任务号": "DB-0001"}), (200, {"任务号": "DB-0002"})],
+                 [(200, _BUSYA), (200, _BUSYB)] * 3)
+            _db2 = _mkapp(_PIPED).query(
+                {"对比分析": {"书名A": "西游记", "书名B": "三国演义", "轮数": 3, "间隔": 0}})
+            ok("★ [对比管线] D-DB3 双发起各一次；轮询到上限任一支没就绪 ⇒ 停手交回："
+               "报明是哪一本、两边任务号都在",
+               _db2.get("ok") and "停手交回" in str(_db2.get("管线"))
+               and _db2.get("任务号A") == "DB-0001" and _db2.get("任务号B") == "DB-0002"
+               and "三国演义" in str(_db2.get("未就绪的支线"))
+               and len(_RetryH.hits) == 2 and len(_RetryH.gets) == 6,
+               f"未就绪={_db2.get('未就绪的支线')}｜写 {len(_RetryH.hits)} 读 {len(_RetryH.gets)}")
+
+            _arr([(200, {"任务号": "DB-0001"}), (200, {"任务号": "DB-0002"}),
+                  (200, {"任务号": "DB-0001", "章段数": 100}),
+                  (200, {"任务号": "DB-0002", "章段数": 120}),
+                  (200, {"图": ["a.svg"]})],
+                 [(200, _RA), (200, _RB),
+                  (200, {"任务号": "DB-0001", "人物出场": [["孙悟空", 5000]]}),
+                  (200, {"任务号": "DB-0001", "高频词": [["行者", 3000]]}),
+                  (200, {"任务号": "DB-0002", "人物出场": [["诸葛亮", 4000]]}),
+                  (200, {"任务号": "DB-0002", "高频词": [["孔明", 2800]]}),
+                  (200, {"任务号A": "DB-0001", "任务号B": "DB-0002", "人物对比": {}}),
+                  (200, {"任务号A": "DB-0001", "任务号B": "DB-0002", "结论": "对比就绪"})])
+            _db3 = _mkapp(_PIPED).query(
+                {"对比分析": {"书名A": "西游记", "书名B": "三国演义", "轮数": 5, "间隔": 0}})
+            _seg3 = list(_db3.get("已完成的段") or [])
+            ok("★ [对比管线] D-DB4 双支线都就绪 ⇒ 支线段各带各的任务号走完（A三段+B三段），"
+               "汇合段两把钥匙一起带，次序照目录",
+               _db3.get("ok") and _db3.get("管线") == "完成"
+               and _seg3 == ["A支线:章节预处理", "A支线:人物出场统计", "A支线:高频词统计",
+                             "B支线:章节预处理", "B支线:人物出场统计", "B支线:高频词统计",
+                             "对比分析", "对比图表", "对比汇总"]
+               and len(_RetryH.hits) == 5 and len(_RetryH.gets) == 8,
+               f"段={_seg3}｜发 {len(_RetryH.hits)}+{len(_RetryH.gets)}")
+
+            _arr([(200, {"任务号": "DB-0001"}), (200, {"任务号": "DB-0002"}),
+                  (200, {"任务号": "DB-0001", "章段数": 100})],
+                 [(200, _RA), (200, _RB),
+                  (200, {"任务号": "DB-0001", "人物出场": [["孙悟空", 5000]]}),
+                  (503, {"error": "transient"})])
+            _db4 = _mkapp(_PIPED).query(
+                {"对比分析": {"书名A": "西游记", "书名B": "三国演义", "轮数": 5, "间隔": 0}})
+            ok("★ [对比管线] D-DB5 A支线某段挂了 ⇒ 停手交回：报是哪支哪段与状态码，"
+               "B支线不再往下发",
+               not _db4.get("ok") and "A支线" in str(_db4.get("管线"))
+               and "高频词统计" in str(_db4.get("管线"))
+               and _db4.get("状态码") == 503
+               and list(_db4.get("已完成的段") or []) == ["A支线:章节预处理", "A支线:人物出场统计"]
+               and len(_RetryH.hits) == 3 and len(_RetryH.gets) == 4,
+               f"{str(_db4.get('管线'))[:26]}｜码={_db4.get('状态码')}｜"
+               f"发 {len(_RetryH.hits)}+{len(_RetryH.gets)}")
+
+            _arr([(200, {"任务号": "DB-0001"}), (200, {"任务号": "DB-0002"}),
+                  (200, {"任务号": "DB-0001", "章段数": 100}),
+                  (200, {"任务号": "DB-0002", "章段数": 120})],
+                 [(200, _RA), (200, _RB),
+                  (200, {"任务号": "DB-0001", "人物出场": [["孙悟空", 5000]]}),
+                  (200, {"任务号": "DB-0001", "高频词": [["行者", 3000]]}),
+                  (200, {"任务号": "DB-0002", "人物出场": [["诸葛亮", 4000]]}),
+                  (200, {"任务号": "DB-0002", "高频词": [["孔明", 2800]]}),
+                  (409, {"错": "支线未就绪", "书名": "三国演义"})])
+            _db5 = _mkapp(_PIPED).query(
+                {"对比分析": {"书名A": "西游记", "书名B": "三国演义", "轮数": 5, "间隔": 0}})
+            ok("★ [对比管线] D-DB6 汇合段对方回 409（支线未就绪）⇒ 照实交回，"
+               "不改参数硬试（这是对方在守它自己的停手线）",
+               not _db5.get("ok") and "对比分析" in str(_db5.get("管线"))
+               and _db5.get("状态码") == 409
+               and list(_db5.get("已完成的段") or []) == [
+                   "A支线:章节预处理", "A支线:人物出场统计", "A支线:高频词统计",
+                   "B支线:章节预处理", "B支线:人物出场统计", "B支线:高频词统计"],
+               f"{str(_db5.get('管线'))[:24]}｜码={_db5.get('状态码')}")
+
+            _arr([(200, {"任务号": "DB-0001"}), (200, {"任务号": "DB-0002"}),
+                  (200, {"任务号": "DB-0001", "章段数": 100}),
+                  (200, {"任务号": "DB-0002", "章段数": 120}),
+                  (200, {"图": ["a.svg"]})],
+                 [(200, _RA), (200, _RB),
+                  (200, {"任务号": "DB-0001", "人物出场": [["孙悟空", 5000]]}),
+                  (200, {"任务号": "DB-0001", "高频词": [["行者", 3000]]}),
+                  (200, {"任务号": "DB-0002", "人物出场": [["诸葛亮", 4000]]}),
+                  (200, {"任务号": "DB-0002", "高频词": [["孔明", 2800]]}),
+                  (200, {"人物对比": {}}),
+                  (200, {"结论": "对比就绪"})])
+            _db6app = _mkapp(_PIPED)
+            _db6app.query({"对比分析": {"书名A": "西游记", "书名B": "三国演义", "轮数": 5, "间隔": 0}})
+            _pl6 = Path(_db6app._corpus_root) / "port_calls.jsonl"
+            _tx6 = _pl6.read_text(encoding="utf-8").strip().splitlines() \
+                if _pl6.is_file() else []
+            ok("★ [对比管线] D-DB7 每一段都落 port_calls.jsonl（双发起2+双轮询2+支线6"
+               "+汇合3=13，事后查得到两条腿各走到哪）",
+               len(_tx6) == 13 and all("/cmp/" in x for x in _tx6),
+               f"落盘 {len(_tx6)} 行")
         finally:
             _srv2.shutdown()
             _srv2.server_close()
@@ -7662,6 +8729,98 @@ def test_compose() -> None:
         ok("★ [查询] D-Look3 没有「问」⇒ 拒，不猜要查什么",
            _q4.get("ok") is False and "问" in str(_q4.get("弃答")),
            f"答 {str(_q4.get('弃答'))[:40]}")
+
+        # 查不到按正文（v0.2.40，用户「教吧」）：键=值够不着正文，教过才启用（I5）
+        import tempfile as _tmT
+        _tdT = Path(_tmT.mkdtemp())
+
+        def _wnT(nid, nm, body, **kw):
+            front = "".join(f"{k}: {v}\n" for k, v in
+                            {"name": nm, **kw}.items())
+            (_tdT / f"{nid.replace('/', '_')}.md").write_text(
+                f"---\nid: {nid}\ntype: 概念\n{front}---\n\n{body}\n",
+                encoding="utf-8", newline="\n")
+
+        _wnT("alg/901", "负数", "负数：比零小的数。欠三块钱记成负三。")
+        _wnT("alg/902", "负负得正", "两个负数乘起来得正数——负号反过来两次。")
+        _wnT("alg/903", "零", "零是负数与正数的分界。")
+        _wnT("alg/904", "坏例子", "这里也提到负数，但这条被判错了。",
+             **{"裁决": "判错"})
+        _wnT("conc/561", "查不到按正文",
+             "查不到按正文：键=值三步全落空且预算有余 ⇒ 拿人给的词搜正文。",
+             **{"形态": "路由"})
+        _apT0 = E.App(root=str(_tdT))      # 教导闸对照：把 561 摘掉再看
+        import shutil as _shT
+        _td0 = Path(_tmT.mkdtemp())
+        for _f in _tdT.glob("*.md"):
+            if _f.name != "conc_561.md":
+                _shT.copy2(_f, _td0 / _f.name)
+        _apT1 = E.App(root=str(_td0))      # 没教《查不到按正文》
+        _apT2 = E.App(root=str(_tdT))      # 教过
+
+        _t1 = _apT1.query({"查询": {"问": "负数", "线索": ["负数"], "预算": 5}})
+        ok("★ [正文] D-Txt1 没教过《查不到按正文》⇒ 走旧路：无正文命中，直接交人（I5）",
+           "正文命中" not in _t1 and _t1.get("结论") == "查不到（预算内）"
+           and _t1.get("交人") is True
+           and not any(str(s.get("步")) == "④按正文" for s in (_t1.get("已试") or [])),
+           f"结论={_t1.get('结论')}｜步={[s.get('步') for s in (_t1.get('已试') or [])]}")
+
+        _t2 = _apT2.query({"查询": {"问": "负数", "线索": ["负数"], "预算": 5}})
+        _t2ids = [h.get("id") for h in (_t2.get("正文命中") or [])]
+        ok("★ [正文] D-Txt2 教过 ⇒ 三步落空拿线索词搜正文：正文里有「负数」的全中，判错支不进",
+           _t2.get("ok") is True and _t2.get("结论") == "正文里提过（非精确）"
+           and _t2.get("精确") is False and _t2.get("交人") is False
+           and "alg/901" in _t2ids and "alg/902" in _t2ids and "alg/903" in _t2ids
+           and "alg/904" not in _t2ids
+           and int(_t2.get("正文命中共") or 0) == 3,
+           f"命中={_t2ids}｜共={_t2.get('正文命中共')}")
+
+        _t2h = (_t2.get("正文命中") or [{}])[0]
+        ok("★ [正文] D-Txt3 留痕：已试 多一步④按正文（花费同价）；每条命中 词 真在 引文 里（算数）",
+           [str(s.get("步")) for s in (_t2.get("已试") or [])][-1] == "④按正文"
+           and int(_t2.get("花费") or 0) == 2
+           and _t2h.get("词") == "负数" and _t2h.get("词从哪") == "线索"
+           and str(_t2h.get("词")) in str(_t2h.get("引文")),
+           f"已试步={[s.get('步') for s in (_t2.get('已试') or [])]}｜"
+           f"首条词={_t2h.get('词')}｜引文={str(_t2h.get('引文'))[:24]}")
+
+        ok("★ [正文] D-Txt4 正文命中不冒充精确：无「结果」、判据三条带算数",
+           not _t2.get("结果") and len(_t2.get("判据") or []) == 3
+           and all("算数=是" in str(j) for j in (_t2.get("判据") or [])),
+           f"判据={[_t2.get('判据')]}")
+
+        _t3 = _apT2.query({"查询": {"问": "负数", "预算": 5}})
+        ok("★ [正文] D-Txt5 两字名也是词源：问句里有「负数」（①嫌短跳过），④接住",
+           _t3.get("ok") is True and int(_t3.get("正文命中共") or 0) == 3
+           and (_t3.get("正文命中") or [{}])[0].get("词从哪") == "问句",
+           f"共={_t3.get('正文命中共')}｜"
+           f"首条={(_t3.get('正文命中') or [{}])[0].get('词从哪')}")
+
+        _t4 = _apT2.query({"查询": {"问": "负数", "线索": ["负数"], "预算": 1}})
+        ok("★ [正文] D-Txt6 预算花尽 ⇒ 不搜：钱在②花完，与旧路的「预算用完」逐字同形状",
+           _t4.get("结论") == "预算用完，没找到" and "正文命中" not in _t4
+           and not any(str(s.get("步")) == "④按正文" for s in (_t4.get("已试") or [])),
+           f"结论={_t4.get('结论')}")
+
+        _t5 = _apT2.query({"查询": {"问": "查无此词xyz", "线索": ["不存在xyz"], "预算": 5}})
+        ok("★ [正文] D-Txt7 正文里也没有 ⇒ 回旧出口（已试 里④如实记 命中=0，不装成搜到）",
+           _t5.get("结论") == "查不到（预算内）" and "正文命中" not in _t5
+           and any(str(s.get("步")) == "④按正文" and s.get("命中") == 0
+                   for s in (_t5.get("已试") or [])),
+           f"结论={_t5.get('结论')}｜"
+           f"④={[s for s in (_t5.get('已试') or []) if str(s.get('步')) == '④按正文']}")
+
+        _wnT("alg/905", "假路由", "这条正文里也有负数，但它是路由教法不是材料。",
+             **{"形态": "路由"})
+        _apT3 = E.App(root=str(_tdT))
+        _t6 = _apT3.query({"查询": {"问": "负数", "线索": ["负数"], "预算": 5}})
+        _t6ids = [h.get("id") for h in (_t6.get("正文命中") or [])]
+        ok("★ [正文] D-Txt8 形态=路由 的正文不进结果（教法文本不是材料——561 自指实测）",
+           "alg/905" not in _t6ids and "conc/561" not in _t6ids
+           and int(_t6.get("正文命中共") or 0) == 3,
+           f"命中={_t6ids}｜共={_t6.get('正文命中共')}")
+        _shT.rmtree(_tdT, ignore_errors=True)
+        _shT.rmtree(_td0, ignore_errors=True)
 
         # 对外检索 / 自学（v0.2.3，用户：让它能向外检索，从反思变成自学）
         _o1 = app3.query({"外查": {"问": "外面有没有这块的规定"}})
@@ -11912,7 +13071,7 @@ NEVER_JUDGED: dict[str, str] = {}
 #:    白名单漏了会**当场报出来**（下面第二条断言）。
 PRODUCTION_GROUPS: tuple[str, ...] = (
     "keyset", "reach", "sequence", "(视图)", "(视图·读回)", "(L0)", "(cli)",
-    "(检索)", "(内核)",
+    "(检索)", "(内核)", "(桥)",
 )
 
 #: **已知答案对照**那几组 —— 它们**不进**统计（会把「没判过」读成「判过」），
@@ -11926,9 +13085,10 @@ def _declared_codes() -> tuple[str, ...]:
     from ldv.checks.cli_paths import CLI_PATH_CODES
     from ldv.checks.multilevel import MULTILEVEL_CODES
     from ldv.checks.retrieval import RETRIEVER_CODES
-    from ldv.run_checks import KERNEL_CODES, PLUGIN_CODES
+    from ldv.run_checks import BRIDGE_CODES, KERNEL_CODES, PLUGIN_CODES
 
-    return (tuple(PLUGIN_CODES) + tuple(KERNEL_CODES) + tuple(VIEW_CODES)
+    return (tuple(PLUGIN_CODES) + tuple(KERNEL_CODES) + tuple(BRIDGE_CODES)
+            + tuple(VIEW_CODES)
             + tuple(MULTILEVEL_CODES) + tuple(CLI_PATH_CODES)
             + tuple(RETRIEVER_CODES))
 

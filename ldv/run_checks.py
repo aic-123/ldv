@@ -188,6 +188,24 @@ from .checks.structure import (
 PLUGIN_CODES = ("B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8", "B9", "B10", "B11",
                 "B13", "B15", "B16", "B17", "B18", "B19", "B20")
 KERNEL_CODES = ("B12", "B14")
+#: 桥/内核分工断言（v0.2.49 正位，2026-11-14 用户拍板「工具应该放在路由组合，
+#: 把路由的学习写成断言」）。教训：v0.2.43–48 把八个原话路由算子错放在桥
+#: ldv-mcp/server.py，绕开了内核的路由组合机制（553 口径 / port_calls 留痕 /
+#: 起点来源 / 三态判据全没接上）——本组断言把「算子在内核、桥只做翻译」钉死。
+BRIDGE_CODES = ("P1", "P2", "P3")
+
+#: 桥上**不许出现**的算子符号（v0.2.43–48 错放的那批的名字与伴生件）。
+_BRIDGE_FORBIDDEN = (
+    "_CHAT_TRIGGERS", "_CHAT_ASCII", "_CHAT_FACT_HEADS",
+    "_HTTP_ADDR", "_HTTP_ADDR2", "_parse_addr", "_HTTP_INTENT", "_HTTP_WRITE",
+    "_HEADLESS_INTENT", "_BROWSER_PATHS", "_find_browser",
+    "_SAVE_WORDS", "_RATE_WORDS",
+    "_JA4_VER", "_is_grease", "_parse_client_hello", "_ja4_of",
+)
+#: 原话路由的规则方法——必须全在内核 App 上（P3）。
+_ROUTE_METHODS = ("_ask_routes", "_route_node", "_route_log", "_chat_rule",
+                  "_seg_rule", "_http_rule", "_headless_rule", "_relay_headless",
+                  "_save_rule", "_rate_rule", "_ja4_rule")
 
 #: 维护路径的初始批大小 —— 与 `C7` / `C10` 的读数口径一致（先建 6、维护 30）。
 MAINT_INIT = 6
@@ -1088,6 +1106,85 @@ def _skip_evidence() -> list[tuple[str, str, bool]]:
     ]
 
 
+def bridge_report() -> Report:
+    """桥/内核分工断言（`P1`–`P3`，v0.2.49 正位）。
+
+    问三件事，对应 2026-11-14 那次错位的三个层面：
+
+        P1  桥（ldv-mcp/server.py）**不定义业务算子**，且原话确实递给了
+            `app._ask_routes` —— 桥只做翻译，不带业务判断
+            （docs/路由的教法.md：「代码里不许出现业务判断——出现了就是教错了位置」）
+        P2  桥加载的内核（ldv-mcp/entry.py、core/entry.py）与根 entry.py
+            **逐字一致** —— 钉住的老内核（5102 行、无组合机器）不许再回来
+        P3  原话路由的规则方法全部在内核 App 上 —— 路由组合的授权形态
+            （`_xxx_rule()` 按 name 找节点，I5）只在内核这一层
+
+    桥不在位 ⇒ 三条全**跳过**并印原因——跳过不是通过。
+    """
+    rep = Report(plugin="(桥)", expects=BRIDGE_CODES)
+    import hashlib as _hl
+    import re as _re
+
+    root = Path(__file__).resolve().parent.parent
+    srv_p = root / "ldv-mcp" / "server.py"
+    if not srv_p.is_file():
+        rep.note("ldv-mcp/server.py 不在位 —— 桥分工断言三条全跳（不是通过）")
+        for c in BRIDGE_CODES:
+            rep.add(c, "桥/内核分工", Tri.UNEXPANDED, "桥不在位，没法判")
+        return rep
+    src = srv_p.read_text(encoding="utf-8")
+
+    # P1 桥上无业务算子 + 原话递给内核
+    bad_def = _re.findall(r"^def (_\w+_rule)\(", src, _re.M)
+    bad_sym = [s for s in _BRIDGE_FORBIDDEN if s in src]
+    delegates = "app._ask_routes(" in src
+    p1_ok = not bad_def and not bad_sym and delegates
+    d1 = []
+    if bad_def:
+        d1.append(f"桥上定义了规则函数：{sorted(set(bad_def))}")
+    if bad_sym:
+        d1.append(f"桥上出现算子符号：{bad_sym}")
+    if not delegates:
+        d1.append("桥没把原话递给 app._ask_routes —— 原话级路由不在内核")
+    rep.add("P1", "桥不定义业务算子，原话递给内核路由链",
+            Tri.YES if p1_ok else Tri.NO,
+            "桥上无算子、原话走 app._ask_routes" if p1_ok else "；".join(d1))
+
+    # P2 桥加载的内核与根内核逐字一致
+    root_e = root / "entry.py"
+    mcp_e = root / "ldv-mcp" / "entry.py"
+    core_e = root / "ldv-mcp" / "core" / "entry.py"
+    if not root_e.is_file() or not mcp_e.is_file():
+        rep.add("P2", "桥加载的内核=根内核（逐字）", Tri.UNEXPANDED,
+                "entry.py 或 ldv-mcp/entry.py 不在位，没法对拍")
+    else:
+        h_root = _hl.sha256(root_e.read_bytes()).hexdigest()
+        diffs = [p for p, q in ((mcp_e, "ldv-mcp/entry.py"),
+                                (core_e, "ldv-mcp/core/entry.py"))
+                 if p.is_file() and _hl.sha256(p.read_bytes()).hexdigest() != h_root]
+        missing = [q for p, q in ((mcp_e, "ldv-mcp/entry.py"),
+                                  (core_e, "ldv-mcp/core/entry.py"))
+                   if not p.is_file()]
+        p2_ok = not diffs and not missing
+        rep.add("P2", "桥加载的内核=根内核（逐字）", Tri.YES if p2_ok else Tri.NO,
+                "两份桥内内核与根 entry.py 哈希一致" if p2_ok else
+                f"不同步：{diffs or missing}（钉住的旧内核不许再回来——"
+                "组合机器只在全量内核里）")
+
+    # P3 原话路由的规则方法全在内核 App 上
+    try:
+        import entry as _E
+        miss = [m for m in _ROUTE_METHODS if not hasattr(_E.App, m)]
+        rep.add("P3", "原话路由的规则方法在内核 App 上",
+                Tri.YES if not miss else Tri.NO,
+                f"{len(_ROUTE_METHODS)} 个方法全在（名字是唯一钥匙，I5 可移除）"
+                if not miss else f"内核 App 缺方法：{miss}")
+    except Exception as e:                                   # 语料不在位等 ⇒ 跳
+        rep.add("P3", "原话路由的规则方法在内核 App 上", Tri.UNEXPANDED,
+                f"内核导入不了（{type(e).__name__}），没法判")
+    return rep
+
+
 def main(argv: list[str]) -> int:
     # ⚠️ `--cap 400` 里的 `400` **不是**方向名 —— 所以先摘掉带值的选项再取位置参数。
     cap = 0
@@ -1200,6 +1297,14 @@ def main(argv: list[str]) -> int:
     rt_rep = retrieval_report(loaded, targets)
     reps.append(rt_rep)
     print(rt_rep.render())
+    print()
+
+    # ★ `P1`–`P3` —— **桥/内核分工**（v0.2.49 正位断言）。与插件/内核/视图无关，
+    #   只跑一次：问「算子有没有住对地方」。2026-11-14 八个原话路由算子错放桥上，
+    #   回归全绿也没红——因为判据都在考行为、没人考**位置**。这组就是考位置的。
+    bridge_rep = bridge_report()
+    reps.append(bridge_rep)
+    print(bridge_rep.render())
     print()
 
     total_red = sum(len(r.red) for r in reps)

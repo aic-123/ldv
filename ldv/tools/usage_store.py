@@ -93,11 +93,16 @@ def _safe(s: str) -> str:
 
 def append(corpus_dir: Any, *, did: str, outcome: float, propensity: float,
            qfp: str, note: str = "", at: str | None = None,
-           snapshot: str = "") -> dict:
+           snapshot: str = "", body_note: str | None = None) -> dict:
     """追加一条记录。**同 `(qfp, did)` 已存在 ⇒ 不写、不覆写、不报错。**
 
     `snapshot`（可空）= §I7 `record(方向)` 的 JSON，一行写完
     （`sort_keys` ⇒ 确定性；**不许含换行**，否则 front matter 会断）。
+
+    ★ `body_note`（2026-11-19，v0.2.73 路由确认）：正文那一句话。缺省 None
+      ⇒ 旧正文逐字不变（「展示了方向…被下钻」）；路由确认等**非下钻来源**
+      的记录正文必须如实写自己的来历——账本不许「正文说下钻、note 说路由」
+      两张皮。带 `\\n` ⇒ 抛 ValueError（正文单行，front matter 之下的账体）。
     """
     d = _dir(corpus_dir)
     d.mkdir(parents=True, exist_ok=True)
@@ -115,6 +120,11 @@ def append(corpus_dir: Any, *, did: str, outcome: float, propensity: float,
     #    年龄为负 ⇒ `0.5 ** (负/30) > 1`，权重反向增长，实验曲线是炸的不是平的。
     at = at or _clock.now().isoformat(timespec="microseconds")
     snap_line = f"snapshot: {snapshot}\n" if snapshot else ""
+    if body_note is None:
+        body_note = (f"一次使用记录：查询 {qfp} 展示了方向 {did}，"
+                     "随后它被下钻（outcome = 有用）。")
+    if "\n" in body_note:
+        raise ValueError("body_note 必须单行（账体不许断 front matter）")
     body = (
         "---\n"
         f"id: {p.stem}\n"
@@ -126,7 +136,7 @@ def append(corpus_dir: Any, *, did: str, outcome: float, propensity: float,
         f"note: {note}\n"
         f"{snap_line}"
         "---\n"
-        f"一次使用记录：查询 {qfp} 展示了方向 {did}，随后它被下钻（outcome = 有用）。\n"
+        f"{body_note}\n"
         "⚠️ 没被下钻的方向**不产记录** —— 「没看见」与「看见了不好」不是一回事。\n"
         + ("⚠️ `snapshot` 是这一刻的方向状态（§I7）—— 只留痕，不参与倾向计算。\n"
            if snapshot else "")
