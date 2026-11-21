@@ -262,7 +262,7 @@ Nosek 等 2018（PNAS / PMC）、Saracevic 2007 Part III（UNC 镜像）
 从**工作区根**跑，**四条全给**：
 
 ```bash
-V="C:/Users/19253/.workbuddy-ai/binaries/python/versions/3.13.12/python.exe"
+V="python"
 PYTHONIOENCODING=utf-8 PYTHONUTF8=1 "$V" repo/docs/prior-art/verify_quotes.py \
     repo/docs/*.md repo/README.md repo/ldv/MEASUREMENTS.md
 ```
@@ -307,7 +307,7 @@ PYTHONIOENCODING=utf-8 PYTHONUTF8=1 "$V" repo/docs/prior-art/verify_quotes.py \
 
 ```bash
 # venv（pypdf 6.19.0）
-V="C:/Users/19253/.workbuddy-ai/binaries/python/envs/default/Scripts/python.exe"
+V="python"
 "$V" extract.py spgist01.pdf spgist01.txt      # 打印：26 页 / N 字符
 ```
 
