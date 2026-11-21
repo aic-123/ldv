@@ -1,0 +1,18 @@
+==========================================================================
+§D7 派生维度可完全回退 —— 三步实测（ext-wiki-vote × influence）
+==========================================================================
+  [过] sidecar 的 _meta 是份完整外生声明（what / 来源 / 命名 / 自称可逆）
+        _meta 键：['derived_from', 'field', 'generated_at', 'generator', 'named_by', 'not_authored_by', 'recompute', 'reversible', 'what', 'why']｜缺 无
+  [① 带 sidecar] 7115 项｜20 键｜{'方向数': 61, '层数': 8, '最大叶': 1888}｜fp 648a63fa7ba50ccf｜建核 5.7s
+  [② sidecar 移开] 7115 项｜16 键｜{'方向数': 37, '层数': 8, '最大叶': 3191}｜fp e8af78ed2e2d51bf｜建核 4.7s
+  [③ sidecar 移回] 7115 项｜20 键｜{'方向数': 61, '层数': 8, '最大叶': 1888}｜fp 648a63fa7ba50ccf｜建核 2.7s
+  [过] ② 移开后 derived 自报为空、influence= 键一个都不剩
+        derived={}｜influence= 键 False｜键数 20 → 16
+  [过] ① 带 sidecar 时 derived 如实自报、键里确实有 influence=
+        derived={'influence': '7115 项（influence.json）'}｜influence= 键 True
+  [过] ③ 移回后与 ① 逐字相同（指纹 + 全树签名）—— 这就是「可完全回退」
+        恢复 True｜指纹 648a63fa7ba50ccf → 648a63fa7ba50ccf｜树签名 61 个方向逐字相同 True
+  [过] ② 与 ① 的树**不同**（sidecar 真的在起作用，不是两边都空转）
+        指纹 648a63fa7ba50ccf → e8af78ed2e2d51bf｜方向数 61 → 37
+
+合计 5 条｜过 5｜红 0

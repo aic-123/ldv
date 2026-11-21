@@ -1,0 +1,18 @@
+壳已起（探针内线程，每租户并发 1）：http://127.0.0.1:8793
+
+── ⑩ 排队生效（同租户：A running 期间，B 必须 queued）──
+  [过] A（ext-coauth）进入 running  —— 状态 running
+  [过] 同租户 B 在 A running 期间 ⇒ **queued**（不并发）  —— B 状态 queued（若 running ⇒ 限流没生效）
+
+── ⑪ 跨租户不受影响（A 还 running，另一个租户 C ⇒ 立刻 running）──
+  [过] 跨租户 C（pypi-deps）⇒ running（不被 A 挡住）  —— C 状态 running
+
+── ⑫ 完成后续跑（A 完成后，排队的 B 自动开始，最终全 done）──
+  [过] B 最终 done（A 完成后自动开始）  —— B 状态 done，耗时 37.3s
+  [过] C 最终 done  —— C 状态 done
+
+── 反向对照（每租户并发改成 ∞ ⇒ 排队失效，⑩ 红）──
+  [过] 不限流 ⇒ 同租户第二个直接 running（⑩ 红）  —— Y 状态 running
+  ✓ serve.py 字节级还原（sha256 967219bcd5cd）
+
+═══ 探针汇总：全过 ═══

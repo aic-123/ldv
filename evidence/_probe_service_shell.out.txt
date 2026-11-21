@@ -1,0 +1,23 @@
+壳已起（探针内线程）：http://127.0.0.1:8791
+
+── ⑧a 等价（壳响应 == CLI 基线，逐字）──
+  [过] arxiv-taxonomy · keyset · only=a  —— 壳 656B vs CLI 656B
+  [过] crossref-journals · keyset · only=a  —— 壳 684B vs CLI 684B
+  [过] gh-langs · keyset · only=a  —— 壳 638B vs CLI 638B
+  [过] pypi-deps · keyset · only=a  —— 壳 648B vs CLI 648B
+  [过] arxiv-taxonomy · sequence · only=None  —— 壳 2077B vs CLI 2077B
+  [过] crossref-journals · keyset · only=None  —— 壳 2212B vs CLI 2212B
+
+── ⑧b 链路（响应含内核算出的语料特有量，且随租户变）──
+  [过] 四个租户的输出**互不相同**（假响应 ⇒ 全同）  —— arxiv-taxonomy:2080B｜crossref-journals:2212B｜gh-langs:2097B｜pypi-deps:1952B
+
+── ⑨ 隔离（不完整租户 / 不存在租户 ⇒ 404）──
+  [过] 缺 view_spec 的 cora-labeled ⇒ 404  —— 实得 404
+  [过] 不存在的 no-such-tenant ⇒ 404  —— 实得 404
+
+── 反向对照（壳 → 固定假响应，不调 run_one）──
+  [过] 假响应 ⇒ ⑧a 红（与基线不同）
+  [过] 假响应 ⇒ ⑧b 红（换租户响应不变）
+  ✓ serve.py 字节级还原（sha256 967219bcd5cd）
+
+═══ 探针汇总：全过 ═══

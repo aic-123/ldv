@@ -1,0 +1,53 @@
+
+═══ edge-single（1 节点 · 边界：单节点）═══
+  run_checks: 断言 22｜过 11｜红 0｜跳过 11（0.7s）
+  test_injections: 真没通过 9｜判不了 33｜崩 0（共 71，rc=1，2.6s）
+
+═══ edge-tiny（4 节点 · 边界：极小图）═══
+  run_checks: 断言 22｜过 21｜红 0｜跳过 1（0.8s）
+  test_injections: 真没通过 2｜判不了 8｜崩 0（共 71，rc=1，2.6s）
+
+═══ edge-zero（12 节点 · 边界：零边）═══
+  run_checks: 断言 22｜过 21｜红 0｜跳过 1（0.8s）
+  test_injections: 真没通过 4｜判不了 7｜崩 0（共 71，rc=1，2.8s）
+
+═══ pypi-deps（60 节点 · 软件依赖）═══
+  run_checks: 断言 22｜过 21｜红 0｜跳过 1（2.0s）
+  test_injections: 真没通过 0｜判不了 2｜崩 0（共 71，rc=1，16.8s）
+
+═══ gh-langs（56 节点 · 开源生态）═══
+  run_checks: 断言 22｜过 21｜红 0｜跳过 1（1.2s）
+  test_injections: 真没通过 4｜判不了 2｜崩 0（共 71，rc=1，4.5s）
+
+═══ crossref-journals（74 节点 · 学术出版）═══
+  run_checks: 断言 22｜过 21｜红 0｜跳过 1（2.8s）
+  test_injections: 真没通过 3｜判不了 3｜崩 0（共 71，rc=1，5.9s）
+
+═══ arxiv-taxonomy（155 节点 · 学术分类）═══
+  run_checks: 断言 22｜过 21｜红 0｜跳过 1（2.6s）
+  test_injections: 真没通过 1｜判不了 1｜崩 0（共 71，rc=1，8.3s）
+
+═══ snap-email-eu-mini（120 节点 · 邮件（ext-email 切片））═══
+  run_checks: 断言 22｜过 21｜红 0｜跳过 1（8.7s）
+  test_injections: 真没通过 0｜判不了 2｜崩 0（共 71，rc=1，19.2s）
+
+═══ snap-hepth-dag（1200 节点 · 引用 DAG（切片））═══
+  run_checks: 断言 22｜过 21｜红 0｜跳过 1（213.3s）
+  test_injections: 真没通过 2｜判不了 1｜崩 0（共 71，rc=1，250.7s）
+
+
+═══ 汇总 ═══
+语料                        节点   断言  红  跳过    真没通过   判不了  崩     耗时
+edge-single                1   22  0  11       9    33  0    0.7
+edge-tiny                  4   22  0   1       2     8  0    0.8
+edge-zero                 12   22  0   1       4     7  0    0.8
+pypi-deps                 60   22  0   1       0     2  0    2.0
+gh-langs                  56   22  0   1       4     2  0    1.2
+crossref-journals         74   22  0   1       3     3  0    2.8
+arxiv-taxonomy           155   22  0   1       1     1  0    2.6
+snap-email-eu-mini       120   22  0   1       0     2  0    8.7
+snap-hepth-dag          1200   22  0   1       2     1  0  213.3
+
+✅ 9 份新语料全部：run_checks 红 0、注入崩 0
+   （注入「真没通过 / 判不了」是**语料绑定**的预期读数，不是缺陷 —— README「已知的未做」第 8 条）
+留档：outputs/_probe_new_corpora_full.rows.json

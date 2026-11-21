@@ -1,0 +1,50 @@
+语料            方向        段            D2裸    收域    记账     收域+记账  B4
+──────────────────────────────────────────────────────────────────────────────────────────
+openalex-n50  keyset    A 批建           0     0     0         0  YES
+openalex-n50  keyset    B 维护           0     0     0         0  YES
+openalex-n50  keyset    B′ 删除          0     0     0         0  NO
+openalex-n50  reach     A 批建           0     0     0         0  YES
+openalex-n50  reach     B 维护           0     0     0         0  YES
+openalex-n50  reach     B′ 删除          0     0     0         0  NO
+openalex-n50  sequence  A 批建           0     0     0         0  YES
+openalex-n50  sequence  B 维护           0     0     0         0  YES
+openalex-n50  sequence  B′ 删除          0     0     0         0  YES
+openalex-n100 keyset    A 批建           0     0     0         0  YES
+openalex-n100 keyset    B 维护           0     0     0         0  YES
+openalex-n100 keyset    B′ 删除          0     0     0         0  YES
+openalex-n100 reach     A 批建           0     0     0         0  YES
+openalex-n100 reach     B 维护           0     0     0         0  YES
+openalex-n100 reach     B′ 删除          0     0     0         0  NO
+openalex-n100 sequence  A 批建           1     0     1         0  YES
+                                  · D4: 裸1 收域0 记账1 收域+记账0 例['W2995022099']
+openalex-n100 sequence  B 维护           1     1     0         0  YES
+                                  · D4: 裸1 收域1 记账0 收域+记账0 例['W2995022099']
+openalex-n100 sequence  B′ 删除          1     1     0         0  YES
+                                  · D4: 裸1 收域1 记账0 收域+记账0 例['W2995022099']
+openalex-n150 keyset    A 批建           0     0     0         0  YES
+openalex-n150 keyset    B 维护           0     0     0         0  YES
+openalex-n150 keyset    B′ 删除          0     0     0         0  YES
+openalex-n150 reach     A 批建           0     0     0         0  YES
+openalex-n150 reach     B 维护           0     0     0         0  YES
+openalex-n150 reach     B′ 删除          0     0     0         0  NO
+openalex-n150 sequence  A 批建           0     0     0         0  YES
+openalex-n150 sequence  B 维护           0     0     0         0  YES
+openalex-n150 sequence  B′ 删除          0     0     0         0  NO
+openalex-b280 keyset    A 批建           0     0     0         0  YES
+openalex-b280 keyset    B 维护           0     0     0         0  YES
+openalex-b280 keyset    B′ 删除          0     0     0         0  YES
+openalex-b280 reach     A 批建           0     0     0         0  YES
+openalex-b280 reach     B 维护           0     0     0         0  YES
+openalex-b280 reach     B′ 删除          0     0     0         0  YES
+openalex-b280 sequence  A 批建           0     0     0         0  YES
+openalex-b280 sequence  B 维护           0     0     0         0  YES
+openalex-b280 sequence  B′ 删除          0     0     0         0  YES
+
+═══ 汇总 ═══
+B4 红/跳的行：5 / 36
+   openalex-n50 / keyset / B′ 删除: NO｜1 处破划分：["D18 的子方向多出父没有的项：['W2156098321', 'W2161374186', 'W2163661402']"]
+   openalex-n50 / reach / B′ 删除: NO｜4 处破划分：["D10 的子方向多出父没有的项：['W2161374186']", "D56 的子方向多出父没有的项：['W2156098321']"]
+   openalex-n100 / reach / B′ 删除: NO｜1 处破划分：["D170 的子方向多出父没有的项：['W2970971581']"]
+   openalex-n150 / reach / B′ 删除: NO｜1 处破划分：["D237 的子方向多出父没有的项：['W3006961006']"]
+   openalex-n150 / sequence / B′ 删除: NO｜1 处破划分：["D26 的子方向多出父没有的项：['W3007497549', 'W3007940623', 'W3008461878']"]
+四种 D2 口径的**总漏项数**：裸 3、收域 2、记账 1、收域+记账 0
