@@ -1,0 +1,17 @@
+{
+ "ok": false,
+ "耗时毫秒": 8,
+ "解读": {
+  "结论": "命令错",
+  "任务标签": "查询失败",
+  "错误码": 2,
+  "原因": "unknown operator: $badOp"
+ },
+ "弃答": "命令错（code 2）：unknown operator: $badOp——回执 ok=0 就是没办成，不装作办成了。",
+ "依据": [
+  {
+   "原文": "《MongoDB 端口协议》OP_MSG/2013 + BSON 命令文档（conc/396）",
+   "可复算": "ldv/core/mongowire.py 只用 socket/struct，报文可 dump 后逐字节复算"
+  }
+ ]
+}

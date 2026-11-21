@@ -1,0 +1,20 @@
+{
+ "ok": true,
+ "耗时毫秒": 13,
+ "解读": {
+  "结论": "写入成功",
+  "写入": 1
+ },
+ "结果": {
+  "集合": "chain_probe",
+  "库": "ldv_test",
+  "写入": 1,
+  "写入错误": null
+ },
+ "依据": [
+  {
+   "原文": "《MongoDB 端口协议》OP_MSG/2013 + BSON 命令文档（conc/396）",
+   "可复算": "ldv/core/mongowire.py 只用 socket/struct，报文可 dump 后逐字节复算"
+  }
+ ]
+}
