@@ -12,6 +12,12 @@ citations, and leaves an auditable trail.**
 **当前版本 v0.2.78** · 判据 **1252 条全绿** · 零第三方依赖 · [Apache-2.0](LICENSE)
 **成果展示**：[`showcase/`](showcase/README.md) —— 真实参数、真实回执、真实账本
 
+## 当前状态：v0.2.78（2026-11-21）
+
+★★ **本版（v0.2.78，2026-11-21）** —— 值入形态：句子我出，值你给。
+推演边上的值由外面给，**只换值、不换措辞**；换完走不通就明说。
+逐版叙事见 [`docs/它是怎么长出来的.md`](docs/它是怎么长出来的.md)。
+
 ---
 
 ## 独自办事的四个场面
@@ -77,6 +83,13 @@ app.query({"装配": {"名称": "订单退款空结果审计"}})           # 装
 | **留痕账本** | dialog · answers · decision · assemble · mongo_ledger——只追加，可审计 |
 | **使用学习** | 曝光不算有用、下钻才算、判错只能人授；只排先看哪支，答案集逐字不变 |
 | **LLM 桥接** | 五工具契约（search / converse / expr / quantities / dims），密钥走环境变量 |
+
+**关键反向对照与缺口**（实体在本机 `evidence/`，按资产分级不上传；逐件被文档引用，不可变）：
+语料 front matter 三种坏形状当场拒收 `evidence/_probe_loader_contract_reverse.py` ｜
+持久化白名单与资源上限 `evidence/_probe_persist_untrusted_reverse.py` ｜
+使用学习接入探针（W1–W10，含「答案集逐字不变」）`evidence/_probe_usage_wiring.py` ｜
+首值时间实测（36 项 0.51 s / 7115 项 51.8 s）`evidence/_probe_first_value.py` ｜
+接线矩阵唯一半链路缺口（`ldv.recognize`，冻结待外生 spec）`evidence/wiring_gaps.json`
 
 完整通道口径：[`docs/端口与接口标准格式.md`](docs/端口与接口标准格式.md)。
 
