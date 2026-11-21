@@ -1,7 +1,7 @@
 """按成熟方法测：语料内位置扫描 + 多针 + 重复取均值（附「本装置测不了什么」）。
 
 跑法（要 tiktoken）：
-    C:/Users/19253/.workbuddy-ai/binaries/python/envs/default/Scripts/python.exe probes/eval_rigor.py
+    python probes/eval_rigor.py
 
 ## 先说清本装置**测不了**什么（这一条最要紧）
 

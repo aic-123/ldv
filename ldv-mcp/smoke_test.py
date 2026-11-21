@@ -32,6 +32,9 @@
     S25 ★ 使用记录隔离（可选）：isolate_usage ⇒ 两个会话的倾向互不影响
     S26 ★ 等价消费者：agent 填的内容在出处里单独一桶（标记真的分得开）
     S27 ★ 空库能起来：**0 项、不写占位文件** ⇒ 能直接 remember ⇒ 能查
+   S48 ★ 不认识的参数**当场拒**（「装配」发进 ask 曾被静默丢掉 ⇒ 空查询命中整库）
+   S49 ★ `assemble` 只读：判据逐条摆、三态原样报、弱/缺就是「交人判」
+   S50 ★ `remember` 写完顺手开词（写得进却查不到 = 桥接写入端不闭环）
 """
 from __future__ import annotations
 
@@ -135,9 +138,10 @@ def main() -> int:
         r = c.call("tools/list")
         names = [t["name"] for t in (r.get("result") or {}).get("tools", [])]
         # ★ 2026-10-24 加 remember_answer（答案编进树）⇒ 四件动作 + **四件**能力
-        chk("S2", "★ 工具面 = 四件动作 + 四件能力（真人零动作，能力不缩水）",
+        chk("S2", "★ 工具面 = 四件动作 + 四件能力 + 一件装配（只读）（真人零动作，能力不缩水）",
             names == ["orient", "ask", "remember", "drill",
-                      "derive", "remember_answer", "undo", "next"], f"{names}")
+                      "derive", "remember_answer", "undo", "next",
+                      "assemble"], f"{names}")
 
         o = tool(c, "orient", {"corpus": "mine"})
         keys = o["out"].get("keys") or []
@@ -869,7 +873,9 @@ def main() -> int:
             and (fixed["out"].get("n_answer") or 0) > 0,
             f"ok={fixed['out'].get('ok')}｜n_answer={fixed['out'].get('n_answer')}"
             f"｜out_of_structure={fixed['out'].get('out_of_structure')}")
-        nx2 = tool(c, "next", {"corpus": "loop", "require": []})
+        # ⚠️ 这里原来带 `require: []` —— `next` 从来不认这个参数（它不看查询）。
+        #   2026-11-09 参数守卫上线时当场拒了它：**死参数在本仓库的测试里也躺过**。
+        nx2 = tool(c, "next", {"corpus": "loop"})
         dis = nx2["out"].get("失配") or {}
         chk("S39e", "★ 推理闭环④：**改完自洽** —— 结构没被这次修复弄出矛盾",
             dis.get("结构坏了") == 0 and dis.get("合计") == dis.get("表达力缺口"),
@@ -919,7 +925,7 @@ def main() -> int:
             u2txt[:90])
 
         # ④ next 的清单 ⇒ 原来只列两档，而 S17 的 docstring 说三个桶都列
-        n3 = tool(c, "next", {"corpus": "real", "require": []})
+        n3 = tool(c, "next", {"corpus": "real"})
         keys3 = set((n3["out"].get("清单") or {}).keys())
         chk("S40d", "★ next 的清单列**三档**（必须/可延后/可忽略）",
             {"必须", "可延后", "可忽略"} <= keys3, f"清单键={sorted(keys3)}")
@@ -1192,11 +1198,124 @@ def main() -> int:
             f"调用前 {'无' if _before is None else str(len(_before)) + 'B'}"
             f"｜调用后 {'无' if _after is None else str(len(_after)) + 'B'}")
 
+        # ── S48：不认识的参数**当场拒**（2026-11-09，桥接实测撞出来的）──────
+        #   断点：agent 把「装配」当查询发进 `ask` ⇒ 旧版**静默丢掉**该参数 ⇒
+        #   `require` 退回空 ⇒ 空查询命中**整库**、`ok:true`、零提示。
+        #   调用方以为问对了 —— 拿到 3145 字符整库，而不是 1116 字符装配单。
+        #   ⇒ 参数被丢掉 = 这次查询悄悄变成了另一件事，必须拒。
+        wrong = tool(c, "ask", {"corpus": "mine", "require": [],
+                                "装配": {"名称": "随便一个目标"}})
+        wtxt = json.dumps(wrong["out"], ensure_ascii=False)
+        chk("S48a", "★ 不认识的参数（`装配` 发进 ask）⇒ **isError 当场拒**，"
+                    "不是静默丢掉后命中整库",
+            wrong["isError"] is True
+            and (wrong["out"].get("bad_args") == ["装配"])
+            and not wrong["out"].get("n_answer"),
+            f"bad_args={wrong['out'].get('bad_args')}｜返回={wtxt[:100]}")
+        chk("S48b", "★ 拒的时候**指路**（说「装配该用 assemble」，不只说「不认识」）",
+            "assemble" in wtxt, f"next_step={wrong['out'].get('next_step')}")
+        # 反向对照：去掉那个参数 ⇒ 同一调用正常（守卫不许误伤）
+        ok1 = tool(c, "ask", {"corpus": "mine", "require": []})
+        chk("S48c", "★ 反向对照：去掉 `装配` ⇒ 同一调用正常（守卫不误伤）",
+            ok1["out"].get("ok") is True and "bad_args" not in ok1["out"],
+            f"ok={ok1['out'].get('ok')}｜n_answer={ok1['out'].get('n_answer')}")
+        # 通用参数处处认：`session` 不在 orient 的 schema 里，但必须放行
+        ok2 = tool(c, "orient", {"corpus": "mine", "session": "probe"})
+        chk("S48d", "★ 通用参数（corpus/actor/session）处处放行 —— 守卫只挡**真不认识**的",
+            ok2["out"].get("ok") is not False and "bad_args" not in ok2["out"],
+            f"键={sorted(ok2['out'])[:6]}")
+
+        # ── S49：装配是一件**只读**工具（2026-11-09）────────────────────
+        #   agent 要的不是「整库命中」，是「这条判据靠哪块砖顶着，缺哪块」。
+        #   判据一条不落、三态（有/弱/缺）原样报 —— 弱和缺是**交人判**的信号。
+        TARGET, PART = "催还目标", "提醒单"
+        w1 = tool(c, "remember", {"corpus": "mine", "id": "t/催还目标",
+                                  "fields": {"type": "概念", "name": TARGET,
+                                             "门类": "事理"},
+                                  "body": ("催还目标：把到期的书收回来。\n\n**算达到**：\n"
+                                           "① **有" + PART + "**——到期前把名单列出来。\n"
+                                           "② **有滞纳金**——按天算，收得上。\n")})
+        w2 = tool(c, "remember", {"corpus": "mine", "id": "t/提醒单",
+                                  "fields": {"type": "概念", "name": PART,
+                                             "门类": "事理"},
+                                  "body": "提醒单：到期前要发的那张单子。\n"})
+        _led2 = corpus.parent / "assemble_ledger.jsonl"
+        _lb = _led2.read_bytes() if _led2.is_file() else None
+        asm = tool(c, "assemble", {"corpus": "mine", "名称": TARGET})
+        aout = asm["out"]
+        sheet = aout.get("装配单") or {}
+        rows = sheet.get("判据") or []
+        chk("S49a", "★ `assemble` 把目标正文的 ①② 逐条摆开（判据一条不落）",
+            w1["out"].get("written") is True and w2["out"].get("written") is True
+            and asm["isError"] is False and len(rows) == 2
+            and [r.get("序") for r in rows] == ["①", "②"],
+            f"判据 {[(r.get('序'), r.get('判据'), r.get('状态')) for r in rows]}")
+        st1 = {r.get("序"): r.get("状态") for r in rows}
+        chk("S49b", "★ 覆盖三态：有零件的那条判「有」，没零件的判「缺」——**原样报**",
+            st1.get("①") == "有" and st1.get("②") == "缺",
+            f"状态 {st1}｜整体 {(sheet.get('状态'))}｜缺口 {aout.get('n_gaps')}")
+        chk("S49c", "★ 缺口单独列（「缺哪块砖」是装配单的主产物之一）",
+            (aout.get("n_gaps") or 0) == 1
+            and (sheet.get("缺口") or [{}])[0].get("序") == "②",
+            f"缺口 {json.dumps(sheet.get('缺口'), ensure_ascii=False)[:120]}")
+        chk("S49d", "★ `assemble` **只读**：装配不写 `assemble_ledger.jsonl`"
+                    "（记账是另一件事，要显式开）",
+            (_led2.read_bytes() if _led2.is_file() else None) == _lb,
+            f"调用前 {'无' if _lb is None else len(_lb)}"
+            f"｜调用后 {'无' if not _led2.is_file() else len(_led2.read_bytes())}")
+        # 反向对照：目标没教过 ⇒ 明确说「没教过」，不许装出一张空单子
+        no = tool(c, "assemble", {"corpus": "mine", "名称": "从没教过的目标"})
+        chk("S49e", "★ 反向对照：没教过的目标 ⇒ isError + 「没教过」，不装空单子",
+            no["isError"] is True and "装配单" not in no["out"],
+            f"返回={json.dumps(no['out'], ensure_ascii=False)[:110]}")
+
+        # ── S50：`remember` 写完**顺手开词**（2026-11-10，v0.2.23）──────────
+        #   断点：v0.1.64 给内核 `App.taught` 加了自动开词，但桥接的 `remember`
+        #   走的是另一条写入路径（纯文件、不建 App），开词那段**从没执行过**
+        #   ⇒ 节点写得进、`ask` 一律 `out_of_structure` 查不到，
+        #   而工具描述写着「写什么都直接进、直接能查能用的」。
+        #   修法只补声明（`DECL.add`），**不调 `taught`** —— 后者会顺带写
+        #   11 条 usage 教学链，把「agent 存的一条」记成「教过的一条」，污染倾向。
+        N50 = "重复试验至少一次失败的概率"
+        _u0 = corpus.parent / "usage"
+        _n0 = len(list(_u0.glob("*"))) if _u0.is_dir() else 0
+        r50 = tool(c, "remember", {"corpus": "mine", "id": "t/重复试验",
+                                   "fields": {"type": "概念", "name": N50,
+                                              "数值": "0.38729024267023293"},
+                                   "body": ("p=0.04、n=12：0.96 连乘十二遍 = "
+                                            "0.6127097573297671；至少失败一次 = "
+                                            "1-它 = 0.38729024267023293。")})
+        chk("S50a", "★ `remember` 写完**自动开词**（与 `taught` 对齐）：返回里报开了哪个键",
+            r50["out"].get("written") is True
+            and f"name={N50}" in (r50["out"].get("开词") or []),
+            f"开词={r50['out'].get('开词')}")
+        q50 = tool(c, "ask", {"corpus": "mine", "require": [f"name={N50}"]})
+        chk("S50b", "★ 写完**立刻查得到**（改前死在这：ok:false / out_of_structure）",
+            q50["out"].get("ok") is True and (q50["out"].get("n_answer") or 0) >= 1,
+            f"ok={q50['out'].get('ok')}｜n_answer={q50['out'].get('n_answer')}"
+            f"｜unknown={q50['out'].get('unknown')}")
+        r50b = tool(c, "remember", {"corpus": "mine", "id": "t/重复试验2",
+                                    "fields": {"type": "概念", "name": N50},
+                                    "body": "同名的第二条（不同 id 才允许写）"})
+        chk("S50c", "★ 同名再写 ⇒ **不重复开词**（只追加不覆写，词也只开一次）",
+            r50b["out"].get("written") is True
+            and (r50b["out"].get("开词") == [])
+            and "已在词汇表" in str(r50b["out"].get("开词说明")),
+            f"开词={r50b['out'].get('开词')}｜{r50b['out'].get('开词说明')}")
+        r50c = tool(c, "remember", {"corpus": "mine", "id": "t/无名",
+                                    "fields": {"type": "记录"}, "body": "没有 name"})
+        chk("S50d", "★ 反向对照：没 name 的节点不开词、也不报错（不发明一个空键）",
+            r50c["out"].get("written") is True and "开词" not in r50c["out"],
+            f"键={sorted(r50c['out'])}")
+        _n1 = len(list(_u0.glob("*"))) if _u0.is_dir() else 0
+        chk("S50e", "★ 开词**不写 usage 教学链**（走声明不走 `taught`，否则污染倾向排序）",
+            _n1 == _n0, f"写前 {_n0} 份｜写后 {_n1} 份")
+
     finally:
         c.close()
         shutil.rmtree(tmp, ignore_errors=True)
 
-    print(f"\n{'✓ 全过' if not FAIL else f'✗ 红 {FAIL} 条'}（S1–S47）")
+    print(f"\n{'✓ 全过' if not FAIL else f'✗ 红 {FAIL} 条'}（S1–S50）")
     return 1 if FAIL else 0
 
 

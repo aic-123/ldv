@@ -633,11 +633,19 @@ def agenda_report(*, k: int = 0, days: float | None = None) -> tuple[bool, str]:
         hist = {r["键"]: [now - timedelta(days=days)]
                 for r in first["到点"] + first["未到"]}
     out = _ag.agenda(kern, k=k, history=hist)
+    # ── 自问层 tick 内嵌（docs/自问层设计.md 裁定 #1）：问「现在轮到谁」的同时
+    #    得到「我想做什么」。I5 式可移除性：删掉 `自问句` 两键，其余逐字相同。
+    from .core import selfask as _sf
+    out = _sf.attach(out, kern, nodes_dir=None)
 
     lines = [f"空闲第 {out['空闲轮次']} 轮｜阈值 τ={out['阈值']}｜{out['公式']}"]
     if days is not None:
         lines.append(f"（演示历史：每条按「{days} 天前出现过一次」算）")
     lines.append(f"到点 {len(out['到点'])} 条｜未到 {len(out['未到'])} 条")
+    if out.get("自问句"):
+        lines.append(_sf.render(out["自问句"]))
+    elif out.get("自问句_空因"):
+        lines.append(f"自问：无（{out['自问句_空因']}）")
     for r in out["到点"][:8]:
         lines.append(f"  · [{r['档位']}] {r['键']}  激活={r['激活']} "
                      f"次数={r['出现次数']} 首次={r['首次']}")

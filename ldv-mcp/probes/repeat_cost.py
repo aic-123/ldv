@@ -1,7 +1,7 @@
 """重复任务 / 历史检索：token 成本的另一种形状。
 
 跑法（需要 tiktoken）：
-    C:/Users/19253/.workbuddy-ai/binaries/python/envs/default/Scripts/python.exe probes/repeat_cost.py
+    _os.environ.get("LDV_ROOT", ".")/.workbuddy-ai/binaries/python/envs/default/Scripts/python.exe probes/repeat_cost.py
 
 ## 为什么单独测（上一组数字的软肋）
 

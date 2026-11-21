@@ -67,7 +67,7 @@
   [过] E17 同 id 再 remember ⇒ 不覆写（报已存在）
         {"ok": false, "written": false, "why": "已有一条 id=n1 的记忆 —— 只追
   [过] E18 空正文合法（空值合法是产品立场），能写能查
-        {"ok": true, "written": true, "path": "C:\\Users\\19253\\App
+        {"ok": true, "written": true, "path": "_os.environ.get("LDV_ROOT", ".")\\App
   [过] E19 5000 字正文能写；查时 max_chars=100 截断并报 truncated
         写入=True
   [过] E20 中文/全角正文原样返回（不转义、不截断丢字）

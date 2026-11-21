@@ -136,6 +136,34 @@ def append(corpus_dir: Any, *, did: str, outcome: float, propensity: float,
     return {"ok": True, "written": True, "path": str(p)}
 
 
+def load_half_life(corpus_dir: Any) -> float:
+    """半衰期（**天**）—— 从 `<usage>/config.json` 读 `half_life_hours`。
+
+    ★ 半衰期本来就是**外生参数**（见 `HALF_LIFE_DAYS` 的注释），只是此前
+      没有落盘的入口，只能改代码。2026-11-02 起：每个语料根可以自带一份
+      `usage/config.json`，形如 `{"half_life_hours": 2}` —— 小时级衰减
+      （「一小时前的经验已经淡了」）和天级（「上个月的事淡了」）是两个世界。
+
+    ⚠️ **没写配置 ⇒ 返回 `HALF_LIFE_DAYS`（30 天），行为逐字不变** ——
+       这条是判据的红线：配置是可选的，不写它，老语料一个数都不能变。
+    ⚠️ `half_life_hours <= 0` **照原样返回**（换算成负数或 0 天）——
+       「不衰减」的语义在 `decay_weight` 里（`<=0 ⇒ 1.0` 回退对照），这里不替它做主。
+    ⚠️ 配置写坏（不是 JSON、`half_life_hours` 不是数）⇒ 回默认 —— **不猜、不抛**，
+       坏配置不能让语料读不出来。
+    """
+    p = _dir(corpus_dir) / "config.json"
+    if not p.is_file():
+        return HALF_LIFE_DAYS
+    try:
+        cfg = json.loads(p.read_text(encoding="utf-8"))
+    except Exception:                                    # noqa: BLE001
+        return HALF_LIFE_DAYS
+    h = cfg.get("half_life_hours") if isinstance(cfg, dict) else None
+    if not isinstance(h, (int, float)) or isinstance(h, bool):
+        return HALF_LIFE_DAYS
+    return float(h) / 24.0
+
+
 def load(corpus_dir: Any) -> list[dict]:
     """读回全部记录（按文件名排序 ⇒ 确定性）。解析不了的**跳过并计数**，不静默。"""
     d = _dir(corpus_dir)
@@ -197,7 +225,7 @@ def decay_weight(at: str, *, now: datetime | None = None,
 
 
 def aged_tendency(corpus_dir: Any, *, now: datetime | None = None,
-                  half_life_days: float = HALF_LIFE_DAYS) -> dict[str, float]:
+                  half_life_days: float | None = None) -> dict[str, float]:
     """每个方向的**衰减后累计证据** `Σ (outcome / propensity × w)` —— 局部量。
 
     ★★ 为什么是**和**、不是**平均**（这条是踩出来的）：
@@ -213,13 +241,17 @@ def aged_tendency(corpus_dir: Any, *, now: datetime | None = None,
     ⚠️ 只收合法倾向（`§K7` / `B11`）：`propensity` 必须在 `(0, 1]`。
     ⚠️ 没有任何合法记录的方向**不出现**在结果里（`§K6`：没有 ≠ 0）。
     ⚠️ 跨方向**不求和、不求平均** —— 那是全局评分（`§B12`）。
+    ⚠️ 半衰期（2026-11-02）：`half_life_days=None` ⇒ **读语料自带的
+       `usage/config.json`**（`load_half_life`；没写 ⇒ 30 天，逐字不变）；
+       **显式传参仍优先** —— 判据的回退对照（`0`）与拉长（`1e5`）不受配置影响。
     """
+    hl = load_half_life(corpus_dir) if half_life_days is None else half_life_days
     per: dict[str, list[tuple[float, float]]] = {}
     for r in load(corpus_dir):
         p = float(r.get("propensity") or 0.0)
         if not (0.0 < p <= 1.0):
             continue
-        w = decay_weight(r.get("at", ""), now=now, half_life_days=half_life_days)
+        w = decay_weight(r.get("at", ""), now=now, half_life_days=hl)
         per.setdefault(r["did"], []).append((float(r["outcome"]) / p, w))
     return {did: sum(v * w for v, w in pairs) for did, pairs in sorted(per.items())}
 
@@ -318,7 +350,8 @@ def stage_load(corpus_dir: Any) -> list[dict]:
 
 def promote(corpus_dir: Any, *, qfp: str, did: str, propensity: float,
             note: str = "drill", snapshot: str = "",
-            outcome: float = 1.0, at: str | None = None) -> dict:
+            outcome: float = 1.0, at: str | None = None,
+            event_qfp: str | None = None) -> dict:
     """缓冲 → 正式：把 `did` 标成一次**真实交互**，并从这批的 `shown` 里移除。
 
     ★★ **不在缓冲里的 did 不许 promote** —— 否则就是把「翻到了」当成「用了」。
@@ -331,8 +364,15 @@ def promote(corpus_dir: Any, *, qfp: str, did: str, propensity: float,
          见 `entry._rejected_dirs` 与 `kernel.py:851` 的假阴警告。
 
     ★ `at`（2026-11-02）：写入时间戳。**必须可注入**，否则「缓冲 → 正式」
-      这一跳的时间绕不过去 —— 而它正是 `at` 唯一的来源。
-      不传 ⇒ `clock.now()`（默认就是 `datetime.now()`，旧行为逐字不变）。
+       这一跳的时间绕不过去 —— 而它正是 `at` 唯一的来源。
+       不传 ⇒ `clock.now()`（默认就是 `datetime.now()`，旧行为逐字不变）。
+
+    ★ `event_qfp`（2026-11-03，用户确认「**每次被消费的调用都是一次巩固**」）：
+       记账用的 qfp。staging 校验仍用 `qfp`（「必须在刚展示的候选里」的闸不动），
+       但落账用 `event_qfp` —— 调用方传**每次事件唯一**的值，于是**不同题目的
+       两次消费是两条记录**（间隔重复的「间隔」由衰减因子表达，不由去重表达；
+       间隔越久权重越低，这就够了）。缺省 None ⇒ 旧语义逐字不变
+       （同一 (qfp, did) 只记一次），判据的回退对照不受影响。
 
     `snapshot` 透传给 `append`（§I7 的方向状态留痕）。
     """
@@ -345,13 +385,48 @@ def promote(corpus_dir: Any, *, qfp: str, did: str, propensity: float,
         return {"ok": False, "written": False,
                 "why": "这一支不在这次查询的展示里，不记"}
     out = append(corpus_dir, did=did, outcome=outcome, propensity=propensity,
-                 qfp=qfp, note=note, snapshot=snapshot, at=at)
+                 qfp=event_qfp or qfp, note=note, snapshot=snapshot, at=at)
     rest = [x for x in cur["shown"] if x != did]
     if rest:
         stage(corpus_dir, qfp=qfp, shown=rest, note="（已 promote 一支，剩余）")
     else:
         sp.unlink()
     return {**out, "remaining": len(rest)}
+
+
+def teach(corpus_dir: Any, *, did: str, node_id: str, at: str | None = None,
+          snapshot: str = "", event_qfp: str | None = None) -> dict:
+    """教学 → 正式：一个节点**被喂入并被树安放**，本身就是一次真实事件。
+
+    ★★（2026-11-03，用户纠正）「被教学」和「被使用」是同一本账的**两类真实信号**：
+       - 被使用：查询 → 下钻（`promote`），检索侧的巩固；
+       - 被教学：节点落进树、沿途每层方向都真实参与了对它的安放
+         （编码侧的巩固）。方向是树对自己的抽象，账**必须挂在 did 上**，
+         不许另立节点级的账——那等于把倾向从树上摘下来。
+
+    ★ **这不是合成反馈**：教学事件真实发生（材料真的写了、树真的重建了）、
+      方向链是树的真实投影（快照留痕）。所以与 drill 同账同权（outcome=+1）。
+      ⚠️ 编码/检索两类信号将来若要不同权重，走 `propensity` 标定，不改账本。
+
+    ★ 去重键 = `(qfp, did)`，qfp = `teach:<node_id>` ⇒ 同一节点对同一方向
+      只记一次；一个方向吸收过多少节点，就有多少条记录 —— 累计证据天然成立
+      （吸收 20 个节点的方向比吸收 2 个的更「熟」，与越用越顺手同构）。
+
+    ★ `event_qfp`（2026-11-03，用户指示「**同等级的知识可以重复几次**」）：
+      记账用的 qfp。调用方传 `teach:<node_id>@<事件戳>` ⇒ **同一节点被再教
+      一次是又一个真实事件，各记一条** —— 复习/重复喂入从此有账可入，
+      间隔由衰减因子表达，不由去重表达（刚教过的再教权重自然更低）。
+      缺省 None ⇒ 旧语义逐字不变（回填的历史教学记录不受影响）。
+
+    ★ `at` 语义与 `promote` 相同：教学发生的时间（可注入；回填历史用真实历史时刻）。
+      半衰期照常作用 ⇒ **没被复习的教学也会褪色**——这正是「存在也是记忆材料」。
+
+    ⚠️ 不走缓冲区：缓冲防的是「查询曝光冒充有用」；教学不是查询，没有曝光位次。
+    """
+    return append(corpus_dir, did=did, outcome=1.0, propensity=1.0,
+                  qfp=event_qfp or f"teach:{node_id}",
+                  note=f"教学：{node_id} 被安放进此方向",
+                  at=at, snapshot=snapshot)
 
 
 def clear(corpus_dir: Any) -> dict:

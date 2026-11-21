@@ -2,7 +2,7 @@
 
 跑法（需要 tiktoken）：python probes/token_cost.py
 
-    C:/Users/19253/.workbuddy-ai/binaries/python/envs/default/Scripts/python.exe probes/token_cost.py
+    _os.environ.get("LDV_ROOT", ".")/.workbuddy-ai/binaries/python/envs/default/Scripts/python.exe probes/token_cost.py
 
 ## 成本的形状（这是这个探针要说清的一件事）
 

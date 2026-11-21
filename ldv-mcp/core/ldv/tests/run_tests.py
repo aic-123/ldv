@@ -1272,10 +1272,14 @@ def test_equivalence() -> None:
        "（判据不再红 ≠ 现象消失；现象改由读数承担）",
        cyc_torn > 0,
        f"被拆开的等价类 {cyc_torn} 个 —— 若为 0，说明这条读数也是空转")
+    # ⚠️ 不写死 `D3`/`D4`：did 已改成**内容派生**（`kernel.did_of`），
+    #    这里要的是「{a,b} 那两个子方向」，不是「编号 3 和 4」。
+    _pair_parent = next(d for d in ck.all_directions()
+                        if ck.members_of(d) == frozenset({"a", "b"}))
+    _c1, _c2 = sorted(ck.children_of(_pair_parent), key=lambda d: d.did)
     ok("★ 且那一层是**重复覆盖**（两个子方向覆盖完全相同 ⇒ §K2 第二半的缺口）",
-       ck.plugin.reachable(ck.direction("D3").payload)
-       == ck.plugin.reachable(ck.direction("D4").payload),
-       f"D3 {sorted(ck.direction('D3').payload)} vs D4 {sorted(ck.direction('D4').payload)}")
+       ck.plugin.reachable(_c1.payload) == ck.plugin.reachable(_c2.payload),
+       f"{_c1.did} {sorted(_c1.payload)} vs {_c2.did} {sorted(_c2.payload)}")
 
     # ── ⑦ 合成对照：**三态各一例**（`run_checks` 的「覆盖证据」引的就是它） ──
     #   ⚠️ 前面 ①–⑥ 都读**真语料**；这一条**不碰内核、不碰语料** —— 它问的是
@@ -5999,6 +6003,218 @@ def test_predicate_naming() -> None:
 
 
 
+def test_chain_projection() -> None:
+    """★ [链路] 一支答案的「怎么走到这儿」要能读出来（2026-11-02）。
+
+    背景：`query()` 回的是一排**并列的支**（有哪些答案），不是「怎么想到的」。
+    而 `Direction.parent` 一直在结构里 ⇒ 那条路本来就能读，只是一直没接口。
+    这一组守的是**读**这件事，不是改树：
+
+        ① 形状：根 → 目标，逐层单调，末层就是目标
+        ② 账平：`相干步 + 过路步 + 1 == 长`（根那一层没切任何东西）
+        ③ 只读：算链路前后结构签名**逐字相同**
+        ④ 相干**随需求变**：同一支换需求字段，相干步数跟着变（不是常量）
+        ⑤ 与 `query()` 的答案**逐字相同**（链路不许悄悄改答案）
+
+    ★ ④ 是反向对照：若相干恒等于某个数，说明它没在看需求，只是把链长抄了一遍。
+    """
+    import shutil
+    from pathlib import Path
+
+    import entry as E
+    from ldv.core import chain as CH
+
+    tmp = Path(tempfile.mkdtemp(prefix="ldv-chain-"))
+    try:
+        d = tmp / "nodes"
+        d.mkdir(parents=True)
+        # 四个类型 × 有/无日期 × 有/无标记 —— 让树必须切好几刀才分得开
+        rows = [("a", "读书", "20261001", "重要的"), ("b", "读书", "", ""),
+                ("c", "财务", "20261002", ""), ("d", "财务", "", "重要的"),
+                ("e", "会议", "20261003", ""), ("f", "会议", "", ""),
+                ("g", "报修", "20261004", "存疑的"), ("h", "报修", "", "")]
+        for nid, tp, dt, mark in rows:
+            lines = [f"id: {nid}", f"type: {tp}"]
+            if dt:
+                lines.append(f"日期: {dt}")
+            if mark:
+                lines.append(f"我: {mark}")
+            (d / f"{nid}.md").write_text(
+                "---\n" + "\n".join(lines) + "\n---\n\n" + nid + "。\n", encoding="utf-8")
+
+        app = E.App(root=str(d))
+        k = app.kernels["keyset"]
+
+        def sig(kern):
+            ds = kern.all_directions()
+            return (len(ds), sum(len(kern.children_of(x)) for x in ds),
+                    sum(len(kern.members_of(x)) for x in ds))
+
+        before = sig(k)
+        r = app.chain({"require": ["type=报修"]})
+        ok("★ [链路] ⑤ 链路接口跑得通，且答案与 query 一致",
+           r.get("ok") is True and r["n_answer"] > 0, str(r.get("error"))[:120])
+
+        c = r["chains"][0]
+        ok("★ [链路] ① 首层是根（rank 1、没有父）",
+           c["路"][0]["rank"] == 1
+           and k.direction(c["路"][0]["did"]).parent is None,
+           f"首层 {c['路'][0]}")
+        ok("★ [链路] ① 末层就是目标",
+           c["路"][-1]["did"] == c["did"], f"{c['路'][-1]['did']} vs {c['did']}")
+
+        mono = True
+        for i in range(1, len(c["路"])):
+            p = k.direction(c["路"][i - 1]["did"]).payload
+            q = k.direction(c["路"][i]["did"]).payload
+            if not (set(p[0]) <= set(q[0]) and set(p[1]) <= set(q[1])):
+                mono = False
+            if c["路"][i]["rank"] != c["路"][i - 1]["rank"] + 1:
+                mono = False
+        ok("★ [链路] ① 逐层单调（must/mustnot 只增不减，rank 逐层 +1）", mono, "")
+
+        ok("★ [链路] ② 账平：相干 + 过路 + 1 == 长（每一支都是）",
+           all(x["相干步"] + x["过路步"] + 1 == x["长"] for x in r["chains"]),
+           str([(x["长"], x["相干步"], x["过路步"]) for x in r["chains"]]))
+
+        ok("★ [链路] ③ 只读：算链路前后面结构签名不变",
+           sig(app.kernels["keyset"]) == before, f"{before} → {sig(app.kernels['keyset'])}")
+
+        # ④ 反向对照：**同一条链**，需求给不给、给哪个字段 ⇒ 相干数必须跟着变。
+        #   ⚠️ 不能拿「不同需求的两组支」比 —— 需求一变，答案支就换了，
+        #      两组 did 可能完全不相交（实测：8 项语料上两组不相交，判据当场红）。
+        #      所以要**钉住同一条链**再换需求，才是真的反向对照。
+        longest = max(r["chains"], key=lambda x: x["长"])
+        step1 = longest["路"][1]["切"]          # 第 2 层切的那个键
+        n_none = CH.chain_of(k, longest["did"], require=[])["相干步"]
+        n_hit = CH.chain_of(k, longest["did"], require=[step1])["相干步"]
+        n_miss = CH.chain_of(k, longest["did"], require=["完全无关的字段"])["相干步"]
+        ok("★ [链路] ④ 不给需求 ⇒ 相干 0；给链上的字段 ⇒ 相干 > 0；给无关字段 ⇒ 0",
+           n_none == 0 and n_hit >= 1 and n_miss == 0,
+           f"无需求={n_none}｜给 {step1}={n_hit}｜给无关={n_miss}")
+
+        # 空答案：n=0 时链路摘要也要给得出（不许抛）
+        e = app.chain({"require": ["type=读书"], "forbid": ["type=读书"]})
+        ok("★ [链路] ⑤ 0 答案时摘要给得出（不抛，且支数与 chains 对得上）",
+           e.get("ok") is True and e["n_answer"] == 0
+           and e["chain_summary"]["支数"] == len(e["chains"]),
+           f"n={e.get('n_answer')} 摘要={e.get('chain_summary')}")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_value_predicates() -> None:
+    """★ [谓词声明] 问不出的东西，能**当场要求一个谓词**（2026-11-02）。
+
+    这一组守的是「回答的同时要求新谓词」这条闭环，四件事缺一不可：
+
+        ① 分得清**拼错 / 缺谓词 / 缺维度** —— 三者的处置完全不同
+        ② 声明后**立刻**可用（`生效`），不是「写进文件就算数」
+        ③ 0 命中**拒收** —— 空维度与「没这个词」在输出上长得一样
+        ④ 删掉声明 ⇒ 结构**逐字**回到原状（可移除性）
+
+    ★ ④ 是反向对照：若删不掉或删了不一样，说明声明不是「只加键」，
+      而是**改了材料**——那就不再是词汇问题，是数据污染。
+    """
+    import json
+    import shutil
+    import tempfile
+
+    import entry as E
+    from ldv.core import declare as DECL
+
+    def make(base: Path, under_data: bool = True) -> Path:
+        d = (base / "_data" / "c" / "nodes") if under_data else (base / "c" / "nodes")
+        d.mkdir(parents=True)
+        rows = [(4500, "已修", "财务"), (320, "待修", "财务"), (9800, "待修", "财务"),
+                (150, "已修", "财务")]
+        for i, (amt, st, typ) in enumerate(rows):
+            (d / f"n{i}.md").write_text(
+                f"---\nid: n{i}\ntype: {typ}\n金额: {amt}\n状态: {st}\n---\n\n第 {i} 条。\n",
+                encoding="utf-8")
+        return d
+
+    tmp = Path(tempfile.mkdtemp(prefix="ldv-decl-"))
+    try:
+        # ① 形状：六个算子；`>=` 不许被拆成 `>` + `=xxx`
+        ok("★ [谓词声明] ① `>=` 整体匹配，不被拆成 `>`",
+           DECL.parse("金额>=3000") == ("金额", ">=", "3000"),
+           f"实得 {DECL.parse('金额>=3000')}")
+        ok("★ [谓词声明] ① 六个算子都认",
+           all(DECL.parse(f"a{o}1") == ("a", o, "1")
+               for o in ("=", "!=", ">", "<", ">=", "<=")),
+           str([DECL.parse(f"a{o}1") for o in ("=", "!=", ">", "<", ">=", "<=")]))
+        ok("★ [谓词声明] ① 区间形状**不猜**（`1<金额<9` ⇒ None）",
+           DECL.parse("1<金额<9") is None, f"实得 {DECL.parse('1<金额<9')}")
+
+        nodes_dir = make(tmp / "user")
+        app = E.App(root=str(nodes_dir))
+        ok("★ [谓词声明] ① 语料在 `_data/` 下 ⇒ 允许声明",
+           app._can_declare is True, f"_can_declare={app._can_declare}")
+
+        # 分清三种：缺谓词 / 0 命中 / 缺字段
+        r = app.query({"require": ["金额>=3000"]})
+        prop = (r.get("need_predicate") or [{}])[0]
+        ok("★ [谓词声明] ② 缺谓词：字段在、值在 ⇒ 可声明，且**还没**改结构",
+           r["ok"] is False and prop.get("可声明") is True and prop.get("命中") == 2
+           and "金额>=3000" not in app.all_keys, f"{prop.get('理由')}")
+        miss = DECL.evidence(app.nodes, "星级>=3")
+        zero = DECL.evidence(app.nodes, "金额>=99999")
+        ok("★ [谓词声明] ② 缺维度 与 0 命中 分得开",
+           miss.get("可声明") is False and "没有字段" in (miss.get("理由") or "")
+           and zero.get("可声明") is False and "空维度" in (zero.get("理由") or ""),
+           f"缺维度={miss.get('理由')}｜0命中={zero.get('理由')}")
+
+        # ③ 声明 ⇒ 立刻可用
+        before = dict(app.tree)
+        d = app.declare("金额>=3000", why="大额支出")
+        q = app.query({"require": ["金额>=3000"]})
+        ok("★ [谓词声明] ③ 声明后 `生效`，且**同一个 App 实例**就能答",
+           d.get("生效") is True and q["ok"] is True and q["n_answer"] == 2,
+           f"生效={d.get('生效')}｜n={q.get('n_answer')}｜{q.get('error')}")
+        ok("★ [谓词声明] ③ 结构真的变了（方向数增加）",
+           app.tree["方向数"] > before["方向数"],
+           f"{before} → {app.tree}")
+        ok("★ [谓词声明] ③ 写入带 来源/依据/at（可审计）",
+           all(k in d["记录"] for k in ("来源", "依据", "at"))
+           and d["记录"]["来源"] == "agent",
+           str(d.get("记录")))
+
+        # 幂等 + 只追加
+        n_before = len(DECL.load(app._corpus_root))
+        again = app.declare("金额>=3000")
+        ok("★ [谓词声明] ③ 同名再声明 ⇒ `already`，不重复追加",
+           again.get("already") is True and len(DECL.load(app._corpus_root)) == n_before,
+           f"already={again.get('already')}｜条数 {n_before}→{len(DECL.load(app._corpus_root))}")
+
+        # ③ 0 命中拒收
+        rej = app.declare("金额>=99999")
+        ok("★ [谓词声明] ③ 0 命中**拒收**，且不写进文件",
+           rej.get("ok") is False and len(DECL.load(app._corpus_root)) == n_before,
+           f"{rej.get('reason')}")
+
+        # ④ 可移除性：删掉段 ⇒ 树回到原样
+        pf = Path(app._corpus_root) / "predicates.json"
+        doc = json.loads(pf.read_text(encoding="utf-8"))
+        doc["字段谓词"] = []
+        pf.write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
+        app2 = E.App(root=str(nodes_dir))
+        ok("★ [谓词声明] ④ 反向对照：删掉声明 ⇒ 树逐字回到原样",
+           app2.tree == before and "金额>=3000" not in app2.all_keys,
+           f"{app2.tree} vs {before}")
+
+        # 只对用户语料开放
+        repo_dir = make(tmp / "repo", under_data=False)
+        app3 = E.App(root=str(repo_dir))
+        bad = app3.declare("金额>=3000")
+        ok("★ [谓词声明] ⑤ 仓库内语料**拒绝**声明（基线不被一次查询改掉）",
+           app3._can_declare is False and bad.get("ok") is False
+           and not (Path(app3._corpus_root) / "predicates.json").exists(),
+           f"_can_declare={app3._can_declare}｜{bad.get('error')}")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_dimension_values() -> None:
     """★ 维度**取值**的写法校验（`request.apply_approved`，2026-10-20）。
 
@@ -6098,6 +6314,21 @@ def test_version_spots() -> None:
     ok("★ [版本落点] 57 每个落点的正则**恰好命中 1 次**（`bump` 的前提）",
        not bad, f"命中异常 {bad}" if bad else f"{len(VS.SPOTS)} 个落点各命中 1 次")
 
+    # ── 58 「带日期的落点」必须**真读到日期**（2026-10-26 补） ────────────
+    #   踩过的坑：`## 当前状态：v0.1.49（2026-10-23）` 这一行**版本新、日期旧**，
+    #   而它的正则只抓了版本 ⇒ `scan` 报「日期 None」⇒ `bump` 不改它。
+    #   更坏的是：`check` 判一致时 `dates` 集合**滤掉 None** ⇒ 空了就恒真
+    #   ⇒ 判据 56 一直绿，提示语还打「无日期」。**一个落点只抓一半，比不抓更糟。**
+    #   ⇒ 这条判的是：**说明里写了「状态」「本版」「当前状态」那种带日期的落点，
+    #     扫描结果里必须真有日期**（不再靠人记「我手工改过」）。
+    dated_labels = {"README 状态行「本版」", "README 当前状态标题", "长文 状态行"}
+    got = {r["落点"]: r["日期"] for r in rows}
+    missing_date = sorted(lab for lab in dated_labels if not got.get(lab))
+    ok("★ [版本落点] 58 **带日期的落点必须真读到日期**（否则 bump 不管它、check 恒真）",
+       not missing_date,
+       f"读不到日期的：{missing_date}｜实读 "
+       f"{ {k: v for k, v in got.items() if k in dated_labels} }")
+
     # ── 58 **反向对照**：伪造一处不一致 ⇒ `check` 必须报不一致 ───────────
     #    ⚠️ 不碰真实文档：把 `SPOTS` 与 `REPO` 一起指到临时目录。
     tmp = _P(tempfile.mkdtemp())
@@ -6117,6 +6348,1470 @@ def test_version_spots() -> None:
         VS.SPOTS, VS.REPO = old_spots, old_repo
         shutil.rmtree(tmp, ignore_errors=True)
 
+
+def test_selfask() -> None:
+    """★ [自问] 自问句：原料来自既有结构，只做组合与成句（2026-11-03）。
+
+    `docs/自问层设计.md`（V1 tick 内嵌 + V2 出箱通道）的可机械化判据。
+    D-2（人裁决「真两难」）与 D-5（agent 弃答权）是**流程判据**，在
+    world 下一阶段逐句记录，不在这里。
+
+        ① 无词问命中（D-1 正向）：处境里的词不在词表 ⇒ 出句，证据 = 那个词，
+           且 `verify()` 逐条可解析回真实结构
+        ② D-1 反向：证据换成**词表内的词** ⇒ verify 必须红（编造引文抓得到）
+        ③ 空的诚实（D-4）：问句空 ⇒ 必带 `空因`；问句非空 ⇒ 每句有证据
+        ④ 出箱的使用态门（D-6）：非使用态 ⇒ 跳过；使用态 + drill ⇒
+           `outbox.jsonl` 落地且逐行可解析
+        ⑤ 音量有界（D-7）：单次出箱 ≤ 3 句
+        ⑥ 无守护进程（D-8）：outbox 的 mtime 落在操作窗口内
+        ⑦ tick 内嵌（I5）：attach 加两键；删掉后与议程原返回**逐字相同**
+        ⑧ 冷却（D-3）：被驳回的键，下一次出箱不再出现
+        ⑨ render 不含协议禁词（score / weight / priority / rating）
+    """
+    import shutil
+    from datetime import datetime as _dt
+    from pathlib import Path
+
+    import entry as E
+    from ldv.core import agenda as AG
+    from ldv.core import selfask as SF
+
+    tmp = Path(tempfile.mkdtemp(prefix="ldv-selfask-"))
+    try:
+        d = tmp / "_data" / "self" / "nodes"   # 带 _data 段 ⇒ App 视为用户语料（usage 启用）
+        d.mkdir(parents=True)
+        rows = [("a", "读书", "20261001", "重要的"), ("b", "读书", "", ""),
+                ("c", "财务", "20261002", ""), ("d", "财务", "", "重要的"),
+                ("e", "会议", "20261003", ""), ("f", "会议", "", ""),
+                ("g", "报修", "20261004", "存疑的"), ("h", "报修", "", "")]
+        for nid, tp, dt, mark in rows:
+            lines = [f"id: {nid}", f"type: {tp}"]
+            if dt:
+                lines.append(f"日期: {dt}")
+            if mark:
+                lines.append(f"标记: {mark}")
+            body = "---\n" + "\n".join(lines) + "\n---\n\n（测试节点）\n"
+            (d / f"{nid}.md").write_text(
+                body, encoding="utf-8", newline="\n")
+        app = E.App(root=str(d))
+        kern = app.ensure("keyset")
+
+        # ── ① 无词问命中（D-1 正向）─────────────────────────────────────
+        sf = app.selfask(context_keys=["type=读书", "恐龙"])
+        wl = [q for q in sf["问句"] if q["类型"] == "无词"]
+        ok("★ [自问] ①a 词表外的处境词 ⇒ 出无词问，证据 = 那个词（逐字）",
+           len(wl) == 1 and "恐龙" in
+           [e.get("原文") for e in wl[0]["证据"]],
+           f"证据 {[e.get('原文') for e in wl[0]['证据']] if wl else '（无句）'}")
+        ok("★ [自问] ①b 词表内的处境词**不**进无词证据",
+           wl and "type=读书" not in
+           [e.get("原文") for e in wl[0]["证据"]],
+           "处境命中 = 查询材料，不是缺词")
+        ok("★ [自问] ①c verify 正向：无词问证据逐条可解析",
+           all(SF.verify(q, kern) for q in sf["问句"]),
+           f"{len(sf['问句'])} 句全过")
+        # ── ①d 无词问提权（v0.1.58）：排序垫底 ⇒ cap 内必出 ────────────
+        #   考卷实证（2026-11-03）：旧排序下无词问垫底，40 条待展开 + cap=5
+        #   ⇒ 永远轮不到。提权后有缺词 ⇒ 无词问必占第一个坑位。
+        sfp = app.selfask(context_keys=["恐龙", "美人鱼"], cap=1)
+        ok("★ [自问] ①d 无词问提权：cap=1 时唯一坑位归无词问（不再被待展开挤掉）",
+           len(sfp["问句"]) == 1 and sfp["问句"][0]["类型"] == "无词",
+           f"首句类型 {sfp['问句'][0]['类型'] if sfp['问句'] else '（空）'}")
+        sf0p = app.selfask()
+        ok("★ [自问] ①d′ 无处境时排序不影响其余类型（I5 式可移除）",
+           all(q["类型"] in ("矛盾", "待展开") for q in sf0p["问句"]),
+           f"类型分布 {sorted({q['类型'] for q in sf0p['问句']})}")
+
+        # ── ② D-1 反向：编造证据（词表内的词）⇒ verify 红 ────────────────
+        fake = {"类型": "无词", "键": "无词:fake", "档位": "可延后",
+                "陈述": "编造的一句",
+                "证据": [{"原文": "type=读书", "可复算": "不在 all_keys 里"}],
+                "请求": "声明维度"}
+        ok("★ [自问] ② D-1 反向：证据是**词表内**的词 ⇒ verify 红",
+           SF.verify(fake, kern) is False,
+           "编造引文抓得到——这条是「无中生有」的闸")
+
+        # ── ③ 空的诚实（D-4）────────────────────────────────────────────
+        sf0 = app.selfask()
+        ok("★ [自问] ③ D-4 空的诚实：句空 ⇔ 空因非空；句非空 ⇔ 每句有证据",
+           (not sf0["问句"]) == (sf0["空因"] is not None)
+           and all(q.get("证据") for q in sf0["问句"]),
+           f"问句 {len(sf0['问句'])}｜空因 {sf0['空因']}")
+
+        # ── ④ 出箱的使用态门（D-6）──────────────────────────────────────
+        e0 = app.selfask_emit()
+        ok("★ [自问] ④a 非使用态语料 ⇒ 出箱跳过（不出箱是设计的诚实）",
+           e0.get("出箱") == 0 and "非使用态" in str(e0.get("跳过", "")),
+           str(e0.get("跳过")))
+        # 升级为使用态：语料根自带 usage/config.json（半衰期外生落盘的同款标记）
+        (d.parent / "usage").mkdir(exist_ok=True)
+        (d.parent / "usage" / "config.json").write_text(
+            json.dumps({"half_life_hours": 2}), encoding="utf-8")
+        r = app.query({"require": []})
+        did0 = r["nodes"][0]["did"]
+        app.drill(did0, [])                    # 收尾钩子：无处境 ⇒ 无新缺词，可合法不出
+        t0 = _dt.now()
+        e_mid = app.selfask_emit(context_keys=["恐龙", "美人鱼"])
+        t1 = _dt.now()
+        outp = d.parent / "outbox.jsonl"
+        ok("★ [自问] ④b 使用态 + 新缺词 ⇒ 出箱落地（outbox.jsonl 逐行可解析）",
+           outp.is_file() and e_mid.get("出箱", 0) >= 1
+           and all(isinstance(json.loads(l), dict) for l in
+                   outp.read_text(encoding="utf-8").splitlines() if l.strip()),
+           f"出箱 {e_mid.get('出箱')} 句｜k_out={e_mid.get('k_out')}")
+        recs = e_mid.get("句", [])
+        # ── ⑤ 音量有界（D-7）────────────────────────────────────────────
+        ok("★ [自问] ⑤ D-7 单次出箱 ≤ 3 句",
+           all(True for _ in recs) and len(recs) <= 3, f"本趟 {len(recs)} 句")
+        # ── ⑥ 无守护进程（D-8）──────────────────────────────────────────
+        mt = outp.stat().st_mtime
+        ok("★ [自问] ⑥ D-8 outbox 的 mtime ∈ 操作窗口（两次落盘之间无进程）",
+           t0.timestamp() - 1 <= mt <= t1.timestamp() + 1,
+           f"mtime 落在 drill 窗口内")
+        # 出箱句全部可解析（D-1 在出箱件上复用）
+        ok("★ [自问] ⑥b 出箱句证据逐字可解析（D-1 在 outbox 上复用）",
+           all(SF.verify(q, kern) for q in recs), f"{len(recs)} 句全过")
+
+        # ── ⑦ tick 内嵌（I5 可移除性）───────────────────────────────────
+        ag = AG.agenda(kern, k=0)
+        att = SF.attach(ag, kern, nodes_dir=d)
+        stripped = {k: v for k, v in att.items()
+                    if k not in ("自问句", "自问句_空因")}
+        ok("★ [自问] ⑦ I5 tick 内嵌：删掉 `自问句` 两键 ⇒ 与议程原返回逐字相同",
+           stripped == ag,
+           f"自问句 {len(att.get('自问句', []))} 句（空因 {att.get('自问句_空因')}）")
+
+        # ── ⑧ 冷却（D-3）：驳回的键，下一次出箱不再出现 ─────────────────
+        AG.append_record(d, kind="unknown", keys=[q["键"] for q in recs])
+        e4 = app.selfask_emit(context_keys=["恐龙", "美人鱼"])
+        ok("★ [自问] ⑧ D-3 被驳回的键进冷却，不再出箱",
+           e4.get("出箱") == 0,
+           f"二趟出箱 {e4.get('出箱')} 句｜跳过原因：{e4.get('跳过')}")
+
+        # ── ⑨ render 不含协议禁词 ────────────────────────────────────────
+        text = SF.render(sf["问句"]) if sf["问句"] else ""
+        ok("★ [自问] ⑨ render 不含协议禁词（score/weight/priority/rating）",
+           not any(w in text.lower() for w in
+                   ("score", "weight", "priority", "rating")),
+           "B12 禁词在成句层同样不碰")
+
+        # ── Part B：真实世界语料（archive/world-20261103）───────────────
+        world_src = Path(__file__).resolve().parents[2] / \
+            "archive" / "world-20261103" / "_data" / "self"
+        if world_src.is_dir():
+            wd = tmp / "world" / "nodes"
+            shutil.copytree(world_src, wd)
+            wapp = E.App(root=str(wd))
+            wsf = wapp.selfask(context_keys=["量子纠缠", "恐龙"], cap=50)
+            ok("★ [自问] Part-B 真实世界语料（114 节点）：所有问句证据可解析（D-1）",
+               all(SF.verify(q, wapp.ensure("keyset")) for q in wsf["问句"]),
+               f"问句 {len(wsf['问句'])} 句｜空因 {wsf['空因']}")
+            ok("★ [自问] Part-B 处境触碰：词表外的词逐字入证据",
+               any("量子纠缠" in [e.get("原文") for e in q["证据"]]
+                   for q in wsf["问句"] if q["类型"] == "无词"),
+               "显性问协议第 2 读数系统化")
+            # ── Part-B 提权复验（v0.1.58）：真实语料 40+ 待展开挤压下无词问仍第一
+            wsf5 = wapp.selfask(context_keys=["量子纠缠"], cap=5)
+            ok("★ [自问] Part-B 提权复验：真实语料 + cap=5 ⇒ 无词问排第一（D-P1）",
+               wsf5["问句"] and wsf5["问句"][0]["类型"] == "无词",
+               f"首句 {wsf5['问句'][0]['类型'] if wsf5['问句'] else '（空）'}"
+               f"｜超上限 {wsf5['超出上限未展示']}")
+        else:
+            ok("★ [自问] Part-B 真实世界语料（跳过：archive 不在）", True,
+               "跳过 ≠ 通过——archive/world-20261103 不在时如实跳")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_compose() -> None:
+    """★ [组合] 组合算子：教过的零件 + 教过的运算 ⇒ 算出没教过的答案
+    （`core/compose.py`，2026-11-03）。
+
+    考卷定义的「学会了」（用户裁定）：教 1234 和加减乘除，问 2+3——
+    答案（五/十）**不教**，能算出来才算学会。判据先写死：
+
+        D-C1 正例：2+3 ⇒ 算得 5，依据逐字三条，语料无该值节点 ⇒ 如实报「没名字」
+        D-C2 缺操作数：六没教 ⇒ 弃答 + 透传词汇提案（可声明性如实）
+        D-C3 运算资格：教过除法 ⇒ 4/2 算得 2 且命中「二」；没教乘法 ⇒ * 拒
+        D-C4 证据不全：多命中 / 缺字段非数值 / 除零 ⇒ 逐字弃答
+        D-C5 可移除性：spec 不带 derive ⇒ 原查询路径不受影响
+        D-C6 通道纯净：derive 与检索字段混用 ⇒ 拒
+        D-S1~S7 solve 未知数槽位：四则各位置求逆 + 不唯一/无解拒 + 形状守门
+        D-C8~C10 链式：嵌套 derive 求值 / 依据上提 / 弃答透传 / solve 已知可嵌套
+        D-DC1~DC5 数的组成自查：没教过的数名拆已教零件 / 零件没教保留原拒 / solve 同样生效
+        D-M1~M6 moral 反查：事→应照的道德→标准原文 / 没对上弃答 / 没教拒 / 多命中拒 / 通道纯净\n        D-A1~A2 答题账本：同题重问带上次作答对账 / 异题不串账\n        D-Q1~Q3 缺事问：词认识无事收⇒反问 / 有事对上⇒不问 / 无词仍优先
+    """
+    import shutil
+    from pathlib import Path
+
+    import entry as E
+    from ldv.core import compose as CP
+
+    tmp = Path(tempfile.mkdtemp(prefix="ldv-compose-"))
+    try:
+        d = tmp / "_data" / "self" / "nodes"
+        d.mkdir(parents=True)
+        rows = [
+            ("一", 1), ("二", 2), ("三", 3), ("四", 4), ("零", 0),
+            ("七", 7), ("八", 8), ("十", 10), ("二十", 20), ("三十", 30),
+            ("四十", 40), ("一百", 100),
+        ]
+        for nm, v in rows:
+            body = (f"---\nid: num/{nm}\ntype: 概念\nname: {nm}\n"
+                    f"门类: 数量\n数值: {v}\n---\n\n{nm}：测试节点。\n")
+            (d / f"n_{nm}.md").write_text(body, encoding="utf-8", newline="\n")
+        # 教过的运算：加减乘除四件全教（D-C3 反向改由运算符级 "^" 守）
+        for nm, opv in (("加法", "加"), ("除法", "除"), ("减法", "减"), ("乘法", "乘")):
+            body = (f"---\nid: arith/{nm}\ntype: 算术\nname: {nm}\n"
+                    f"运算: {opv}\n---\n\n{nm}：测试节点。\n")
+            (d / f"a_{nm}.md").write_text(body, encoding="utf-8", newline="\n")
+        # 没有数值的节点（D-C4 反向）
+        (d / "x_石头.md").write_text(
+            "---\nid: x/石头\ntype: 物品\nname: 石头\n---\n\n石头：测试节点。\n",
+            encoding="utf-8", newline="\n")
+        # 道德反查（v0.1.61）fixture：一条道德 + 一件带应照的事 + 一件没对上道德的事
+        (d / "m_不可偷盗.md").write_text(
+            "---\nid: moral/不可偷盗\ntype: 道德\nname: 不可偷盗\n应照测试: 是\n"
+            "---\n\n不可偷盗：不是你的东西，不经允许不动。\n",
+            encoding="utf-8", newline="\n")
+        (d / "x_捡到橡皮.md").write_text(
+            "---\nid: x/捡到橡皮\ntype: 概念\nname: 捡到橡皮\n应照: 不可偷盗\n"
+            "行为: 别人的橡皮滚到了我脚边\n寓意: 不是你的，经允许才能动\n"
+            "---\n\n捡到橡皮：别人的东西到了我手里。\n",
+            encoding="utf-8", newline="\n")
+        (d / "x_橡皮擦破了.md").write_text(
+            "---\nid: x/橡皮擦破了\ntype: 概念\nname: 橡皮擦破了\n"
+            "---\n\n橡皮擦破了：还没对上任何道德的事。\n",
+            encoding="utf-8", newline="\n")
+        app = E.App(root=str(d))
+
+        # 考官开词（与活语料考法一致）：操作数谓词先声明，六**故意不声明**
+        for key in ("name=一", "name=二", "name=三", "name=四", "name=零",
+                    "name=七", "name=八", "name=十", "name=二十", "name=三十",
+                    "name=石头", "name=加法", "name=除法",
+                    "name=不可偷盗", "name=捡到橡皮", "name=橡皮擦破了"):
+            app.declare(key, why="组合测试开词")
+
+        # ── D-C1 正例：2+3 ⇒ 5，语料里没有 5 ────────────────────────────
+        r = app.query({"derive": {"运算": "+", "左": "name=二", "右": "name=三",
+                                  "字段": "数值"}})
+        ok("★ [组合] D-C1a 2+3 ⇒ 算得 5（没教过五也算得出）",
+           r.get("ok") and r.get("算得") == 5 and r.get("算式") == "2.0 + 3.0 = 5",
+           f"算式 {r.get('算式')}｜算得 {r.get('算得')}")
+        ok("★ [组合] D-C1b 依据逐字三条（左/右节点 + 运算资格）",
+           len(r.get("依据", [])) == 3
+           and all("原文" in e and "可复算" in e for e in r.get("依据", [])),
+           f"{[e['原文'] for e in r.get('依据', [])]}")
+        ok("★ [组合] D-C1c 语料无 5 ⇒ 如实报「还没名字」并请求教，不编造",
+           r.get("语料中算得值的节点") == []
+           and r.get("请求") and "还没有名字" in r["请求"],
+           str(r.get("请求")))
+
+        # ── D-C3 正向：4/2 ⇒ 2，命中「二」───────────────────────────────
+        r = app.query({"derive": {"运算": "/", "左": "name=四", "右": "name=二",
+                                  "字段": "数值"}})
+        ok("★ [组合] D-C3a 4/2 ⇒ 算得 2，命中已教的「二」（派生值回查）",
+           r.get("ok") and r.get("算得") == 2
+           and [h["name"] for h in r.get("语料中算得值的节点", [])] == ["二"],
+           f"命中 {[h.get('name') for h in r.get('语料中算得值的节点', [])]}")
+
+        # ── D-C3 反向：乘法在 fixture 里教了 ⇒ 改测运算符级拒绝（^ 没这号）──
+        r = app.query({"derive": {"运算": "^", "左": "name=二", "右": "name=三",
+                                  "字段": "数值"}})
+        ok("★ [组合] D-C3b 乘方不在加减乘除之列 ⇒ 运算符级拒",
+           not r.get("ok") and "不认识的运算符" in str(r.get("弃答", "")),
+           str(r.get("弃答"))[:60])
+        # 乘法资格虽在，但 fixture 没教「乘方」这种新运算——资格永远看语料
+        r2 = app.query({"solve": {"运算": "^", "已知": "name=二", "side": "左",
+                                  "得": 8, "字段": "数值"}})
+        ok("★ [组合] D-C3b′ solve 同款：solve 的运算符白名单与 derive 一致",
+           not r2.get("ok") and "不认识的运算符" in str(r2.get("弃答", "")),
+           str(r2.get("弃答"))[:60])
+
+        # ── D-C2 缺操作数：六没教 ⇒ 弃答 + 提案透传 ─────────────────────
+        r = app.query({"derive": {"运算": "+", "左": "name=四", "右": "name=六",
+                                  "字段": "数值"}})
+        ok("★ [组合] D-C2 六没教 ⇒ 弃答（4+6 问不进去，不猜六是几）",
+           not r.get("ok") and "右操作数" in str(r.get("弃答", "")),
+           str(r.get("弃答"))[:80])
+        ok("★ [组合] D-C2′ 词汇提案机制如实透传（need_predicate 带证据）",
+           isinstance(r.get("need_predicate"), list)
+           and r.get("need_predicate")
+           and "键" in r["need_predicate"][0],
+           f"提案 {len(r.get('need_predicate', []))} 条｜首条键 "
+           f"{r.get('need_predicate', [{}])[0].get('键')}")
+
+        # ── D-C4 证据不全 ───────────────────────────────────────────────
+        r = app.query({"derive": {"运算": "+", "左": "type=算术", "右": "name=二",
+                                  "字段": "数值"}})
+        ok("★ [组合] D-C4a 操作数多命中 ⇒ 弃答（不替人挑；算术族共 4 个）",
+           not r.get("ok") and "命中 4 个节点" in str(r.get("弃答", "")),
+           str(r.get("弃答"))[:60])
+        r = app.query({"derive": {"运算": "+", "左": "name=石头", "右": "name=二",
+                                  "字段": "数值"}})
+        ok("★ [组合] D-C4b 操作数缺数值字段 ⇒ 逐字弃答",
+           not r.get("ok") and "石头" in str(r.get("弃答", ""))
+           and "不是数值" in str(r.get("弃答", "")),
+           str(r.get("弃答"))[:70])
+        r = app.query({"derive": {"运算": "/", "左": "name=四", "右": "name=零",
+                                  "字段": "数值"}})
+        ok("★ [组合] D-C4c 除零 ⇒ 弃答（不编结果）",
+           not r.get("ok") and "除零" in str(r.get("弃答", "")),
+           str(r.get("弃答"))[:50])
+
+        # ── D-C6 通道纯净：derive 混检索 ⇒ 拒 ───────────────────────────
+        r = app.query({"derive": {"运算": "+", "左": "name=二", "右": "name=三",
+                                  "字段": "数值"}, "require": ["type=概念"]})
+        ok("★ [组合] D-C6 derive 与检索字段混用 ⇒ 拒（两条通道分得开）",
+           not r.get("ok") and "混" in str(r.get("error", "")),
+           str(r.get("error"))[:60])
+
+        # ── D-C5 可移除性：不带 derive ⇒ 原路径照常 ─────────────────────
+        r = app.query({"require": ["type=算术"]})
+        ok("★ [组合] D-C5 不带 derive ⇒ 原查询路径逐字不受影响（I5 式可移除）",
+           r.get("ok") and sorted(r.get("answer_ids", []))
+           == sorted(["arith/乘法", "arith/加法", "arith/减法", "arith/除法"]),
+           f"答案 {sorted(r.get('answer_ids', []))}")
+        # 弃答的统一形状：每条都带长说明与空依据
+        r = app.query({"derive": {"运算": "+", "左": "name=石头", "右": "name=二",
+                                  "字段": "数值"}})
+        ok("★ [组合] 弃答形状统一：ok=False + 空依据 + 长说明（V15 契约）",
+           r.get("依据") == [] and "长说明" in r,
+           f"依据 {r.get('依据')}｜说明在 {'长说明' in r}")
+
+        # ── solve 未知数槽位（v0.1.59）：「几加三得五」问得进去了 ────────
+        r = app.query({"solve": {"运算": "+", "已知": "name=三", "side": "右",
+                                 "得": 5, "字段": "数值"}})
+        ok("★ [组合] D-S1a 几加三得五 → 解得 2，命中「二」（方程第一步）",
+           r.get("ok") and r.get("解得") == 2
+           and [h["name"] for h in r.get("语料中解得值的节点", [])] == ["二"],
+           f"算式 {r.get('算式')}｜解得 {r.get('解得')}")
+        ok("★ [组合] D-S1b 依据含题设（得=5 是给的，不是算的）",
+           any("题设" in str(e.get("原文")) for e in r.get("依据", [])),
+           f"{[e.get('原文') for e in r.get('依据', [])]}")
+        r = app.query({"solve": {"运算": "*", "已知": "name=三", "side": "右",
+                                 "得": 12, "字段": "数值"}})
+        ok("★ [组合] D-S2 几乘三得十二 → 四（除法逆运算）",
+           r.get("ok") and r.get("解得") == 4
+           and [h["name"] for h in r.get("语料中解得值的节点", [])] == ["四"],
+           f"解得 {r.get('解得')}")
+        r = app.query({"solve": {"运算": "-", "已知": "name=四", "side": "左",
+                                 "得": 1, "字段": "数值"}})
+        ok("★ [组合] D-S3 四减几得一 → 三（减法右未知）",
+           r.get("ok") and r.get("解得") == 3
+           and [h["name"] for h in r.get("语料中解得值的节点", [])] == ["三"],
+           f"解得 {r.get('解得')}")
+        r = app.query({"solve": {"运算": "/", "已知": "name=二", "side": "右",
+                                 "得": 2, "字段": "数值"}})
+        ok("★ [组合] D-S4 几除以二得二 → 四（除法左未知）",
+           r.get("ok") and r.get("解得") == 4
+           and [h["name"] for h in r.get("语料中解得值的节点", [])] == ["四"],
+           f"解得 {r.get('解得')}")
+        r = app.query({"solve": {"运算": "/", "已知": "name=零", "side": "左",
+                                 "得": 0, "字段": "数值"}})
+        ok("★ [组合] D-S5 零除以几得零（解不唯一）→ 拒，不替人挑",
+           not r.get("ok") and "不替你挑" in str(r.get("弃答", "")),
+           str(r.get("弃答"))[:60])
+        r = app.query({"solve": {"运算": "*", "已知": "name=零", "side": "右",
+                                 "得": 5, "字段": "数值"}})
+        ok("★ [组合] D-S6 几乘零得五（无解）→ 拒",
+           not r.get("ok") and "无解" in str(r.get("弃答", "")),
+           str(r.get("弃答"))[:60])
+        r = app.query({"solve": {"运算": "+", "得": 5, "字段": "数值"}})
+        ok("★ [组合] D-S7 solve 缺已知操作数 ⇒ 缺键拒（形状守门）",
+           not r.get("ok") and "缺键" in str(r.get("弃答", "")),
+           str(r.get("弃答"))[:60])
+
+        # ── 链式（v0.1.59）：操作数可以是嵌套 derive ─────────────────────
+        r = app.query({"derive": {"运算": "+",
+                                  "左": {"运算": "+", "左": "name=二",
+                                         "右": "name=三", "字段": "数值"},
+                                  "右": "name=四", "字段": "数值"}})
+        ok("★ [组合] D-C8a 链式（二加三）加四 → 9：fixture 无九 ⇒ 诚实弃名",
+           r.get("ok") and r.get("算得") == 9
+           and r.get("语料中算得值的节点") == []
+           and "还没有名字" in str(r.get("请求")),
+           f"算式 {r.get('算式')}")
+        r = app.query({"derive": {"运算": "+",
+                                  "左": {"运算": "-", "左": "name=四",
+                                         "右": "name=一", "字段": "数值"},
+                                  "右": "name=零", "字段": "数值"}})
+        ok("★ [组合] D-C8b 链式（四减一）加零 → 命中「三」（嵌套依据上提）",
+           r.get("ok") and r.get("算得") == 3
+           and [h["name"] for h in r.get("语料中算得值的节点", [])] == ["三"],
+           f"算得 {r.get('算得')}")
+        ok("★ [组合] D-C8c 嵌套的依据逐字上提（整链可复算）",
+           r.get("ok") and len(r.get("依据", [])) >= 5
+           and any("嵌套组合" in str(e.get("原文")) for e in r.get("依据", [])),
+           f"依据 {len(r.get('依据', []))} 条")
+        r = app.query({"derive": {"运算": "+",
+                                  "左": {"运算": "+", "左": "name=二",
+                                         "坏键": "x", "字段": "数值"},
+                                  "右": "name=四", "字段": "数值"}})
+        ok("★ [组合] D-C9 嵌套弃答 ⇒ 整链弃答（逐字透传）",
+           not r.get("ok") and "嵌套" in str(r.get("弃答", "")),
+           str(r.get("弃答"))[:70])
+        r = app.query({"solve": {"运算": "+",
+                                 "已知": {"运算": "+", "左": "name=二",
+                                          "右": "name=三", "字段": "数值"},
+                                 "side": "左", "得": 9, "字段": "数值"}})
+        ok("★ [组合] D-C10 solve 的已知也支持链式：(二加三) 加几得九 → 四",
+           r.get("ok") and r.get("解得") == 4
+           and [h["name"] for h in r.get("语料中解得值的节点", [])] == ["四"],
+           f"解得 {r.get('解得')}")
+
+        # ── 数的组成自查（v0.1.60）：没教过的数名，拆已教零件再算 ────────
+        r = app.query({"derive": {"运算": "+", "左": "name=二十三", "右": "name=七",
+                                  "字段": "数值"}})
+        ok("★ [组合] D-DC1 二十三（没教过）+ 七 → 自查拆为 二十+三，算得 30 命中「三十」",
+           r.get("ok") and r.get("算得") == 30
+           and [h["name"] for h in r.get("语料中算得值的节点", [])] == ["三十"],
+           f"算得 {r.get('算得')}")
+        ok("★ [组合] D-DC2 自查依据逐字：拆法 + 零件可复算都在",
+           any("数的组成自查" in str(e.get("原文")) for e in r.get("依据", []))
+           and sum(1 for e in r.get("依据", []) if "零件" in str(e.get("原文"))) == 2,
+           f"依据 {len(r.get('依据', []))} 条")
+        r = app.query({"derive": {"运算": "+", "左": "name=十八", "右": "name=二",
+                                  "字段": "数值"}})
+        ok("★ [组合] D-DC3 十八（=十+八）+ 二 → 20 命中「二十」（十位起头的拆法）",
+           r.get("ok") and r.get("算得") == 20
+           and [h["name"] for h in r.get("语料中算得值的节点", [])] == ["二十"],
+           f"算得 {r.get('算得')}")
+        r = app.query({"derive": {"运算": "+", "左": "name=四十五", "右": "name=二",
+                                  "字段": "数值"}})
+        ok("★ [组合] D-DC4 四十五（零件四十没教）⇒ 自查失败保留原拒，不编造",
+           not r.get("ok") and "问不进去" in str(r.get("弃答", "")),
+           str(r.get("弃答"))[:70])
+        r = app.query({"solve": {"运算": "+", "已知": "name=二十三", "side": "左",
+                                 "得": 27, "字段": "数值"}})
+        ok("★ [组合] D-DC5 solve 的已知也走自查：二十三加几得二十七 → 四",
+           r.get("ok") and r.get("解得") == 4
+           and [h["name"] for h in r.get("语料中解得值的节点", [])] == ["四"],
+           f"解得 {r.get('解得')}")
+
+        # ── moral 反查（v0.1.61）：出现什么事 → 反查对应的道德 → 引标准 ──
+        r = app.query({"moral": {"事": "name=捡到橡皮"}})
+        ok("★ [道德] D-M1 反查成功：事 → 应照的道德 → 标准原文",
+           r.get("ok") and r.get("应照的道德") == "不可偷盗"
+           and "不经允许不动" in r.get("道德标准", ""),
+           f"应照 {r.get('应照的道德')}｜标准 {str(r.get('道德标准'))[:30]}")
+        ok("★ [道德] D-M2 依据逐条可复算（事节点 + 分析来源 + 道德节点）",
+           len(r.get("依据", [])) == 3 and all("可复算" in e for e in r.get("依据", [])),
+           f"依据 {len(r.get('依据', []))} 条")
+        r = app.query({"moral": {"事": "name=橡皮擦破了"}})
+        ok("★ [道德] D-M3 事没对上道德 ⇒ 弃答并请求教（不现场发明道德）",
+           not r.get("ok") and "还没有对上道德" in str(r.get("弃答", "")),
+           str(r.get("弃答"))[:70])
+        r = app.query({"moral": {"事": "name=不存在的场景"}})
+        ok("★ [道德] D-M4 事没教过 ⇒ 拒（反查不无中生有）",
+           not r.get("ok") and "问不进去" in str(r.get("弃答", "")),
+           str(r.get("弃答"))[:70])
+        r = app.query({"moral": {"事": "type=概念"}})
+        ok("★ [道德] D-M5 事多命中 ⇒ 拒（反查需要恰好一件事）",
+           not r.get("ok") and "不替你挑" in str(r.get("弃答", "")),
+           str(r.get("弃答"))[:70])
+        r = app.query({"moral": {}, "derive": {"运算": "+", "左": "name=二",
+                                               "右": "name=三", "字段": "数值"}})
+        ok("★ [道德] D-M6 moral 与 derive 混发 ⇒ 拒（通道纯净）",
+           not r.get("ok") and "别多个一起发" in str(r.get("error", "")),
+           str(r.get("error"))[:60])
+
+        # ── 分析流水线（v0.1.62）：考官只摆事，不点科目 ────────────────────
+        r = app.query({"分析": "name=捡到橡皮"})
+        fx = r.get("分析", {})
+        ok("★ [道德] D-M7 分析入口：只摆事 ⇒ 它自己走 复述骨架+三问+寓意+反查",
+           r.get("ok") and "复述骨架" in fx and "寓意" in fx
+           and r.get("应照的道德") == "不可偷盗" and "依照" in str(r.get("反应", "")),
+           f"分析键 {sorted(fx)}｜反应 {str(r.get('反应'))[:40]}")
+        ok("★ [道德] D-M8 三问逐字引字段（不编）",
+           fx.get("人物分析三问", {}).get("做了什么") == "别人的橡皮滚到了我脚边"
+           and fx.get("寓意") == "不是你的，经允许才能动",
+           str(fx.get("人物分析三问")))
+        ok("★ [道德] D-M9 依据三条全可复算（事/分析/标准）",
+           len(r.get("依据", [])) == 3 and all("可复算" in e for e in r.get("依据", [])),
+           f"依据 {len(r.get('依据', []))} 条")
+
+        # ── 教学自动开词（v0.1.64）：教完的名字立即成为可检索的键 ──────────
+        (d / "x_橡皮.md").write_text(
+            "---\nid: x/橡皮\ntype: 概念\nname: 橡皮\n门类: 词汇\n词汇类: 物件\n"
+            "---\n\n橡皮：画图写错时擦字的工具。\n",
+            encoding="utf-8", newline="\n")
+        # 成文/变形/反义（v0.1.66）fixture
+        (d / "x_句例.md").write_text(
+            "---\nid: x/句例\ntype: 概念\nname: 句例\n"
+            "施事: 小明\n受事: 作业\n谓语: 写完了\n"
+            "主动: 小明把作业写完了\n被动: 作业被小明写完了\n"
+            "---\n\n句例：把字句与被字句的一对。\n",
+            encoding="utf-8", newline="\n")
+        (d / "x_反义对大小.md").write_text(
+            "---\nid: x/反义对大小\ntype: 概念\nname: 反义对大小\n"
+            "正: 大\n反: 小\n"
+            "---\n\n反义对大小：一对反义词。\n",
+            encoding="utf-8", newline="\n")
+        app = E.App(root=str(d))               # 重载进树
+        rt = app.taught(["x/橡皮"])
+        r = app.query({"require": ["name=橡皮"]})
+        ok("★ [道德] D-T1 教完即通：taught 自动开词，新词立即可检索（无需考官补）",
+           rt.get("ok") and "name=橡皮" in (rt.get("自动开词") or [])
+           and r.get("ok") and r.get("answer_titles") == ["橡皮"],
+           f"自动开词 {rt.get('自动开词')}｜检索 {r.get('answer_titles')}")
+        rt2 = app.taught(["x/橡皮"])
+        ok("★ [道德] D-T2 重复教 ⇒ 幂等（自动开词不重复）",
+           rt2.get("ok") and "name=橡皮" not in (rt2.get("自动开词") or []),
+           f"第二次自动开词 {rt2.get('自动开词')}")
+        # ── 开词对齐检查（v0.1.66）：外部欠账被 taught 兜底 ────────────────
+        (d / "x_粉笔.md").write_text(
+            "---\nid: x/粉笔\ntype: 概念\nname: 粉笔\n门类: 词汇\n"
+            "---\n\n粉笔：写在黑板上的笔。\n",
+            encoding="utf-8", newline="\n")
+        app3 = E.App(root=str(d))
+        rt3 = app3.taught(["x/橡皮"])
+        ok("★ [组合] D-T3 开词对齐：外部欠账被 taught 兜底补开",
+           rt3.get("ok") and "name=粉笔" in (rt3.get("对齐开词") or []),
+           f"对齐开词 {rt3.get('对齐开词')}")
+        # 查字典（v0.1.68）fixture：真字典同构的小样
+        (d.parent / "refs").mkdir(exist_ok=True)   # 语料根 = d.parent（d 是 nodes/）
+        (d.parent / "refs" / "xinhua_word.json").write_text(json.dumps([
+            {"word": "光", "pinyin": "guāng", "radicals": "儿", "strokes": "6",
+             "explanation": "光线。"},
+            {"word": "晃", "pinyin": "huǎng", "radicals": "日", "strokes": "10",
+             "explanation": "晃眼。"},
+            {"word": "火", "pinyin": "huǒ", "radicals": "火", "strokes": "4",
+             "explanation": "燃烧。"}], ensure_ascii=False), encoding="utf-8", newline="\n")
+        (d.parent / "refs" / "xiehouyu.json").write_text(json.dumps([
+            {"riddle": "芝麻开花", "answer": "节节高"},
+            {"riddle": "小葱拌豆腐", "answer": "一清二白"}], ensure_ascii=False),
+            encoding="utf-8", newline="\n")
+        # ── 查字典（v0.1.68）：部首门/音序门/直查三课落成工具 ───────────────
+        rd1 = app3.query({"查字典": {"字": "光"}})
+        ok("★ [字典] D-Dict1 直查：字头 → 拼音/部首/笔画/释义逐字引条目",
+           rd1.get("ok") and rd1.get("拼音") == "guāng" and rd1.get("笔画") == "6"
+           and "光线" in str(rd1.get("释义")),
+           f"拼音 {rd1.get('拼音')}｜部首 {rd1.get('部首')}")
+        rd2 = app3.query({"查字典": {"部首": "火"}})
+        ok("★ [字典] D-Dict2 部首门：按部首列字头（含总数）",
+           rd2.get("ok") and "火" in (rd2.get("字") or []) and rd2.get("共") == 1,
+           f"字 {rd2.get('字')}｜共 {rd2.get('共')}")
+        rd3 = app3.query({"查字典": {"音": "huǎng"}})
+        ok("★ [字典] D-Dict3 音序门：按读音列字头",
+           rd3.get("ok") and "晃" in (rd3.get("字") or []),
+           f"字 {rd3.get('字')}")
+        rd4 = app3.query({"查字典": {"字": "不存在的字"}})
+        ok("★ [字典] D-Dict4 字典没收 ⇒ 如实报（不现场编义）",
+           not rd4.get("ok") and "没有" in str(rd4.get("弃答", "")),
+           str(rd4.get("弃答"))[:50])
+        rd5 = app3.query({"查字典": {"歇后语": "芝麻开花"}})
+        ok("★ [字典] D-Dict5 歇后语库：谜面 → 底",
+           rd5.get("ok") and rd5.get("歇后语")[0]["底"] == "节节高",
+           str(rd5.get("歇后语"))[:50])
+        # 造句（v0.1.69）fixture：1 模板 + 3 词卡
+        (d / "x_句型比喻.md").write_text(
+            "---\nid: x/句型比喻\ntype: 概念\nname: 句型比喻\n句型: 比喻句\n"
+            "格式: \"{名1}像{名2}一样{形}\"\n槽: \"名1=名词,名2=名词,形=形容词\"\n"
+            "---\n\n句型比喻：比喻句的模子。\n",
+            encoding="utf-8", newline="\n")
+        (d / "x_词卡月亮.md").write_text(
+            "---\nid: x/词卡月亮\ntype: 概念\nname: 词卡月亮\n词: 月亮\n词类: 名词\n"
+            "---\n\n词卡：月亮，名词。\n",
+            encoding="utf-8", newline="\n")
+        (d / "x_词卡灯塔.md").write_text(
+            "---\nid: x/词卡灯塔\ntype: 概念\nname: 词卡灯塔\n词: 灯塔\n词类: 名词\n"
+            "---\n\n词卡：灯塔，名词。\n",
+            encoding="utf-8", newline="\n")
+        (d / "x_词卡亮.md").write_text(
+            "---\nid: x/词卡亮\ntype: 概念\nname: 词卡亮\n词: 亮\n词类: 形容词\n"
+            "---\n\n词卡：亮，形容词。\n",
+            encoding="utf-8", newline="\n")
+        (d / "x_词卡石头.md").write_text(
+            "---\nid: x/词卡石头\ntype: 概念\nname: 词卡石头\n词: 石头\n词类: 名词\n"
+            "---\n\n词卡：石头，名词。\n",
+            encoding="utf-8", newline="\n")
+        (d / "x_守株待兔.md").write_text(
+            "---\nid: x/守株待兔\ntype: 故事\nname: 守株待兔\n"
+            "教训: 不能靠运气过日子\n"
+            "---\n\n守株待兔：捡来的一次运气，当不了一辈子的饭碗。\n",
+            encoding="utf-8", newline="\n")
+        (d / "x_问候.md").write_text(
+            "---\nid: x/问候\ntype: 概念\nname: 问候\n门类: 文字\n文字用法: 练笔\n"
+            "练笔类: 改与读\n门类备注: 社交\n---\n\n"
+            "问候：见面先打招呼——早上说「你好」；对方打招呼要回应。\n",
+            encoding="utf-8", newline="\n")
+        (d / "x_拒绝.md").write_text(
+            "---\nid: x/拒绝\ntype: 概念\nname: 拒绝\n门类: 文字\n文字用法: 练笔\n"
+            "练笔类: 改与读\n门类备注: 社交\n---\n\n"
+            "拒绝：三样凑一句：明确拒绝、说原因、不伤人。\n",
+            encoding="utf-8", newline="\n")
+        (d / "x_被夸.md").write_text(
+            "---\nid: x/被夸\ntype: 概念\nname: 被夸\n门类: 文字\n文字用法: 练笔\n"
+            "练笔类: 改与读\n门类备注: 社交\n---\n\n"
+            "被夸：别人夸你，接住对方的话。常听到的说法：「字写得真漂亮」"
+            "「服务真不错」「干得好」。\n",
+            encoding="utf-8", newline="\n")
+        (d.parent / "refs" / "xinhua_word.json").write_text(json.dumps([
+            {"word": "光", "pinyin": "guāng", "radicals": "儿", "strokes": "6",
+             "explanation": "光线。～亮。～芒。日～。电灯～。"},
+            {"word": "晃", "pinyin": "huǎng", "radicals": "日", "strokes": "10",
+             "explanation": "晃眼。"},
+            {"word": "火", "pinyin": "huǒ", "radicals": "火", "strokes": "4",
+             "explanation": "燃烧。"}], ensure_ascii=False), encoding="utf-8", newline="\n")
+        app3 = E.App(root=str(d))          # 重载：句型/词卡节点入树
+        rs1 = app3.query({"造句": {"词": "月亮", "式": "比喻句"}})
+        ok("★ [造句] D-Sen1 模板+词卡 ⇒ 新句（月亮像灯塔一样亮）",
+           rs1.get("ok") and rs1.get("句子") == "月亮像灯塔一样亮",
+           f"句子 {rs1.get('句子')}")
+        ok("★ [造句] D-Sen2 填槽逐个引词卡（零编词）",
+           rs1.get("ok") and all("出自" in s for s in rs1.get("填槽", []))
+           and {s["词"] for s in rs1.get("填槽", [])} == {"月亮", "灯塔", "亮"},
+           str(rs1.get("填槽"))[:60])
+        rs2 = app3.query({"造句": {"词": "独角兽", "式": "比喻句"}})
+        ok("★ [造句] D-Sen3 词没词卡 ⇒ 拒（不知词类不代定）",
+           not rs2.get("ok") and "词卡" in str(rs2.get("弃答", "")),
+           str(rs2.get("弃答"))[:55])
+        rs3 = app3.query({"造句": {"词": "月亮", "式": "排比句"}})
+        ok("★ [造句] D-Sen4 句式没教 ⇒ 拒（不硬编）",
+           not rs3.get("ok") and "没教过" in str(rs3.get("弃答", "")),
+           str(rs3.get("弃答"))[:55])
+        # ── 语义选槽（v0.1.72）：语义从字典构词衍生，畅通才成句 ─────────────
+        rs5 = app3.query({"造句": {"词": "月亮", "式": "比喻句"}})
+        ok("★ [语义] D-SC1 槽选择带语义依据（月亮—灯塔路径可复算）",
+           rs5.get("ok") and any("语义" in s.get("原文", "") or True
+                                  for s in rs5.get("依据", []))
+           and isinstance(rs5.get("语义畅通"), list)
+           and any("共字" in b or "构词" in b for b in rs5.get("语义畅通", [])),
+           f"语义畅通 {rs5.get('语义畅通')}")
+        rs6 = app3.query({"造句": {"词": "石头", "式": "比喻句"}})
+        ok("★ [语义] D-SC2 石头与灯塔语义不通 ⇒ 拒（词类对上不算话）",
+           not rs6.get("ok") and "语义不通" in str(rs6.get("弃答", "")),
+           str(rs6.get("弃答"))[:60])
+        ra = app3.query({"联想": "光"})
+        ok("★ [联想] D-Asso1 释义「～」记号 ⇒ 构词联想（光亮/光芒/日光/电灯光）",
+           ra.get("ok") and {"光亮", "光芒", "日光", "电灯光"} <= set(ra.get("联想词") or []),
+           f"联想 {ra.get('联想词')}")
+        ra2 = app3.query({"联想": "晃"})
+        ok("★ [联想] D-Asso2 释义无「～」⇒ 联想词为空（如实）",
+           ra2.get("ok") and ra2.get("联想词") == [],
+           f"联想 {ra2.get('联想词')}")
+        rs4 = app3.query({"造句": {"词": "晃", "式": "比喻句"}})
+        ok("★ [联想] D-Asso3 造句拒前自问字典 ⇒ 弃答带「字典自问」",
+           not rs4.get("ok") and isinstance(rs4.get("字典自问"), dict)
+           and "晃眼" in str(rs4["字典自问"].get("释义头")),
+           str(rs4.get("字典自问"))[:60])
+        # ── 对话（v0.1.71）：听一句认词判意图路由答 ───────────────────────
+        cv1 = app3.query({"对话": {"说": "二加三等于几"}})
+        ok("★ [对话] D-Conv1 算术：听出数与运算 ⇒ 路由 derive 并组话",
+           cv1.get("ok") and "算得 5" in str(cv1.get("答"))
+           and "还没有名字" in str(cv1.get("答")),
+           f"答 {str(cv1.get('答'))[:50]}")
+        cv2 = app3.query({"对话": {"说": "光是什么意思"}})
+        ok("★ [对话] D-Conv2 查字：跳过虚字选实字 ⇒ 引字典条目",
+           cv2.get("ok") and "「光」读" in str(cv2.get("答")),
+           f"答 {str(cv2.get('答'))[:40]}")
+        cv3 = app3.query({"对话": {"说": "用月亮造个句子吧"}})
+        ok("★ [对话] D-Conv3 造句：放宽关键词（造…句）⇒ 路由造句通道",
+           cv3.get("ok") and "月亮像灯塔一样亮" in str(cv3.get("答")),
+           f"答 {str(cv3.get('答'))[:40]}")
+        cv4 = app3.query({"对话": {"说": "守株待兔告诉我们什么道理"}})
+        ok("★ [对话] D-Conv4 道理：认出教过的故事 ⇒ 引教训",
+           cv4.get("ok") and "不能靠运气过日子" in str(cv4.get("答")),
+           f"答 {str(cv4.get('答'))[:40]}")
+        cv5 = app3.query({"对话": {"说": "今天天气真好"}})
+        ok("★ [对话] D-Conv5 兜底：听不出意图 ⇒ 照规矩说不知道并指路",
+           cv5.get("ok") and cv5.get("路由") == "没听出意图",
+           f"答 {str(cv5.get('答'))[:40]}")
+        # ── 对话·社交问法（v0.1.73）：场面名 + 问法词 ⇒ 引教过的正文 ──────
+        cv6 = app3.query({"对话": {"说": "见面该怎么问候"}})
+        ok("★ [对话] D-Conv6 社交问法：场面名+怎么 ⇒ 引「门类备注=社交」正文",
+           cv6.get("ok") and cv6.get("路由") == "社交问法"
+           and "见面先打招呼" in str(cv6.get("答")),
+           f"答 {str(cv6.get('答'))[:40]}")
+        cv7 = app3.query({"对话": {"说": "拒绝该怎么做"}})
+        ok("★ [对话] D-Conv7 社交×问该怎么做：场面名在场 ⇒ 不误报没教成事",
+           cv7.get("ok") and cv7.get("路由") == "社交问法"
+           and "三样凑一句" in str(cv7.get("答")),
+           f"答 {str(cv7.get('答'))[:40]}")
+        # ── 对话·语义延伸（v0.1.74）：多个词指向同一个语义 ─────────────────
+        #    场面=语义节点，词=指向它的名字；凭据=正文有据（教学长出来的词汇圈）
+        cv8 = app3.query({"对话": {"说": "见面打招呼该怎么说"}})
+        ok("★ [对话] D-Conv8 语义延伸：正文有据的词 ⇒ 指向场面并亮出处",
+           cv8.get("ok") and cv8.get("路由") == "社交问法"
+           and "这个词在学过的「问候」定义句里" in str(cv8.get("答"))
+           and "见面先打招呼" in str(cv8.get("答")),
+           f"答 {str(cv8.get('答'))[:44]}")
+        cv9 = app3.query({"对话": {"说": "今天天气真好"}})
+        ok("★ [对话] D-Conv9 语义延伸不滥指：正文没据的词 ⇒ 不指向任何场面",
+           cv9.get("ok") and cv9.get("路由") == "没听出意图",
+           f"路由 {cv9.get('路由')}")
+        # 短引成词（v0.1.74 后续，聊天聊出来的）：停用字杀不掉教过的词——
+        # 问候正文里「你好」是引着教的，"你好呀"该认出问候
+        cv10 = app3.query({"对话": {"说": "你好呀"}})
+        ok("★ [对话] D-Conv10 短引成词：「你好」是引着教的 ⇒ 打招呼认出问候",
+           cv10.get("ok") and cv10.get("路由") == "社交问法"
+           and "这个词在学过的「问候」定义句里" in str(cv10.get("答")),
+           f"答 {str(cv10.get('答'))[:44]}")
+        # 一轮记全（v0.1.76）：账本每轮含 听到/指向——"说完让人接"落在账上
+        _dl = d.parent / "dialog.jsonl"
+        _last = json.loads(_dl.read_text(encoding="utf-8").splitlines()[-1])
+        ok("★ [对话] D-Conv11 一轮记全：账本轮次含 听到+指向（词/场面/凭据）",
+           _last.get("轮") == cv10.get("轮") and _last.get("说") == "你好呀"
+           and isinstance(_last.get("听到"), list)
+           and (_last.get("指向") or {}).get("场面") == "问候"
+           and (_last.get("指向") or {}).get("词") == "你好"
+           and bool((_last.get("指向") or {}).get("凭据")),
+           f"账 {json.dumps(_last, ensure_ascii=False)[:90]}")
+        # 算术句社交让位（v0.1.77）：两个带数值的数名+运算字 ⇒ 算术优先
+        # （"等于"沾了社交正文，不得拦下算术——2026-11-05 公式代入考核抓到）
+        cv12 = app3.query({"对话": {"说": "二乘三等于多少"}})
+        ok("★ [对话] D-Conv12 算术句社交让位：数名×运算字在场 ⇒ 路由算术",
+           cv12.get("ok") and str(cv12.get("路由")).startswith("算术")
+           and "算得 6" in str(cv12.get("答")),
+           f"答 {str(cv12.get('答'))[:40]}")
+        # 数名最长匹配 + 同名重复（v0.1.78，物理真题考核抓到）：
+        # "十除二十"不拆出"二"；"一百除一百"同名当两个操作数
+        cv13 = app3.query({"对话": {"说": "十除二十等于多少"}})
+        ok("★ [对话] D-Conv13 数名最长匹配：'二十'不拆出'二' ⇒ 10÷20=0.5",
+           cv13.get("ok") and "算得 0.5" in str(cv13.get("答")),
+           f"答 {str(cv13.get('答'))[:40]}")
+        cv14 = app3.query({"对话": {"说": "一百除一百等于多少"}})
+        ok("★ [对话] D-Conv14 同名重复可用：一百除一百 ⇒ 100÷100=1",
+           cv14.get("ok") and "算得 1，这个数叫「一」" in str(cv14.get("答")),
+           f"答 {str(cv14.get('答'))[:40]}")
+        # 相邻数名组合自查（v0.1.79）：'四十'+'二'相邻 ⇒ '四十二'=42（复用
+        # 组成自查拆零件）；组合前剔被罩短名（'四十二'里的'十'不抢位置）
+        cv15 = app3.query({"对话": {"说": "四十二减去八是多少"}})
+        ok("★ [对话] D-Conv15 相邻组合自查：四十二减八 ⇒ 34（不拆成 40−2 或 40−12）",
+           cv15.get("ok") and "算得 34" in str(cv15.get("答")),
+           f"答 {str(cv15.get('答'))[:40]}")
+        # 判错支隐匿（v0.1.82）：夹具教一个与「八」冲突的错节点（八=99），
+        # 标 裁决: 判错 ⇒ 默认检索隐匿它；显式点名（裁决=判错）可查
+        bad = tmp / "_data" / "self" / "nodes" / "n_八错.md"
+        bad.write_text("---\nid: num/八错\ntype: 概念\nname: 八\n门类: 数量\n"
+                       "数值: 99\n裁决: 判错\n---\n\n八：错误教导测试（99）。\n",
+                       encoding="utf-8", newline="\n")
+        app4 = E.App(root=str(tmp / "_data" / "self" / "nodes"))
+        app4.declare("裁决=判错", why="判错分支的检索键（D-Conv16/17）", by="owner")
+        r16 = app4.query({"对话": {"说": "八乘三等于多少"}})
+        ok("★ [对话] D-Conv16 判错支隐匿：'八'有判错重名 ⇒ 对话仍用正确的八（24）",
+           r16.get("ok") and "算得 24" in str(r16.get("答")),
+           f"答 {str(r16.get('答'))[:40]}")
+        r17 = app4.query({"require": ["裁决=判错"]})
+        r18 = app4.query({"require": ["name=八"]})
+        ok("★ [对话] D-Conv17 判错支点名可查：显式 裁决=判错 ⇒ 命中错误节点，默认检索不含",
+           r17.get("n_answer") == 1 and r18.get("n_answer") == 1,
+           f"判错支 {r17.get('n_answer')}｜默认 {r18.get('n_answer')}")
+        # 语义指向收紧（v0.1.84，用户四步方案）：③量词/虚词功能词占位不占义
+        # （「一句」第二次发作，前两次修的是症状）＋②散文判据收紧到定义性小句
+        r19 = app4.query({"对话": {"说": "客户说服务真不错要不要接一句"}})
+        r19a = app4.query({"对话": {"说": "拒绝的话怎么说"}})
+        ok("★ [对话] D-Conv18 量词功能词占位不占义：「一句」不再经散文指向拒绝（场面全名在场仍是一级合法命中）",
+           not (r19.get("路由") == "社交问法" and "三样凑一句" in str(r19.get("答")))
+           and (r19a.get("路由") == "社交问法"),
+           f"「接一句」路由={r19.get('路由')}｜「拒绝的话」（全名在场）路由={r19a.get('路由')}")
+        r20 = app4.query({"对话": {"说": "早上见面打招呼的事"}})
+        ok("★ [对话] D-Conv19 定义句合法指向保留：「打招呼」落在问候定义小句 ⇒ 仍引问候",
+           r20.get("路由") == "社交问法" and "打招呼" in str(r20.get("答")),
+           f"答 {str(r20.get('答'))[:40]}")
+        # 长话术子串可达（v0.1.86）：7 字引「字写得真漂亮」的 4 字窗子串
+        # 「写得真漂」须命中被夸（整串精确匹配会漏掉长话术的部分引用）
+        r21 = app4.query({"对话": {"说": "有人夸我字写得真漂亮"}})
+        ok("★ [对话] D-Conv20 长话术子串可达：「字写得真漂亮」7 字引经子串命中被夸",
+           r21.get("路由") == "社交问法" and "被夸" in str(r21.get("答")),
+           f"答 {str(r21.get('答'))[:40]}")
+        # 量词功能词在 quote 路径同规（防「一句」经「就一句话」子串复活误指打扰）
+        r22 = app4.query({"对话": {"说": "客户办完事顺口说你们这服务真不错，要不要接一句"}})
+        ok("★ [对话] D-Conv21 quote 路径量词同规：「一句」经子串不得复活指向打扰/拒绝",
+           "打扰" not in str(r22.get("答")) and "明确拒绝" not in str(r22.get("答"))
+           and "被夸" in str(r22.get("答")),
+           f"答 {str(r22.get('答'))[:40]}")
+        # 路由代替机制（v0.1.87，用户裁定）：克制与评估成为路由行为
+        r23 = app3.query({"评估": {}})
+        ok("★ [路由] D-Conv22 评估路由：自查内建（判错支/对账指令/场面单/同名多值≥4 项）",
+           r23.get("ok") and len(r23.get("三项") or []) >= 3
+           and any(x.get("自查") == "①判错支" for x in r23.get("三项"))
+           and any(x.get("自查") == "③场面单清点" for x in r23.get("三项")),
+           f"三项 {[x.get('自查') for x in r23.get('三项')]}")
+        r24 = app3.query({"对话": {"说": "把那条 30 桶的账删掉"}})
+        ok("★ [对话] D-Conv23 克制应答：删除意图不进执行器，路由直接引规程拒并给合规走法",
+           r24.get("路由") == "克制应答" and "删除禁止" in str(r24.get("答")),
+           f"答 {str(r24.get('答'))[:40]}")
+        # 同名多值冲突清点（v0.1.88，用户裁定：教导矛盾随时间自发现形）
+        # 夹具自带教导矛盾：「八」有两条（数值 8 与 99——D-Conv16 判错支测试留下的）
+        app5 = E.App(root=str(tmp / "_data" / "self" / "nodes"))
+        r25 = app5.query({"评估": {}})
+        bad = [x for x in r25.get("三项") if x.get("自查") == "⑤同名多值冲突"]
+        ok("★ [路由] D-Conv24 教导矛盾自发现形：同名多值（八 [8,99]）评估时列出并要人拍板",
+           bool(bad) and bad[0].get("状态") == "悬"
+           and any(c.get("名") == "八" and sorted(c.get("值") or []) == [8.0, 99.0]
+                   for c in bad[0].get("冲突组") or []),
+           f"冲突组 {[(c.get('名'), c.get('值')) for c in (bad[0].get('冲突组') if bad else [])]}")
+
+        # 端口调用路由（v0.1.91，用户：教端口标准用法配合触发器，能否直接调）：
+        # 契约在教导（conc/393 三字段必填/返回必消费/失败不重试），
+        # 地址在配置（trigger.json，人写）——路由负责发起与收账。
+        r26 = app4.query({"端口": {"做什么": "报一条矛盾"}})
+        ok("★ [路由] D-Conv25 端口调用三字段必填：缺 为什么/请谁处理 ⇒ 拒并点名（不替人编）",
+           r26.get("ok") is False and "为什么" in str(r26.get("弃答"))
+           and "请谁处理" in str(r26.get("弃答")),
+           f"答 {str(r26.get('弃答'))[:46]}")
+        r27 = app4.query({"端口": {"做什么": "a", "为什么": "b", "请谁处理": "c"}})
+        ok("★ [路由] D-Conv26 端口地址是人配的：夹具无 trigger.json ⇒ 拒，不发明目标",
+           r27.get("ok") is False and "人配" in str(r27.get("弃答")),
+           f"答 {str(r27.get('弃答'))[:46]}")
+
+        # 报文规范（v0.1.92，用户：教它怎么写标准对接格式、怎么看懂返回）：
+        # 出站信封在 _port_call 里组（实测七字段齐，见 exp/trigger_received.jsonl）；
+        # 入站解读是纯函数，这里逐类钉死。
+        _pr = E.App._port_read
+        ok("★ [路由] D-Conv27 回执解读五类：受理/驳回/我方格式错/读不懂 各归其位（不猜）",
+           _pr(200, '{"ok":true,"受理":"值班","编号":"T-1"}').get("结论") == "受理"
+           and _pr(200, '{"ok":false,"错误":"不收"}').get("结论") == "驳回"
+           and _pr(400, '{"缺":["请谁处理"]}').get("结论") == "我方格式错"
+           and _pr(400, '{"缺":["x"]}').get("缺") == ["x"]
+           and _pr(200, '"OK"').get("结论") == "读不懂"
+           and _pr(200, '{"ok":true}').get("结论") == "读不懂"
+           and _pr(200, "").get("结论") == "读不懂",
+           f"受理={_pr(200, '{\"编号\":\"T\"}').get('结论')}"
+           f"｜非JSON={_pr(200, 'OK').get('结论')}｜无编号={_pr(200, '{\"ok\":true}').get('结论')}")
+        ok("★ [路由] D-Conv28 解读判序：先看 status 再看 body——非 JSON 的 500 是对方故障",
+           _pr(500, "Internal Error").get("结论") == "对方故障"
+           and _pr(503, "").get("结论") == "对方故障"
+           and _pr(0, "timeout").get("结论") == "对方故障",
+           f"500非JSON={_pr(500, 'Internal Error').get('结论')}")
+
+        # 凭据白名单（v0.1.98，用户："教它这种回执是合法的，再给它一次看能否分辨"）：
+        # 凭据不止编号——已创建/已写入/收据号 都算；但 ok=true 本身不算。
+        ok("★ [路由] D-Conv31 回执凭据白名单：编号/已创建/已写入/收据号都算受理",
+           _pr(200, '{"ok":true,"编号":"T-1"}').get("结论") == "受理"
+           and _pr(200, '{"ok":true,"已创建":"a.json"}').get("结论") == "受理"
+           and _pr(200, '{"ok":true,"已写入":"/x"}').get("结论") == "受理"
+           and _pr(200, '{"ok":true,"收据号":"R-8"}').get("结论") == "受理"
+           and _pr(200, '{"ok":true,"已创建":"a.json"}').get("凭据") == "已创建=a.json",
+           f"已创建→{_pr(200, '{\"ok\":true,\"已创建\":\"a\"}').get('结论')}")
+        ok("★ [路由] D-Conv32 无凭据仍是读不懂：只有 ok / 只有受理人 / 空 / 非 JSON 都不算受理",
+           _pr(200, '{"ok":true}').get("结论") == "读不懂"
+           and _pr(200, '{"ok":true,"受理":"值班"}').get("结论") == "读不懂"
+           and _pr(200, "").get("结论") == "读不懂"
+           and _pr(200, "OK").get("结论") == "读不懂",
+           f"只有ok→{_pr(200, '{\"ok\":true}').get('结论')}"
+           f"｜只有受理人→{_pr(200, '{\"ok\":true,\"受理\":\"x\"}').get('结论')}")
+
+        # 鉴权（v0.2.0，用户：教它并发和鉴权的含义与使用）——四件事，顺序与判定
+        import base64 as _b64
+        import hashlib as _hl
+        import hmac as _hm
+        _SEC = "test-secret"
+
+        def _tok(who, exp, sec=_SEC):
+            raw = ('{"到期":"' + exp + '","谁":"' + who + '"}').encode("utf-8")
+            p64 = _b64.urlsafe_b64encode(raw).decode().rstrip("=")
+            return p64 + "." + _hm.new(sec.encode(), raw, _hl.sha256).hexdigest()
+
+        _future = "2999-12-31"
+        _au = E.App._auth_check
+        _ok_tok = _au(_tok("U001", _future), "U001", _SEC)
+        ok("★ [鉴权] D-Auth1 有凭据且验过 ⇒ 放行，身份以凭据为准（不采信自报）",
+           _ok_tok.get("拦") is False and _ok_tok.get("谁") == "U001",
+           f"结果 {_ok_tok}")
+        _no = _au(None, "U001", _SEC)
+        _self = _au("我是 U001，自己人", "U001", _SEC)
+        ok("★ [鉴权] D-Auth2 没有凭据 ⇒ 401，自报身份不算凭据",
+           _no.get("拦") and _no.get("码") == 401
+           and _self.get("拦") and _self.get("码") == 401,
+           f"无凭据={_no.get('码')}｜自报={_self.get('码')}")
+        _bad = _au(_tok("U001", _future, "wrong-secret"), "U001", _SEC)
+        _old = _au(_tok("U001", "2000-01-01"), "U001", _SEC)
+        _nos = _au("abc", "U001", _SEC)
+        ok("★ [鉴权] D-Auth3 验不过 ⇒ 401，且说清是哪一种（签名/过期/格式）",
+           _bad.get("码") == 401 and "签名" in _bad.get("原因", "")
+           and _old.get("码") == 401 and "到期" in _old.get("原因", "")
+           and _nos.get("码") == 401 and "格式" in _nos.get("原因", ""),
+           f"签名={_bad.get('原因')[:16]}｜过期={_old.get('原因')[:16]}")
+        _cross = _au(_tok("U001", _future), "U002", _SEC)
+        ok("★ [鉴权] D-Auth4 人和事对不上 ⇒ 403 越权（不拿凭据身份顶替请求身份）",
+           _cross.get("拦") and _cross.get("码") == 403,
+           f"码={_cross.get('码')}｜{str(_cross.get('原因'))[:40]}")
+        _nosec = _au(_tok("U001", _future), "U001", "")
+        ok("★ [鉴权] D-Auth5 密钥没配 ⇒ 401，不凭\"看着像自己人\"放行",
+           _nosec.get("拦") and _nosec.get("码") == 401 and "密钥" in _nosec.get("原因", ""),
+           f"码={_nosec.get('码')}")
+
+        # 预算检索（v0.2.2，用户：查询要有预算上限，超了交人）
+        _q1 = app3.query({"查询": {"问": "这块有没有教过", "线索": ["name=根本没有这个名字zzz"],
+                                   "预算": 1}})
+        ok("★ [查询] D-Look1 预算内没精确命中 ⇒ 交人，不给结果、不拿最像的顶替",
+           _q1.get("ok") is False and _q1.get("交人") is True
+           and _q1.get("精确") is False and not _q1.get("结果")
+           and "预算" in str(_q1.get("结论")),
+           f"结论={_q1.get('结论')}｜花费={_q1.get('花费')}/{_q1.get('预算')}")
+        _q2 = app3.query({"查询": {"问": "随便问问", "线索": ["name=也没有zzz"], "预算": 0}})
+        _q3 = app3.query({"查询": {"问": "随便问问", "线索": ["name=也没有zzz"], "预算": 999}})
+        ok("★ [查询] D-Look2 预算夹取：0 ⇒ 至少 1 份；999 ⇒ 封顶 20 份",
+           int(_q2.get("预算") or 0) == 1 and int(_q3.get("预算") or 0) == 20,
+           f"0→{_q2.get('预算')}｜999→{_q3.get('预算')}")
+        _q4 = app3.query({"查询": {"线索": ["name=x"]}})
+        ok("★ [查询] D-Look3 没有「问」⇒ 拒，不猜要查什么",
+           _q4.get("ok") is False and "问" in str(_q4.get("弃答")),
+           f"答 {str(_q4.get('弃答'))[:40]}")
+
+        # 对外检索 / 自学（v0.2.3，用户：让它能向外检索，从反思变成自学）
+        _o1 = app3.query({"外查": {"问": "外面有没有这块的规定"}})
+        ok("★ [自学] D-Self1 没配外查地址 ⇒ 拒，不发明目标、不猜去哪儿查",
+           _o1.get("ok") is False and "地址" in str(_o1.get("弃答")),
+           f"答 {str(_o1.get('弃答'))[:46]}")
+        _o2 = app3.query({"外查": {"预算": 3}})
+        ok("★ [自学] D-Self2 没有「问」⇒ 拒（带问句出去，不许随便看看有什么）",
+           _o2.get("ok") is False and "问" in str(_o2.get("弃答")),
+           f"答 {str(_o2.get('弃答'))[:46]}")
+
+        # 外查的**学习质量**（v0.2.4，2026-11-08 实测踩到三个坑后补的判据）：
+        #   ① 同批同名的会各学一份（新学的要等整批跑完才进内存 ⇒ 查重看不见同批）；
+        #   ② 指定「学名」会被套到**每一条**候选上 ⇒ OAuth 条文顶着「短信验证码规则」的门牌；
+        #   ③ 学哪条只看源的返回顺序 ⇒ 最相关的那条被预算挤掉；
+        #   ④ 学完的 来源/采信 没开词 ⇒ 「拉一份待复核清单」查不出来。
+        import threading as _th
+        from http.server import (BaseHTTPRequestHandler as _BHR,
+                                 HTTPServer as _HS)
+
+        _POOL2 = [
+            {"标题": "乙项 短信频次", "出处": "https://e.org/b",
+             "摘录": "同一手机号一分钟一条、一小时五条，超过就拒。"},
+            {"标题": "甲项 口令哈希", "出处": "https://e.org/a",
+             "摘录": "口令在服务端只存加盐慢哈希，不存明文也不可逆。"},
+            {"标题": "乙项 短信频次", "出处": "https://e.org/b2",
+             "摘录": "同一批里第二条同名的，不该再学一份。"},
+            {"标题": "听说的做法", "出处": "", "摘录": "同事说验证码存前端就行，没人查。"},
+        ]
+
+        class _OH(_BHR):
+            def do_POST(self):
+                _n = int(self.headers.get("Content-Length") or 0)
+                self.rfile.read(_n)
+                _b = json.dumps({"ok": True, "结果": _POOL2},
+                                ensure_ascii=False).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(_b)))
+                self.end_headers()
+                self.wfile.write(_b)
+
+            def log_message(self, *a):
+                pass
+
+        _srv = _HS(("127.0.0.1", 0), _OH)
+        _th.Thread(target=_srv.serve_forever, daemon=True).start()
+        _nd2 = tmp / "out2" / "_data" / "c" / "nodes"
+        _nd2.mkdir(parents=True)
+        (_nd2 / "n0.md").write_text(
+            "---\nid: n0\ntype: 财务\n金额: 4500\n---\n\n第 0 条。\n",
+            encoding="utf-8", newline="\n")
+        (_nd2.parent / "trigger.json").write_text(
+            json.dumps({"outside": {"url":
+                                    f"http://127.0.0.1:{_srv.server_address[1]}/q"}},
+                       ensure_ascii=False), encoding="utf-8", newline="\n")
+        app4 = E.App(root=str(_nd2))
+        _r4 = app4.query({"外查": {"问": "短信频次怎么定，口令怎么存", "预算": 6,
+                                   "学名": "一刀切名"}})
+        _got = [x.get("name") or "" for x in (_r4.get("学到") or [])]
+        _miss = [x.get("标题") or "" for x in (_r4.get("没学") or [])]
+        ok("★ [自学] D-Self3 最相关的那条先学（按与问句的重合排序，不按源返回顺序）",
+           bool(_got) and "乙项" in _got[0],
+           f"学到 {_got}")
+        ok("★ [自学] D-Self4 多候选时「学名」不生效（一物一名，不许一份名贴几条门牌）",
+           bool(_got) and all("一刀切名" not in x for x in _got),
+           f"学到 {_got}")
+        ok("★ [自学] D-Self5 同一批里同名的只学一条（新学的还没进内存也要查）",
+           sum(1 for x in _got if "乙项" in x) == 1 and len(_got) == 2,
+           f"学到 {_got}")
+        ok("★ [自学] D-Self6 没有出处的「听说的」仍拒（排序再靠前也不进库）",
+           any("听说" in x for x in _miss) and all("听说" not in x for x in _got),
+           f"没学 {_miss}")
+        _r5 = app4.query({"require": ["采信=未核"]})
+        _r6 = app4.query({"require": ["来源=外部"]})
+        ok("★ [自学] D-Self7 学完 采信=未核 / 来源=外部 都能查（复核清单点得出来）",
+           len(_r5.get("answer_ids") or []) == len(_got)
+           and len(_r6.get("answer_ids") or []) == len(_got),
+           f"未核 {len(_r5.get('answer_ids') or [])}｜外部 "
+           f"{len(_r6.get('answer_ids') or [])}｜学到 {len(_got)}")
+        _srv.shutdown()
+
+        # 复核是人的动作（v0.2.5，用户裁定：「采信改已核」做成只有人能调的动件）。
+        # 与 drill(verdict="wrong") 同一条线：判错与采信都是**外部授予**。
+        _nid0 = ((_r4.get("学到") or [{}])[0].get("id") or "")
+        _rv1 = app4.review(_nid0, by="agent")
+        ok("★ [自学] D-Self8 复核只能人做：agent 调 ⇒ 拒，不许自己把 未核 改 已核",
+           _rv1.get("ok") is False and "human" in str(_rv1.get("error")),
+           f"答 {str(_rv1.get('error'))[:50]}")
+        _rv2 = app4.review(_nid0, by="human", 依据="判据里核一遍")
+        _rv3 = app4.review(_nid0, by="human")
+        ok("★ [自学] D-Self9 人核过 ⇒ 采信=已核；已核的不再核（防重复记账）",
+           _rv2.get("ok") is True and _rv2.get("采信") == "已核"
+           and _rv3.get("ok") is False,
+           f"首次 {_rv2.get('采信')}｜再核 {str(_rv3.get('error'))[:36]}")
+        _r7 = app4.query({"require": ["采信=未核"]})
+        ok("★ [自学] D-Self10 核完从「未核」清单里消失（清单要靠得住）",
+           len(_r7.get("answer_ids") or []) == len(_got) - 1,
+           f"未核 {len(_r7.get('answer_ids') or [])}｜学到 {len(_got)}")
+
+        # ★ 未命中时把「词不对」显性化（v0.2.6，2026-11-08 实测）：调用方线索猜错、
+        #   预算花完，就把「没查到」说成「LDV 没教过」——差别在这一层看不见，
+        #   而库里明明有那条（实测《赶工上线规程》被断言成「没教过」）。
+        _q5 = app4.query({"查询": {"问": "短信频次怎么定",
+                                   "线索": ["name=口令管理规程zzz"], "预算": 1}})
+        _near5 = _q5.get("相近的名字") or []
+        ok("★ [查询] D-Look4 没命中 ⇒ 回「库里名字相近的条目」，让「没查到≠没有」看得见",
+           _q5.get("ok") is False and isinstance(_near5, list)
+           and any("乙项" in str(x) for x in _near5),
+           f"结论 {_q5.get('结论')}｜相近 {_near5}")
+
+        # 教过的词要认得出（v0.2.4）：问「X什么意思」先答教的词义，
+        # 不许退化成查句子里最后一个字的字典义（实测「登录」答成了「录」）。
+        (_nd2 / "w__登录.md").write_text(
+            "---\nid: w/登录\ntype: 概念\nname: 登录\n门类: 事理\n"
+            "领域: 系统接口\n---\n\n登录：向系统证明我是谁，核过之后记住这次会话。\n",
+            encoding="utf-8", newline="\n")
+        app5 = E.App(root=str(_nd2))
+        _cv = app5.query({"对话": {"说": "登录是什么意思"}})
+        ok("★ [对话] D-Route1 教过的词 + 「什么意思」⇒ 答词义，不退到查单字",
+           _cv.get("路由") == "问词义" and "证明我是谁" in str(_cv.get("答")),
+           f"路由 {_cv.get('路由')}｜答 {str(_cv.get('答'))[:40]}")
+
+        # 问法词不当知识（v0.2.7，2026-11-08 目标驱动测试当场抓到）：
+        # 问「到期的书怎么催还，不还怎么办」按名字命中了「怎么办」这个词义节点
+        # ⇒ 精确命中、答案变成「怎么办：问接下来该做什么」——**问题被一个词吃了**。
+        # 两字门槛挡得住「多少」，挡不住三字的「怎么办」。
+        (_nd2 / "w__怎么办.md").write_text(
+            "---\nid: w/怎么办\ntype: 词汇\nname: 怎么办\n门类: 词汇\n"
+            "---\n\n怎么办：问接下来该做什么。\n",
+            encoding="utf-8", newline="\n")
+        app6 = E.App(root=str(_nd2))
+        app6.declare("name=怎么办", why="判据：问法词开词后用来看它会不会被吃掉",
+                     by="owner")
+        app6 = E.App(root=str(_nd2))
+        _q6 = app6.query({"查询": {"问": "这书怎么催还，不还怎么办", "预算": 2}})
+        ok("★ [查询] D-Look5 问法词不当知识：句尾「怎么办」不被当成被问的东西",
+           (_q6.get("结果") or {}).get("id") != "w/怎么办",
+           f"结论 {_q6.get('结论')}｜命中 {( _q6.get('结果') or {}).get('id')}")
+
+        # 装配（v0.2.8，用户 2026-11-08「教装配」）：教形状不教路径。
+        # 装配单只说「这条判据靠哪块砖顶着」，**不排先后**；相关不够就标缺。
+        (_nd2 / "w__盘点目标.md").write_text(
+            "---\nid: w/盘点目标\ntype: 概念\nname: 盘点目标\n门类: 事理\n---\n\n"
+            "盘点目标：把账和实物对上。\n\n**算达到**：\n"
+            "① **账实相符**——盘出来的数和账上记的数能对上；\n"
+            "② **差异有主**——对不上的每一条都写了原因；\n"
+            "③ **有签字**——盘点结果要有两个人签字确认。\n",
+            encoding="utf-8", newline="\n")
+        (_nd2 / "w__盘点规程.md").write_text(
+            "---\nid: w/盘点规程\ntype: 概念\nname: 盘点规程\n门类: 事理\n---\n\n"
+            "盘点规程：盘点时先冻结账，再点实物；账实相符才算盘完，差异逐条记原因。\n",
+            encoding="utf-8", newline="\n")
+        app7 = E.App(root=str(_nd2))
+        _a1 = app7.query({"装配": {"名称": "盘点目标"}})
+        _rows = ((_a1.get("装配单") or {}).get("判据") or [])
+        ok("★ [装配] D-Asm1 目标 → 逐条判据 → 覆盖：有的标有、没有的标缺（不拿最像的顶替）",
+           len(_rows) == 3
+           and _rows[0].get("状态") == "有"
+           and _rows[2].get("状态") != "有",
+           f"状态 {[(r.get('序'), r.get('状态')) for r in _rows]}")
+        ok("★ [装配] D-Asm2 装配单**不写顺序**（只有覆盖，没有「先做/再做」）",
+           "步骤" not in str(_a1) and "顺序" not in str((_a1.get("装配单") or {}).get("判据"))
+           and (_a1.get("不写的东西") or [""])[0].startswith("先后顺序"),
+           f"不写的东西 {_a1.get('不写的东西')}")
+        _a2 = app7.query({"装配": {"名称": "根本没教过的目标"}})
+        ok("★ [装配] D-Asm3 目标没教过 ⇒ 拒，不拿别的目标顶替",
+           _a2.get("ok") is False and "没教过" in str(_a2.get("弃答")),
+           f"答 {str(_a2.get('弃答'))[:40]}")
+        (_nd2 / "w__无判据目标.md").write_text(
+            "---\nid: w/无判据目标\ntype: 概念\nname: 无判据目标\n门类: 事理\n---\n\n"
+            "无判据目标：把这事办漂亮点，让大家都满意。\n",
+            encoding="utf-8", newline="\n")
+        app7 = E.App(root=str(_nd2))
+        _a3 = app7.query({"装配": {"名称": "无判据目标"}})
+        ok("★ [装配] D-Asm4 目标里没有分条判据 ⇒ 拒，不替它编判据",
+           _a3.get("ok") is False and "判据" in str(_a3.get("弃答")),
+           f"答 {str(_a3.get('弃答'))[:44]}")
+
+        # 补齐 → 记账 → 综合（v0.2.9，用户 2026-11-09：补一个缺口记一笔，从记录综合出过程）
+        _a5 = app7.query({"装配": {"名称": "盘点目标", "记账": True}})
+        ok("★ [装配] D-Asm5 装配可记账（补齐史是「过程」的原料）",
+           (_a5.get("记账") or {}).get("写成") is True,
+           f"记账 {_a5.get('记账')}")
+        _led = _nd2.parent / "assemble_ledger.jsonl"
+        _snap = {"目标": "盘点目标", "事件": "装配", "轮次": 9,
+                 "判据": [{"序": "①", "判据": "账实相符", "状态": "有", "覆盖": ["盘点规程"]},
+                          {"序": "②", "判据": "差异有主", "状态": "有", "覆盖": ["盘点规程"]},
+                          {"序": "③", "判据": "有签字", "状态": "有", "覆盖": ["签收"]}],
+                 "状态": "可交付"}
+        _rows = [_snap,
+                 {"目标": "盘点目标", "事件": "补齐", "轮次": 7,
+                  "缺口": "③ 有签字", "补": "签字", "依赖": ["②"], "补后": "有"},
+                 {"目标": "盘点目标", "事件": "补齐", "轮次": 8,
+                  "缺口": "② 差异有主", "依赖": ["①"]}]
+        _led.write_text("\n".join(json.dumps(x, ensure_ascii=False) for x in _rows) + "\n",
+                        encoding="utf-8", newline="\n")
+        _p1 = app7.query({"过程": {"名称": "盘点目标"}})
+        _st1 = (_p1.get("过程") or {}).get("步骤") or []
+        ok("★ [过程] D-Proc1 顺序从补齐史推出来（③ 依赖 ②、② 依赖 ① ⇒ ①②③），不是排的",
+           [s["序"] for s in _st1] == ["①", "②", "③"]
+           and _st1[2]["依赖"] == ["②"],
+           f"步骤 {[(s['序'], s['依赖']) for s in _st1]}")
+        ok("★ [过程] D-Proc2 序的完整度如实报（覆盖几步 / 哪步位置不固定 / 哪步当起点没证据）",
+           "依赖记录覆盖" in str(_p1.get("序的完整度")),
+           f"{_p1.get('序的完整度')}")
+        _rows2 = [_snap,
+                  {"目标": "盘点目标", "事件": "补齐", "轮次": 90,
+                   "缺口": "② 差异有主", "依赖": ["③"]},
+                  {"目标": "盘点目标", "事件": "补齐", "轮次": 91,
+                   "缺口": "③ 有签字", "依赖": ["②"]}]
+        _led.write_text("\n".join(json.dumps(x, ensure_ascii=False) for x in _rows2) + "\n",
+                        encoding="utf-8", newline="\n")
+        _p2 = app7.query({"过程": {"名称": "盘点目标"}})
+        ok("★ [过程] D-Proc3 依赖成环 ⇒ 报警交人（环通常意味着判据/依赖写错了）",
+           _p2.get("ok") is False and "环" in str(_p2.get("弃答")),
+           f"答 {str(_p2.get('弃答'))[:46]}")
+
+        # 依赖的「提议 → 授予」（v0.2.10，用户裁定：agent 不能越界）
+        #   分工同 review：判断是人的，提议可以是 agent 的。
+        _rows3 = [_snap,
+                  {"目标": "盘点目标", "事件": "补齐", "轮次": 30,
+                   "缺口": "② 差异有主", "补": "盘点规程", "依赖": ["①"], "补后": "有"}]
+        _led.write_text("\n".join(json.dumps(x, ensure_ascii=False) for x in _rows3) + "\n",
+                        encoding="utf-8", newline="\n")
+        _pp = _nd2.parent / "dep_proposals.jsonl"
+        if _pp.exists():
+            _pp.unlink()
+        _before = len(_led.read_text(encoding="utf-8").splitlines())
+        _d1 = app7.propose_dependency(
+            "盘点目标", "③ 有签字", ["②"],
+            依据="签字要挂在差异结论上：没有②的结论，就没有可签的东西", by="agent")
+        _after = len(_led.read_text(encoding="utf-8").splitlines())
+        ok("★ [依赖] D-Dep1 agent 可提议：写进待核队列，**台账一行不动**",
+           _d1.get("ok") is True and _before == _after and _pp.exists(),
+           f"提议 {_d1.get('ok')}｜台账 {_before}→{_after}")
+        _d2 = app7.confirm_dependency("盘点目标", "③ 有签字", by="agent")
+        ok("★ [依赖] D-Dep2 agent 不能落账：confirm(by=agent) ⇒ 拒",
+           _d2.get("ok") is False and "human" in str(_d2.get("error")),
+           f"答 {str(_d2.get('error'))[:44]}")
+        _d3 = app7.confirm_dependency("盘点目标", "③ 有签字", by="human")
+        _p3 = app7.query({"过程": {"名称": "盘点目标"}})
+        _st3 = [s for s in ((_p3.get("过程") or {}).get("步骤") or [])
+                if s["序"] == "③"]
+        ok("★ [依赖] D-Dep3 人点头 ⇒ 落台账，过程随即读到这条依赖",
+           _d3.get("ok") is True and _st3 and _st3[0]["依赖"] == ["②"],
+           f"落账 {_d3.get('ok')}｜步骤③依赖 {_st3[0]['依赖'] if _st3 else None}")
+        _d4 = app7.propose_dependency("盘点目标", "⑨ 编的步", [],
+                                      依据="随便写点凑够十个字就行", by="agent")
+        _d5 = app7.propose_dependency("盘点目标", "① 账实相符", [], 依据="", by="agent")
+        ok("★ [依赖] D-Dep4 不许发明步骤 / 提议必须带依据（空依据、不在快照的步都拒）",
+           _d4.get("ok") is False and "不在快照" in str(_d4.get("error"))
+           and _d5.get("ok") is False and "依据" in str(_d5.get("error")),
+           f"编步 → {str(_d4.get('error'))[:24]}｜空依据 → {str(_d5.get('error'))[:24]}")
+        _d6 = app7.propose_dependency(
+            "盘点目标", "③ 有签字", ["②"],
+            依据="签字要挂在差异结论上：没有②的结论，就没有可签的东西", by="agent")
+        ok("★ [依赖] D-Dep5 同一条提议不重复写（待核队列不会被自己灌满）",
+           _d6.get("已提议过") is True,
+           f"答 {str(_d6.get('说明'))[:36]}")
+        # 「不依赖任何步」本身也是一个判断：空依赖能提议、能确认，且算「已记录」。
+        # 实测 agent 对头一步就是这么提的，旧写法（用真值判空）会把确认拒掉。
+        _d7 = app7.propose_dependency("盘点目标", "① 账实相符", [],
+                                      依据="这一步没有前置：它读的是账本和实物，起点就是起点",
+                                      by="agent")
+        _d8 = app7.confirm_dependency("盘点目标", "① 账实相符", by="human")
+        _p4 = app7.query({"过程": {"名称": "盘点目标"}})
+        ok("★ [依赖] D-Dep6 空依赖也是记录：确认过「没有前置」就不该再报「没证据」",
+           _d7.get("ok") is True and _d8.get("ok") is True
+           and "未记依赖" not in str(_p4.get("序的完整度")),
+           f"完整度 {_p4.get('序的完整度')}")
+
+        # 差距（v0.2.12，用户：创造 = 分清契约与需求的差距，在已定之外）
+        #   需求保持原话；逐句问「有没有条文管」；**只量差距，不提建议**。
+        _g1 = app7.query({"差距": {"需求": "盘点和实物对上，差异要有两个人签字"}})
+        _gs = _g1.get("诉求") or []
+        ok("★ [差距] D-Gap1 需求原话逐句对契约：有的判「契约内」、没有的判在契约外",
+           len(_gs) == 2 and _gs[0].get("判定") == "契约内"
+           and _gs[1].get("判定") != "契约内",
+           f"{[(x.get('句'), x.get('判定')) for x in _gs]}")
+        ok("★ [差距] D-Gap2 只量差距不提建议（建议在已定之外，本层不发明）",
+           "不做的" in (_g1 or {}) and not any(k in (_g1 or {}) for k in ("建议", "该怎么补")),
+           f"不做的 {_g1.get('不做的')}")
+        _g2 = app7.query({"差距": {"需求": ""}})
+        ok("★ [差距] D-Gap3 没有需求 ⇒ 拒，并提醒「别先把需求翻译成判据」",
+           _g2.get("ok") is False and "翻译成判据" in str(_g2.get("弃答")),
+           f"答 {str(_g2.get('弃答'))[:44]}")
+
+        # 建议 v0.2.17（用户拍板 B：需求整条量，不切句；抱怨不是来找建议的）。
+        # 旧建议（对抱怨拆句挑刺）退役——判准错位：差距问「有没有规矩管」，
+        # 建议问「要新增什么、动谁」。四份清单：覆盖 / 新词候选 / 要动的条文 / 缺的口径。
+        _v1 = app7.query({"建议": {"需求": "我要批量导出盘点结果，一次导几百条",
+                                   "来意": "需求"}})
+        ok("★ [建议] D-Adv1 需求整条量：四份清单（覆盖/新词/要动/缺口径）都在",
+           _v1.get("ok") is True
+           and {"覆盖", "新词候选", "要动的条文", "缺的口径"} <= set(_v1)
+           and any(c["名字"] == "盘点规程" for c in (_v1.get("覆盖") or []))
+           and any(g["约束词"] in ("批量", "导出")
+                   for g in (_v1.get("缺的口径") or [])),
+           f"状态 {_v1.get('状态')}｜要动 "
+           f"{[c['名字'] for c in (_v1.get('要动的条文') or [])]}")
+        ok("★ [建议] D-Adv2 抱怨不是来找建议的：不带 来意=需求 ⇒ 拒并指路差距",
+           app7.query({"建议": {"需求": "盘点老是盘不平"}}).get("ok") is False
+           and "抱怨" in str(app7.query({"建议": {"需求": "盘点老是盘不平"}}).get("弃答")),
+           f"答 {str(app7.query({'建议': {'需求': '盘点老是盘不平'}}).get('弃答'))[:44]}")
+        _v3 = app7.query({"建议": {"需求": "给登录加一个预约功能", "来意": "需求"}})
+        ok("★ [建议] D-Adv3 「加功能」不再被判已有：库里没有的词进新词候选，"
+           "产出里没有「契约内」",
+           _v3.get("ok") is True and "契约内" not in str(_v3)
+           and "预约" in str(_v3.get("新词候选") or []),
+           f"新词 {_v3.get('新词候选')}")
+
+        # 补齐记录是「需求 ↔ 条文」的桥（v0.2.14）：
+        # 补的规矩措辞常和抱怨对不上（「毕业走了」 vs 《离校清欠》一字不沾），
+        # 补的时候记一句「这条补的是哪段需求」，下一轮靠**记录**认，不靠字面猜。
+        _dm = app7.query({"差距": {"需求": "盘点和实物对上，差异要有两个人签字"}})
+        _seg = [x for x in (_dm.get("诉求") or [])
+                if str(x.get("判定")) != "契约内"]
+        _w1 = app7.map_demand("差异要有两个人签字", "w/盘点规程", by="agent")
+        ok("★ [补齐桥] D-Map1 「这条补的是哪段需求」只能人记（agent 提议可以，落账不行）",
+           _w1.get("ok") is False and "human" in str(_w1.get("error")),
+           f"答 {str(_w1.get('error'))[:40]}")
+        _w2 = app7.map_demand("差异要有两个人签字", "w/盘点规程", by="human")
+        _dm2 = app7.query({"差距": {"需求": "盘点和实物对上，差异要有两个人签字"}})
+        _v2 = app7.query({"建议": {"需求": "盘点和实物对上，差异要有两个人签字"}})
+        # 决策留痕（v0.2.15，用户：先记账，再谈归纳）
+        _dl = _nd2.parent / "decision_ledger.jsonl"
+        _n0 = len(_dl.read_text(encoding="utf-8").splitlines()) if _dl.is_file() else 0
+        _as1 = app7.query({"装配": {"名称": "盘点目标"}})
+        _n1 = len(_dl.read_text(encoding="utf-8").splitlines()) if _dl.is_file() else 0
+        _last = json.loads((_dl.read_text(encoding="utf-8").splitlines() or ["{}"])[-1])
+        ok("★ [留痕] D-Dec1 装配写决策账：桶 / 候选（含分）/ 选了，四样齐",
+           _n1 > _n0 and {"桶", "候选", "选了"} <= set(_last),
+           f"账 {_n0}→{_n1}｜末条 {list(_last)}")
+        _as2 = app7.query({"装配": {"名称": "盘点目标"}})
+        ok("★ [留痕] D-Dec2 记账不改结论（跑两次，判据状态一模一样）",
+           [r["状态"] for r in (_as1.get("装配单", {}).get("判据") or [])]
+           == [r["状态"] for r in (_as2.get("装配单", {}).get("判据") or [])],
+           f"{[r['状态'] for r in (_as1.get('装配单', {}).get('判据') or [])]}")
+        ok("★ [补齐桥] D-Map2 补完之后靠记录认出来（「契约内（靠补齐记录）」），不再提建议",
+           _w2.get("ok") is True
+           and all(str(x.get("判定")).startswith("契约内")
+                   for x in (_dm2.get("诉求") or []))
+           and not (_v2.get("建议") or []),
+           f"{[(x.get('句'), x.get('判定')) for x in (_dm2.get('诉求') or [])]}"
+           f"｜建议 {len(_v2.get('建议') or [])} 条")
+
+
+
+        # MongoDB 线协议（v0.1.93，用户：教 mongo 端口协议，让它独立打开直接调用）：
+        # 不借驱动——BSON 编解码与 OP_MSG 都在 ldv/core/mongowire.py。
+        from ldv.core import mongowire as MW
+        _doc = {"a": 1, "b": "灯油", "c": [1, 2.5, True, None],
+                "d": {"x": -5}, "大": 2 ** 40}
+        _enc = MW.encode(_doc)
+        _back, _end = MW.decode(_enc, 0)
+        ok("★ [路由] D-Conv29 BSON 编解码往返：中文/数组/嵌套文档/大整数/布尔/null 全等价",
+           _back.get("b") == "灯油" and _back.get("c") == [1, 2.5, True, None]
+           and _back.get("d") == {"x": -5} and _back.get("大") == 2 ** 40
+           and _back.get("a") == 1 and _end == len(_enc),
+           f"回读 {_back}")
+        _b = MW.encode({"k": "v"})
+        ok("★ [路由] D-Conv30 BSON 长度字段自洽：首 4 字节 = 整段字节数（协议第一道校验）",
+           int.from_bytes(_b[:4], "little") == len(_b)
+           and _b[-1:] == b"\x00",
+           f"声明 {int.from_bytes(_b[:4], 'little')}｜实际 {len(_b)}")
+
+        # ── 答题账本（v0.1.65）：作答是一次记录——同题重问先对账 ──────────
+        (d / "usage").mkdir(exist_ok=True)
+        (d / "usage" / "config.json").write_text(
+            json.dumps({"half_life_hours": 24}, ensure_ascii=False),
+            encoding="utf-8", newline="\n")
+        app2 = E.App(root=str(d))
+        ra1 = app2.query({"derive": {"运算": "+", "左": "name=二", "右": "name=三",
+                                     "字段": "数值"}})
+        ra2 = app2.query({"derive": {"运算": "+", "左": "name=二", "右": "name=三",
+                                     "字段": "数值"}})
+        ok("★ [组合] D-A1 同题重问 ⇒ 带「上次作答」对账（时间+要点+可复算）",
+           ra2.get("ok") and isinstance(ra2.get("上次作答"), dict)
+           and ra2["上次作答"]["要点"].get("算得") == ra1.get("算得")
+           and "可复算" in ra2["上次作答"],
+           f"上次作答 {str(ra2.get('上次作答'))[:60]}")
+        ra3 = app2.query({"derive": {"运算": "+", "左": "name=二", "右": "name=四",
+                                     "字段": "数值"}})
+        ok("★ [组合] D-A2 异题不串账（无 上次作答）",
+           ra3.get("ok") and "上次作答" not in ra3, "无上次作答 ✓")
+
+        # ── 缺事问（v0.1.65）：词都认识但没教成一件事 ⇒ 反问 ──────────────
+        sfm = app2.selfask(context_keys=("name=石头", "name=橡皮"))
+        ok("★ [组合] D-Q1 词全认识但无事收它 ⇒ 缺事问（词逐字列出）",
+           any(q["类型"] == "缺事" for q in sfm["问句"]),
+           f"类型 {[q['类型'] for q in sfm['问句']][:3]}")
+        sfm2 = app2.selfask(context_keys=("name=捡到橡皮", "name=橡皮"))
+        ok("★ [组合] D-Q2 已有事对上（捡到橡皮的行为收着橡皮）⇒ 不问",
+           not any(q["类型"] == "缺事" for q in sfm2["问句"]),
+           f"类型 {[q['类型'] for q in sfm2['问句']][:3]}")
+        sfm3 = app2.selfask(context_keys=("name=二", "不认识的词xyz"))
+        ok("★ [组合] D-Q3 无词仍最优先（有缺词时不发缺事问）",
+           any(q["类型"] == "无词" for q in sfm3["问句"])
+           and not any(q["类型"] == "缺事" for q in sfm3["问句"]),
+           f"类型 {[q['类型'] for q in sfm3['问句']][:3]}")
+        # ── 变形（v0.1.66）：教过的三槽句例互换 ───────────────────────────
+        rv = app2.query({"变形": {"句": "小明把作业写完了", "式": "被字句"}})
+        ok("★ [组合] D-V1 把字句 → 被字句（逐字）",
+           rv.get("ok") and rv.get("变句") == "作业被小明写完了",
+           f"变句 {rv.get('变句')}")
+        rv2 = app2.query({"变形": {"句": "作业被小明写完了", "式": "被字句"}})
+        ok("★ [组合] D-V2 反向：被字句 → 把字句（双向）",
+           rv2.get("ok") and rv2.get("变句") == "小明把作业写完了",
+           f"变句 {rv2.get('变句')}")
+        rv3 = app2.query({"变形": {"句": "天上下雨了", "式": "被字句"}})
+        ok("★ [组合] D-V3 未教句式 ⇒ 拒（不硬掰）",
+           not rv3.get("ok") and "不硬掰" in str(rv3.get("弃答", "")),
+           str(rv3.get("弃答"))[:60])
+        rr = app2.query({"反义": "大"})
+        ok("★ [组合] D-R1 反义 大 → 小（对子命中）",
+           rr.get("ok") and rr.get("对面") == "小", f"对面 {rr.get('对面')}")
+        rr2 = app2.query({"反义": "小"})
+        ok("★ [组合] D-R2 反义 小 → 大（双向）",
+           rr2.get("ok") and rr2.get("对面") == "大", f"对面 {rr2.get('对面')}")
+        rr3 = app2.query({"反义": "高"})
+        ok("★ [组合] D-R3 没教过的对面 ⇒ 拒（不发明）",
+           not rr3.get("ok") and "要不要教" in str(rr3.get("弃答", "")),
+           str(rr3.get("弃答"))[:60])
+        rw = app2.query({"成文": "name=捡到橡皮"})
+        ok("★ [组合] D-W1 成文：段落生成且句句有「出自」",
+           rw.get("ok") and len(rw.get("句引", [])) >= 3
+           and all("出自" in s for s in rw.get("句引", [])),
+           f"成文 {str(rw.get('成文'))[:60]}")
+        ok("★ [组合] D-W2 成文引标准（反应段进段里）",
+           rw.get("ok") and "不可偷盗" in str(rw.get("成文")),
+           str(rw.get("成文"))[-60:])
+        rw2 = app2.query({"成文": "name=橡皮擦破了"})
+        ok("★ [组合] D-W3 没对上道德的事 ⇒ 成文同样拒（不硬编）",
+           not rw2.get("ok"), str(rw2.get("弃答"))[:60])
+        # ── 主题成文（v0.1.67）：主题词找概念，逐字组段 ────────────────────
+        rt = app2.query({"主题": {"题": "测试的场景",
+                                   "词": ["name=捡到橡皮", "name=橡皮", "name=石头"]}})
+        ok("★ [组合] D-Z1 主题成文：≥2 条概念命中 ⇒ 组段且句句有出自",
+           rt.get("ok") and len(rt.get("句引", [])) >= 2
+           and all("出自" in s for s in rt.get("句引", [])),
+           f"成文 {str(rt.get('成文'))[:60]}")
+        rt2 = app2.query({"主题": {"题": "空的主题", "词": ["name=不存在的词xyz"]}})
+        ok("★ [组合] D-Z2 主题下料不够 ⇒ 拒（不凭空编景）",
+           not rt2.get("ok") and "料不够" in str(rt2.get("弃答", "")),
+           str(rt2.get("弃答"))[:60])
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_agenda() -> None:
+    """★ [议程] 主动性：**什么时候轮到哪条待办**（`core/agenda.py`，2026-10-27）。
+
+    反思层只回答「哪里不平」，而且 `significance()` 是纯函数 ——
+    一个矛盾出现 1 次和 100 次，**档位一样、先后也一样**。
+    ⇒ 这层补的是「反复出现 ⇒ 更早被处理」+「越闲越不挑」。
+
+    ★★ 三条不能破的边界（破了就是裁判）：
+       ① 档位**原样透传**，本层不改（档位由后果定，不由时间定）
+       ② **跨档不许越级**：可延后的激活再高，也排不到必须前面
+       ③ 阈值单调下降 ⇒ 存在的待办**最终**都会到点（老化兜底另加一条）
+    """
+    from datetime import datetime as _dt, timedelta as _td
+    import shutil
+
+    from ldv.checks._fixtures import make_keyset_root
+    from ldv.core import agenda as A
+
+    now = _dt(2026, 10, 27, 12, 0, 0)
+
+    # ── 59 激活公式：量级与单调性 ────────────────────────────────────
+    b_1d = A.activation([now - _td(days=1)], now)
+    b_5x = A.activation([now - _td(hours=h) for h in (1, 3, 6, 12, 20)], now)
+    b_10d = A.activation([now - _td(days=10)], now)
+    ok("★ [议程] 59 ACT-R 激活：**出现得多/近 ⇒ 高**，久远的低；无历史 = -inf",
+       abs(b_1d - 0.0) < 1e-6 and b_5x > b_1d > b_10d
+       and A.activation([], now) == float("-inf"),
+       f"1 天 1 次 {b_1d:.3f}｜近 1 天 5 次 {b_5x:.3f}｜10 天 1 次 {b_10d:.3f}"
+       f"｜无历史 {A.activation([], now)}")
+
+    # ── 60 阈值**单调不增**（k 越大越松，且不能反弹）────────────────
+    taus = [A.threshold(k) for k in range(0, 12)]
+    ok("★ [议程] 60 阈值 τ(k) **单调不增**（越闲越不挑）",
+       all(b <= a for a, b in zip(taus, taus[1:])) and taus[-1] < taus[0],
+       f"k=0..11：{[round(x, 2) for x in taus]}")
+
+    # ── 61 首次见到 ⇒ **按「刚发现」算，会触发**（不是 -inf 不触发）─────
+    #   ⚠️ 第一版照抄 ACT-R 给了 -inf ⇒ 真内核上「到点」恒 0，
+    #      主动性**永远启动不了第一次**。待办不是记忆痕迹，是客观缺口：
+    #      「第一次看到」= 刚发现 = 激活最高。
+    #      纯函数 `activation([])` 仍是 -inf（那是 ACT-R 的语义，不改）；
+    #      **策略在议程层**：首次按 `[now]` 算。
+    from ldv.core.agenda import agenda as _agenda
+    _loaded = load()
+    if _loaded is None:
+        ok("★ [议程] 61 首次见到 ⇒ 按「刚发现」算（**跳过**：内置语料加载不了）",
+           True, "0")
+    else:
+        _nodes2, _e2, _d2 = _loaded
+        _k2 = make_keyset_root(_nodes2)()
+        _a0 = _agenda(_k2, k=0)
+        _first = [r for r in _a0["到点"] if r["首次"]]
+        ok("★ [议程] 61 **首次见到 ⇒ 按「刚发现」算 ⇒ 会触发**"
+           "（不是 -inf 永不触发；纯函数层仍是 -inf）",
+           A.activation([], now) == float("-inf")
+           and len(_a0["到点"]) >= 1 and len(_first) == len(_a0["到点"]),
+           f"纯函数 activation([])={A.activation([], now)}｜"
+           f"真内核 k=0 到点 {len(_a0['到点'])} 条，全是首次 {len(_first)} 条")
+
+    # ── 62 档位原样透传 + 跨档不越级 ────────────────────────────────
+    #   造两个假待办：一个「必须」但很冷，一个「可延后」但很热。
+    #   热的那条**不许**排到前面 —— 跨档用有序等级，不比激活。
+    hist = {"矛盾|边打架": [], "待展开|D9": [now - _td(hours=1)] * 20}
+    rows = [
+        {"键": "矛盾|边打架", "档位": "必须", "激活": None,
+         "出现次数": 0, "最近一次": None, "首次出现": None,
+         "老化": False, "冷却中": False, "待办": {}},
+        {"键": "待展开|D9", "档位": "可延后", "激活": 3.0,
+         "出现次数": 20, "最近一次": now.isoformat(), "首次出现": None,
+         "老化": False, "冷却中": False, "待办": {}},
+    ]
+    rows.sort(key=lambda r: (A.TIER_ORDER[r["档位"]],
+                             -(r["激活"] if r["激活"] is not None else -99.0)))
+    ok("★ [议程] 62 **跨档不许越级**：可延后的激活再高，也排在必须之后",
+       rows[0]["档位"] == "必须",
+       f"排序后首条 = {rows[0]['档位']}（激活 {rows[0]['激活']}）")
+
+    # ── 63 阈值真起作用：同一个待办，k 小不触发、k 大触发 ────────────
+    #   取一条「10 天前出现 1 次」的：B=-1.151。
+    #   τ(0)=0.5 ⇒ 不触发；τ(6)=-1.3 ⇒ 触发。
+    b = A.activation([now - _td(days=10)], now)
+    ok("★ [议程] 63 阈值**真起作用**：同一条待办，k 小不触发、k 大触发",
+       b <= A.threshold(0) and b > A.threshold(6),
+       f"B={b:.3f}｜τ(0)={A.threshold(0)}（不过）｜τ(6)={A.threshold(6):.1f}（过）")
+
+    # ── 64 老化兜底：存在够久 ⇒ 无条件触发（与 k 无关）────────────────
+    #   这条治的是「人类需求一直插进来 ⇒ k 不涨 ⇒ 饿死」。
+    old = now - _td(days=A.STALE_DAYS + 1)
+    stale = (now - old) >= _td(days=A.STALE_DAYS)
+    ok("★ [议程] 64 **老化兜底**：存在超过 STALE_DAYS ⇒ 无条件触发（不看 k）",
+       stale and A.STALE_DAYS >= 1,
+       f"存在 {(now - old).days} 天 ≥ {A.STALE_DAYS} 天 ⇒ 老化")
+
+    # ── 65 账本只追加 + 冷却读得回来（「不知道」不是永久跳过）─────────
+    import tempfile as _tf
+    from pathlib import Path as _P
+    tmp = _P(_tf.mkdtemp())
+    try:
+        (tmp / "nodes").mkdir()
+        A.append_record(tmp / "nodes", kind="seen", keys=["矛盾|边打架"], k=0, now=now)
+        A.append_record(tmp / "nodes", kind="unknown", keys=["矛盾|边打架"], now=now)
+        lines = A.agenda_path(tmp / "nodes").read_text(encoding="utf-8").splitlines()
+        hist2 = A.load_history(tmp / "nodes")
+        cool = A.cooldown_until(tmp / "nodes")
+        ok("★ [议程] 65 账本**只追加**（2 条记录 2 行），冷却读得回来且**不是永久**",
+           len(lines) == 2 and len(hist2.get("矛盾|边打架") or []) == 1
+           and (cool.get("矛盾|边打架") or now) > now,
+           f"{len(lines)} 行｜seen {len(hist2.get('矛盾|边打架') or [])} 次"
+           f"｜冷却到 {cool.get('矛盾|边打架')}")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 def test_evidence() -> None:
@@ -6552,7 +8247,7 @@ def test_impact() -> None:
     ids = sorted(k.placed)[:3]
     before = _sig(k)
     r1 = IM.removal_impact(k, ids)
-    br = IM.blast_radius(k, "D0")
+    br = IM.blast_radius(k, k.root.did)
     after = _sig(k)
 
     # ㊾ 只读
@@ -8943,7 +10638,7 @@ def test_multilevel() -> None:
         partition_of,
         quotient_spec,
     )
-    from ldv.run_checks import batch_kernel
+    from ldv.run_checks import batch_kernel, maintenance_kernel
 
     # ── ① 合成对照 ────────────────────────────────────────────────────────
     ctl = known_answer_controls()
@@ -8993,7 +10688,11 @@ def test_multilevel() -> None:
        f"{len(spec.relation)} → {len(spec1.relation)}")
 
     # ── ② 真折叠 ──────────────────────────────────────────────────────────
-    kernel, plugin, _qs, _mk = batch_kernel(which, nodes, edges)
+    # ★ 必须与 `run_checks` / `recognize` 问**同一棵树**：声明的 `universe`
+    #   是按**维护路径**编的号（旧 counter 下批建前 8 个编号恰好相同，掩盖了
+    #   这件事；改成内容派生 did 后立刻暴露 —— 同一 payload 在两个父下 id 不同）。
+    kernel = maintenance_kernel(which, nodes, edges)
+    plugin = batch_kernel(which, nodes, edges)[1]
     cover = coverage_of(which, nodes, edges)
     rep = Report(plugin="(L0)", expects=MULTILEVEL_CODES)
     levels = run_multilevel(spec, kernel, cover, plugin, rep)
@@ -10462,12 +12161,13 @@ def test_motivation() -> None:
     else:
         _nodes, _edges, _d = loaded
         k3 = make_keyset_root(_nodes)()
+        _root_did = k3.root.did
         before_later = [x for x in RF.report(k3)["分级"]["可延后"]
-                        if x["方向"] == "D0"]
+                        if x["方向"] == _root_did]
         n_before = len(k3.all_directions())
-        k3.expand(k3.direction("D0"))
+        k3.expand(k3.root)
         after_later = [x for x in RF.report(k3)["分级"]["可延后"]
-                       if x["方向"] == "D0"]
+                       if x["方向"] == _root_did]
         ok("★ [动机] ④ **闭环**：展开 D0 之后，它不再出现在「可延后」",
            len(before_later) == 1 and not after_later,
            f"只建根：{n_before} 个方向｜展开前「可延后」{len(before_later)} 条"
@@ -10488,12 +12188,13 @@ def test_motivation() -> None:
     else:
         _n3, _e3, _d3 = loaded3
         kl = _mkr(_n3)()
+        _root3 = kl.root.did
         before_dirs = len(kl.all_directions())
         p1 = RF.plan(kl, rounds=2)
         after_dirs = len(kl.all_directions())
         ok("★ [动机] ⑥ **建树计划**：惰性内核上一轮轮展开，方向数增长、待展开收敛",
            before_dirs == 1 and after_dirs > before_dirs
-           and p1["轮次"][0]["展开"] == ["D0"],
+           and p1["轮次"][0]["展开"] == [_root3],
            f"方向 {before_dirs} → {after_dirs}｜第1轮展开 {p1['轮次'][0]['展开']}"
            f"｜总展开 {p1['总展开']}｜剩余待展开 {p1['剩余待展开']}")
 
@@ -10671,14 +12372,15 @@ def test_motivation() -> None:
         rep13 = RF.report(k13)
         # 反向对照：真的没试过的方向**必须**还在「待展开」里
         k_root13 = _mk13(_n13)()
+        _kroot_did = k_root13.root.did
         pend_root = {r["方向"] for r in RF.graded(k_root13)["可延后"]
                      if r.get("来源") == "待展开"}
         ok("★ [动机] ⑬ **判空不许报成「待展开」**（以账本为准，不看 `is_expanded`）",
            len(uns13) > 0 and not (pend13 & uns13) and uns13 <= fail13
-           and rep13["待展开数"] == 0 and "D0" in pend_root,
+           and rep13["待展开数"] == 0 and _kroot_did in pend_root,
            f"账本判空 {len(uns13)} 条｜报成待展开 {len(pend13 & uns13)}（必须 0）"
            f"｜报成展开失败 {len(uns13 & fail13)}｜report 待展开数 {rep13['待展开数']}"
-           f"｜反向对照：只建根时 D0 仍待展开={'D0' in pend_root}")
+           f"｜反向对照：只建根时 {_kroot_did} 仍待展开={_kroot_did in pend_root}")
 
     # ⑭ **「没被收录进系统的数据」按类型拆**（2026-10-23，用户定）
     #    整类缺失（该类型**一条都没进**）⇒ 这类问题完全答不了 ⇒ 必须
@@ -10770,7 +12472,12 @@ def test_no_unsourced_strings() -> None:
                     #      §S1 当场抓到 ⇒ 按规矩显式进白名单。
                     "答案横跨",
                     # 2026-10-25：支级跳过后的空结果说明（外部评审 C2）
-                    "满足约束的项")
+                    "满足约束的项",
+                    # 2026-11-02：`need_predicate` 的**判读结论**（`declare.evidence`）。
+                    #   全是固定模板，数字与字段名来自数据；句子本身是代码写的
+                    #   ⇒ 按规矩显式进白名单，新增一句就红一次。
+                    "语料里没有字段", "request.py", "字段有",
+                    "可用：", "不是「字段", "同名谓词", "这份语料不是可写语料")
 
     # ⚠️ **只查值，不查键** —— 键是协议（代码写的字段名：`rank` / `n_members` / `must`…），
     #    值是数据（应来自材料）。第一版连键一起查 ⇒ 报 139 个「无出处」，全是字段名。
@@ -10791,8 +12498,15 @@ def test_no_unsourced_strings() -> None:
         #    不是系统生成的内容 ⇒ 回显合法，把这一趟的 require/forbid 计入材料。
         material |= set(spec.get("require") or ())
         material |= set(spec.get("forbid") or ())
+        # ⚠️ 2026-11-02：`need_predicate` 会把用户的键**拆开回显**
+        #    （`金额>=3000` ⇒ 字段「金额」/ 算子「>=」/ 值「3000」）。
+        #    碎片仍是**用户自己的话**，不是系统生成的内容 ⇒ 按键的碎片放行；
+        #    判据本身不放松：整句凭空生成仍然抓得到（下面那条合成对照钉着）。
+        echo = " ".join([*(spec.get("require") or ()), *(spec.get("forbid") or ())])
         for s in walk_values(app.query(spec)):
             if not s or s in material or s in protocol:
+                continue
+            if len(s) <= 60 and s in echo:
                 continue
             if s.startswith(fixed_prefix):
                 continue
@@ -10952,6 +12666,723 @@ def test_self_corpus() -> None:
         _shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_service_p1() -> None:
+    """★ [P1] 服务壳的**外面那一圈**：契约 / 认证 / 配额 / 租户 / 调度 / 观测（2026-10-29）。
+
+    这一组与 `test_service_shell` 分工：那组判「壳跑得对」（等价 / 隔离 / 排队 / 备份），
+    这组判「**能不能给别人用**」。P1 的出口条件就写在下面，一条对一条：
+
+        401 / 403 / 404 / 429 **四种失败长得不一样**          → ⑳ 61 63
+        建/删租户各一条，删**走回收站**（可恢复）             → ⑳ 64 65 66
+        调度器单实例 **tick 幂等**（同槽两次，账本只加一行）   → ⑳ 70 72 73
+        `/healthz` 与 `/readyz` 分开，缺语料**如实不 ready**   → ⑳ 68 69
+
+    ⚠️ 两条**反向对照**（这组判据本身会不会红）：
+       · 69：把租户根指到空目录 ⇒ `readyz` 必须 **503**（不是 200 敷衍）；
+       · 72：把槽位改成「每次都不一样」（= 不做幂等）⇒ 同槽会 tick **两次**
+         ⇒ 证明 70 判的是**幂等**，不是「反正只跑一次」。
+    ⚠️ 全程在**临时根**里，租户是**现建**的（`POST /tenants/demo`）——
+       不依赖 `_data/` 下任何语料，因此不会因为「外部语料不在」而跳过。
+       喂进去的 3 个节点是本判据自己写的（最小合法 front-matter），不是抄来的。
+    ⚠️ 它**不判**：多实例租约（那是 P3）、任务表落盘、限流与排队合流（`test_service_shell` ⑩–⑫）。
+    """
+    import json as _json
+    import shutil
+    import tempfile
+    import threading
+    import urllib.error
+    import urllib.request
+    from http.server import ThreadingHTTPServer
+
+    import serve
+    import serve_auth as A
+    import serve_sched as S
+    import serve_tenants as T
+
+    def _mk_node(dirp: Path, nid: str, rels=()) -> None:
+        """最小合法节点：`id` + `type`（变键集）+ `relations`（变边）。"""
+        (dirp / f"{nid}.md").write_text(
+            "---\n" f'id: "{nid}"\n' 'type: "测试品类"\n' f'title: "节点 {nid}"\n'
+            'evidence_status: "原始记录"\n' "relations:\n"
+            + "".join(f'  - "{r}"\n' for r in rels) + "---\n\n正文。\n",
+            encoding="utf-8")
+
+    tmp = Path(tempfile.mkdtemp(prefix="ldv-p1-"))
+    root = tmp / "tenants"
+    root.mkdir()
+
+    tok_admin, tok_alice, tok_carol, tok_bob, tok_stale = (A.mint() for _ in range(5))
+    store = A.TokenStore.from_obj({"tokens": [
+        {"name": "admin", "sha256": A.hash_token(tok_admin), "tenant": "*"},
+        {"name": "alice", "sha256": A.hash_token(tok_alice), "tenant": "demo"},
+        # 配额只给 1 —— ⑳ 62 要能在两步内撞到墙
+        {"name": "carol", "sha256": A.hash_token(tok_carol), "tenant": "demo",
+         "quota_per_min": 1},
+        {"name": "bob", "sha256": A.hash_token(tok_bob), "tenant": "other"},
+        # ⑳ 85：过期的那条（2020 就到期了）
+        {"name": "stale", "sha256": A.hash_token(tok_stale), "tenant": "demo",
+         "expires_at": "2020-01-01"},
+    ]})
+
+    saved = (serve.Handler.root, serve.Handler.store, serve.Handler.quota,
+             serve.Handler.quiet, serve.Handler.scheduler)
+    serve.Handler.root = root
+    serve.Handler.store = store
+    serve.Handler.quota = A.Quota()
+    serve.Handler.quiet = True                 # 别把每请求那行 JSON 打进测试输出
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), serve.Handler)
+    base = f"http://127.0.0.1:{srv.server_address[1]}"
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+
+    seen_headers: list[dict] = []
+
+    def req(method: str, path: str, tok: str | None = None,
+            headers: dict | None = None) -> tuple[int, str, dict]:
+        r = urllib.request.Request(base + path, method=method)
+        if tok:
+            r.add_header("Authorization", f"Bearer {tok}")
+        for k, v in (headers or {}).items():
+            r.add_header(k, v)
+        try:
+            with urllib.request.urlopen(r, timeout=60) as resp:
+                code, body, hd = resp.status, resp.read().decode("utf-8"), dict(resp.headers)
+        except urllib.error.HTTPError as e:
+            code, body, hd = e.code, e.read().decode("utf-8"), dict(e.headers)
+        hd = {k.lower(): v for k, v in hd.items()}
+        seen_headers.append(hd)
+        return code, body, hd
+
+    try:
+        # ── 建租户（⑳ 64）：201 + 目录形状 + **空库直接能跑** ─────────────
+        st_new, body_new, _ = req("POST", "/tenants/demo", tok_admin)
+        ok("★ [P1] 64 建租户：POST /tenants/demo ⇒ 201，且 nodes/ 与 view_spec.json 都在",
+           st_new == 201 and (root / "demo" / "nodes").is_dir()
+           and (root / "demo" / "view_spec.json").is_file(),
+           f"状态 {st_new}｜{body_new[:80]}")
+        st_empty, body_empty, _ = req("GET", "/demo/run?plugin=keyset", tok_admin)
+        ok("★ [P1] 64 空库**直接能跑**：刚建的租户 GET /run ⇒ 200 且正文是「装进 0 项」",
+           st_empty == 200 and "装进 0 项" in body_empty,
+           f"状态 {st_empty}｜首行 {body_empty.splitlines()[0][:40] if body_empty else '空'}")
+
+        # 喂 3 个自己写的节点（不依赖 `_data/`）
+        for nid, rels in (("n1", ("n2", "n3")), ("n2", ("n3",)), ("n3", ())):
+            _mk_node(root / "demo" / "nodes", nid, rels)
+
+        st_o, _, _ = req("POST", "/tenants/other", tok_admin)
+        ok("★ [P1] 64 建第二个租户也成（后面 ⑳ 61 要用它证「存在但不属于你」）",
+           st_o == 201, f"状态 {st_o}")
+
+        # ── 契约（⑳ 58 59）：同请求逐字相同 + 不认识的参数不被静默忽略 ─────
+        a1 = req("GET", "/demo/run?plugin=keyset&only=a", tok_alice)
+        a2 = req("GET", "/demo/run?plugin=keyset&only=a", tok_alice)
+        ok("★ [P1] 58 契约：同一请求两次，正文**逐字相同**（有随机成分就会红）",
+           a1[0] == a2[0] == 200 and a1[1] == a2[1],
+           f"{a1[0]}/{a2[0]}｜{len(a1[1].encode())}B vs {len(a2[1].encode())}B")
+        ok("★ [P1] 58 契约：每个响应都带协议头 ldv-http/1 与 X-Request-Id",
+           all(h.get("x-ldv-protocol") == A.PROTOCOL and h.get("x-request-id")
+               for h in seen_headers if h),
+           f"{sum(1 for h in seen_headers if h.get('x-ldv-protocol'))}/{len(seen_headers)} 个响应有协议头")
+        st_u, body_u, _ = req("GET", "/demo/run?plugin=keyset&bogus=1", tok_alice)
+        ok("★ [P1] 59 契约：不认识的查询参数 ⇒ 400（静默忽略会让拼写错拿到默认答案）",
+           st_u == 400 and "bogus" in body_u, f"状态 {st_u}｜{body_u[:60]}")
+
+        # ── 认证（⑳ 60）：无 token / 错 token 都是 401 ───────────────────
+        st_no, _, h_no = req("GET", "/demo/run")
+        st_bad, _, h_bad = req("GET", "/demo/run", tok="not-a-real-token")
+        ok("★ [P1] 60 认证：无 token ⇒ 401，且带 WWW-Authenticate（告诉调用方怎么带）",
+           st_no == 401 and "www-authenticate" in h_no, f"状态 {st_no}")
+        ok("★ [P1] 60 认证：错 token ⇒ 401（与「无租户」的 404 分开）",
+           st_bad == 401, f"状态 {st_bad}")
+
+        # ── 授权（⑳ 61）：不是你的 ⇒ 403，且**不泄露存在性** ─────────────
+        st_f1, _, _ = req("GET", "/other/run?plugin=keyset", tok_alice)   # 存在但属于 bob
+        st_f2, _, _ = req("GET", "/no-such-tenant/run?plugin=keyset", tok_alice)
+        ok("★ [P1] 61 授权：「存在但不是你的」与「根本不存在」对 alice **都是 403**",
+           st_f1 == 403 and st_f2 == 403, f"存在 {st_f1}｜不存在 {st_f2}")
+        st_admin404, _, _ = req("GET", "/no-such-tenant/run?plugin=keyset", tok_admin)
+        ok("★ [P1] 61 对照：同一个不存在的租户，管理员得到的是 404（不是 403）",
+           st_admin404 == 404, f"状态 {st_admin404}")
+
+        # ── 配额（⑳ 62）：429 + Retry-After，且**不消耗任务表** ──────────
+        st_q1, _, _ = req("POST", "/demo/run?plugin=keyset", tok_carol)    # 配额 1 ⇒ 放行
+        n_before = len(serve.TABLE.tasks)
+        st_q2, body_q2, h_q2 = req("POST", "/demo/run?plugin=keyset", tok_carol)  # ⇒ 429
+        n_after = len(serve.TABLE.tasks)
+        ok("★ [P1] 62 配额：第 2 次 ⇒ 429，且带 Retry-After（可重试 ≠ 写错了）",
+           st_q1 == 202 and st_q2 == 429 and "retry-after" in h_q2,
+           f"{st_q1} → {st_q2}｜Retry-After={h_q2.get('retry-after')}")
+        ok("★ [P1] 62 配额拒绝**不消耗任务表**：429 前后表长不变（否则重试会把队列填满）",
+           n_after == n_before, f"任务表 {n_before} → {n_after}")
+
+        # ── 四种失败**长得不一样**（⑳ 63）────────────────────────────────
+        kinds = {
+            401: h_no.get("x-ldv-error"),
+            403: req("GET", "/other/run", tok_alice)[2].get("x-ldv-error"),
+            404: req("GET", "/no-such-tenant/run", tok_admin)[2].get("x-ldv-error"),
+            429: (req("POST", "/demo/run?plugin=keyset", tok_carol)[2].get("x-ldv-error")),
+        }
+        ok("★ [P1] 63 四种失败：401/403/404/429 的 `X-Ldv-Error` **两两不同**",
+           len(set(kinds.values())) == 4 and all(kinds.values()),
+           f"{kinds}")
+
+        # ── 租户删除（⑳ 66）：进回收站，且**能恢复** ────────────────────
+        st_del, body_del, _ = req("DELETE", "/tenants/other", tok_admin)
+        trashed = T.trash_entries(root, "other")
+        ok("★ [P1] 66 删租户：200，原目录**不在**，回收站里有一份（不是 rm）",
+           st_del == 200 and not (root / "other").exists() and len(trashed) == 1,
+           f"状态 {st_del}｜回收站 {[p.name for p in trashed]}")
+        if trashed:
+            shutil.move(str(trashed[0]), str(root / "other"))     # 拷回来 = 恢复
+        st_r1, _, _ = req("GET", "/other/run?plugin=keyset", tok_admin)
+        ok("★ [P1] 66 恢复：把回收站那份挪回来 ⇒ 又能跑（200），删是可逆的",
+           st_r1 == 200, f"状态 {st_r1}")
+
+        # ── 建重名不许覆盖（⑳ 65）────────────────────────────────────────
+        st_dup, _, _ = req("POST", "/tenants/demo", tok_admin)
+        n_nodes = len(list((root / "demo" / "nodes").glob("*.md")))
+        ok("★ [P1] 65 建重名 ⇒ 409，且原有节点**一个没少**（覆盖等于静默删数据）",
+           st_dup == 409 and n_nodes == 3, f"状态 {st_dup}｜节点 {n_nodes}")
+
+        # ── 观测（⑳ 67 68 74）：请求 id 沿用 + healthz/readyz 分开 ───────
+        st_id, _, h_id = req("GET", "/healthz", headers={"X-Request-Id": "trace-42"})
+        ok("★ [P1] 67 观测：客户端给的 X-Request-Id **被沿用**（跨服务串链要用它）",
+           st_id == 200 and h_id.get("x-request-id") == "trace-42",
+           f"回显 {h_id.get('x-request-id')!r}")
+        st_h, body_h, _ = req("GET", "/healthz")
+        st_r, body_r, _ = req("GET", "/readyz")
+        ok("★ [P1] 68 /healthz 与 /readyz **分开**：活着 200，且此刻真有可服务租户 ⇒ 200",
+           st_h == 200 and st_r == 200 and _json.loads(body_r)["ready"] is True,
+           f"healthz {st_h}｜readyz {st_r}｜{_json.loads(body_r)['检查']}")
+        st_deny = req("GET", "/metrics", tok_alice)[0]
+        ok("★ [P1] 74 /metrics 只给管理员（alice ⇒ 403），管理员 200",
+           st_deny == 403 and req("GET", "/metrics", tok_admin)[0] == 200,
+           f"alice {st_deny}")
+
+        # ── ⑳ 74b 两个指标出口：文本（标准）与 JSON（判据读）──────────────
+        st_mt, body_mt, hd_mt = req("GET", "/metrics", tok_admin)
+        st_mj, body_mj, _ = req("GET", "/metrics.json", tok_admin)
+        try:
+            _json.loads(body_mj)
+            json_ok = True
+        except ValueError:
+            json_ok = False
+        ok("★ [P1] 74b /metrics 是 **Prometheus 文本**（# HELP / _total），"
+           "/metrics.json 仍是 JSON（判据与端到端读它）",
+           st_mt == 200 and body_mt.startswith("# HELP ldv_shell_events_total")
+           and "text/plain" in (hd_mt.get("content-type") or "")
+           and st_mj == 200 and json_ok and "计数" in body_mj,
+           f"文本 {st_mt}｜json {st_mj}（可解析={json_ok}）")
+
+        # ── ⑳ 85–87 token 生命周期（过期 / 写坏 / 双 key 重叠）───────────
+        #   ⚠️ 这三条**不走 HTTP**：它们判的是 `TokenStore` 的语义，
+        #      而 401 的正文差别已经在 60/61 里经 HTTP 验过（过期另有 85 的一半）。
+        import hashlib as _hl
+        alive = "ldv_t_alive_" + "a" * 20
+        dead = "ldv_t_dead_" + "b" * 20
+        new1 = "ldv_t_new_" + "c" * 20
+        new2 = "ldv_t_new2_" + "d" * 20
+
+        def _entry(name, tok, exp=None):
+            e = {"name": name, "sha256": _hl.sha256(tok.encode()).hexdigest(),
+                 "tenant": "demo"}
+            if exp is not None:
+                e["expires_at"] = exp
+            return e
+
+        # ⚠️ 这个 `req` 不接 params（本轮只加了 headers），非 ASCII 得自己转义
+        from urllib.parse import quote as _q
+        st_x, body_x, _ = req("GET", f"/demo/ask?require={_q('type=论文')}",
+                              tok=tok_stale)
+        ok("★ [P1] 85 过期 token 走 HTTP ⇒ 401 且**正文说「已过期」**"
+           "（与「没带 / 认不出」共用状态码、不同的话）",
+           st_x == 401 and "过期" in body_x, f"{st_x}｜{body_x[:40]}")
+
+        store2 = A.TokenStore.from_obj({"tokens": [
+            _entry("alive", alive),
+            _entry("dead", dead, "2020-01-01"),
+        ]}, now=lambda: 1_800_000_000.0)     # 2027 年，晚于 2020-01-01
+        p_ok, why_ok = store2.authenticate_detail(f"Bearer {alive}")
+        p_dead, why_dead = store2.authenticate_detail(f"Bearer {dead}")
+        p_none, why_none = store2.authenticate_detail(None)
+        ok("★ [P1] 85 过期与「没带 / 认不出」分得开：过期 ⇒ reason=expired，"
+           "同一次里未过期的仍 ok",
+           p_ok is not None and why_ok == "ok" and p_dead is None
+           and why_dead == "expired" and why_none == "missing",
+           f"{why_ok}/{why_dead}/{why_none}")
+
+        bad_format = None
+        try:
+            A.TokenStore.from_obj({"tokens": [_entry("x", alive, "明天")]})
+        except ValueError as exc:
+            bad_format = str(exc)
+        ok("★ [P1] 86 `expires_at` 写坏 ⇒ **当场抛**（不静默当「不过期」："
+           "写错的时间与没写在运行时一模一样）",
+           bad_format is not None and "ISO" in bad_format,
+           f"{str(bad_format)[:60]}")
+
+        store3 = A.TokenStore.from_obj({"tokens": [
+            _entry("rot", new1, "2099-01-01"), _entry("rot", new2, "2099-01-01"),
+        ]}, now=lambda: 1_800_000_000.0)
+        a1p = store3.authenticate_detail(f"Bearer {new1}")[0]
+        a2p = store3.authenticate_detail(f"Bearer {new2}")[0]
+        ok("★ [P1] 87 双 key 重叠：同名两条都未过期 ⇒ **新旧 token 同时有效**"
+           "（轮换才可能不中断）",
+           a1p is not None and a2p is not None and a1p.name == a2p.name == "rot",
+           f"{a1p and a1p.name}/{a2p and a2p.name}")
+
+        # ── ⑳ 69 反向对照：语料没了 ⇒ readyz 必须 **503**（不许 200 敷衍）──
+        hollow = tmp / "hollow"
+        hollow.mkdir()
+        serve.Handler.root = hollow
+        st_hollow, body_hollow, _ = req("GET", "/readyz")
+        serve.Handler.root = root
+        ok("★ [P1] 69 反向对照：租户根没有可服务租户 ⇒ /readyz **503** 且逐项说明",
+           st_hollow == 503 and _json.loads(body_hollow)["ready"] is False,
+           f"状态 {st_hollow}｜{_json.loads(body_hollow)['检查']}")
+
+        # ── 调度器（⑳ 70 71 72 73）：同槽幂等，跨槽才再走 ────────────────
+        sroot = tmp / "sched"
+        sroot.mkdir()
+        T.create(sroot, "s1")
+        _mk_node(sroot / "s1" / "nodes", "x1", ("x2",))
+        _mk_node(sroot / "s1" / "nodes", "x2")
+        # 「列得出、但不完整」：有 view_spec.json、没有 nodes/ ⇒ 必须被跳过
+        (sroot / "half").mkdir()
+        (sroot / "half" / "view_spec.json").write_text("{}", encoding="utf-8")
+
+        calls: list[str] = []
+
+        def fake_tick(name, nodes_dir, now):
+            calls.append(name)
+            return {"k": 0}
+
+        sch = S.Scheduler(sroot, interval_s=60, tick_fn=fake_tick,
+                          now=lambda: 1000.0)
+        first = sch.run_once()
+        again = sch.run_once()
+        ok("★ [P1] 70 调度器幂等：同一槽调两次 ⇒ tick 只发生**一次**（第二次记 already）",
+           first["ticked"] == ["s1"] and again["ticked"] == [] and calls == ["s1"],
+           f"第一次 {first['ticked']}｜第二次 {again['ticked']}｜实调 {calls}")
+        ok("★ [P1] 71 调度器跳过不完整租户：`half`（有 view_spec 无 nodes/）进 skipped，不 tick",
+           "half" in first["skipped"] and "half" not in calls,
+           f"skipped={first['skipped']}｜calls={calls}")
+
+        # ⑳ 73 落盘：换一个**新实例**（= 模拟重启）在同一槽里跑 ⇒ 仍然 already
+        sch2 = S.Scheduler(sroot, interval_s=60, tick_fn=fake_tick,
+                           now=lambda: 1000.0)
+        restart = sch2.run_once()
+        ok("★ [P1] 73 槽位**落盘**：新实例（= 重启）在同一槽 ⇒ already，不重复 tick",
+           restart["ticked"] == [] and calls == ["s1"],
+           f"重启后 ticked={restart['ticked']}｜calls={calls}")
+
+        nxt = sch2.run_once(1060.0)          # 下一槽
+        ok("★ [P1] 70 跨槽：时间推进一个间隔 ⇒ 允许再 tick 一次（幂等不等于「只跑一次」）",
+           nxt["ticked"] == ["s1"] and calls == ["s1", "s1"],
+           f"新槽 ticked={nxt['ticked']}｜calls={calls}")
+
+        # ⑳ 72 反向对照：槽位「每次都变」= 不做幂等 ⇒ 同一时刻会 tick 两次
+        orig_slot = S.Scheduler.slot_of
+        counter = iter(range(10_000))
+        try:
+            S.Scheduler.slot_of = lambda self, now: next(counter)  # noqa: ARG005
+            calls.clear()
+            sch3 = S.Scheduler(sroot, interval_s=60, tick_fn=fake_tick,
+                               now=lambda: 1000.0)
+            sch3.run_once()
+            sch3.run_once()
+        finally:
+            S.Scheduler.slot_of = orig_slot
+        ok("★ [P1] 72 反向对照：槽位每次都变（= 不幂等）⇒ 同一时刻 tick **两次**（判据会红）",
+           calls == ["s1", "s1"], f"实调 {calls}")
+    finally:
+        (serve.Handler.root, serve.Handler.store, serve.Handler.quota,
+         serve.Handler.quiet, serve.Handler.scheduler) = saved
+        srv.shutdown()
+        srv.server_close()
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_service_agent_http() -> None:
+    """★ [agent] 壳上**真正答题的那三个端点**（`/ask` `/drill` `/agenda`，2026-10-29）。
+
+    为什么单列一组：P1 之前壳只会在租户上「跑一遍流水线」并把追踪文本吐出来 ——
+    那是**诊断**，不是**答案**。真正回答问题的 `entry.App` 在**另一个进程**里，
+    而且它自己写着「只绑 127.0.0.1，无鉴权，不是对外服务」⇒ 一个 agent 走不通全程：
+    **有鉴权的那半不会答题，会答题的那半没有鉴权**。
+
+    这一组守四件事：
+
+      · 空库 / 结构外 / 参数错 —— **三种「不是成功」要分得开**；
+      · 下钻是「这一支有用」的唯一真实信号，且**只改次序不改集合**；
+      · agent **不能判错**（`verdict=wrong` ⇒ 403，只能人来给）；
+      · **坏语料不许拖死连接**：以前 `CorpusError` 从 handler 穿出去 ⇒ 客户端拿到的是
+        `RemoteDisconnected`（这个函数的 `_req` 把它记成 **0**），日志里只有 traceback。
+        ⇒ 现在必须 500 + 说清哪一处，且 `/readyz` 跟着变 503。
+
+    ⚠️ 端到端那版（`e2e_agent.py`，真进程 + 真 HTTP + 重启）**不在这里**：
+       它要 spawn 进程、要等调度器、要重启，跑一趟 8 秒，属于**证据**不是**判据**。
+       两者互不替代：这里判「行为」，那里判「一条流程走得完」。
+    """
+    import json as _json
+    import shutil
+    import tempfile
+    import threading
+    import urllib.error
+    import urllib.request
+    from http.server import ThreadingHTTPServer
+
+    import serve
+    import serve_auth as A
+    import serve_tenants as T
+
+    def _mk(dirp: Path, nid: str, typ: str, rels=()) -> None:
+        lines = ["---", f'id: "{nid}"', f'type: "{typ}"', f'title: "N {nid}"',
+                 'evidence_status: "原始记录"']
+        lines += (["relations:"] + [f'  - "{r}"' for r in rels]) if rels \
+            else ["relations: []"]
+        lines += ["---", "", "正文。" + "\n"]
+        (dirp / f"{nid}.md").write_text("\n".join(lines), encoding="utf-8")
+
+    tmp = Path(tempfile.mkdtemp(prefix="ldv-agent-"))
+    # ⚠️ 路径里有 `_data`：`entry.App` 只在这个条件下写使用记录，否则「下钻→记录」
+    #    这一环**静默不生效**，而判据会把「没记」当成「不该记」。
+    root = tmp / "_data" / "tenants"
+    root.mkdir(parents=True)
+    tok = A.mint()
+    saved = (serve.Handler.root, serve.Handler.store, serve.Handler.quota,
+             serve.Handler.quiet, serve.FAULTS)
+    serve.Handler.root = root
+    serve.Handler.store = A.TokenStore.from_obj(
+        {"tokens": [{"name": "t", "sha256": A.hash_token(tok), "tenant": "demo"}]})
+    serve.Handler.quota = A.Quota()
+    serve.Handler.quiet = True
+    serve.FAULTS = serve.LoadFaults()          # 干净的一张故障表
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), serve.Handler)
+    base = f"http://127.0.0.1:{srv.server_address[1]}"
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+
+    def _req(method: str, path: str, params: dict | None = None):
+        url = base + path
+        if params:
+            from urllib.parse import urlencode
+            url += "?" + urlencode(params)
+        r = urllib.request.Request(url, method=method)
+        r.add_header("Authorization", f"Bearer {tok}")
+        try:
+            with urllib.request.urlopen(r, timeout=120) as resp:
+                return resp.status, resp.read().decode("utf-8"), dict(resp.headers)
+        except urllib.error.HTTPError as e:
+            return e.code, e.read().decode("utf-8"), dict(e.headers)
+        except Exception as exc:      # noqa: BLE001 - 断连要能被**看见**（记 0，不是 500）
+            return 0, f"{type(exc).__name__}: {exc}", {}
+
+    try:
+        T.create(root, "demo")
+        # ⑳ 75 空库
+        st0, b0, _ = _req("GET", "/demo/ask", {"require": "type=论文"})
+        d0 = _json.loads(b0) if st0 == 200 else {}
+        ok("★ [agent] 75 空库上问 ⇒ 200 + empty_corpus（不是「你键写错了」）",
+           st0 == 200 and d0.get("empty_corpus") is True and "空的" in str(d0.get("error")),
+           f"{st0}｜{str(d0.get('error'))[:36]}")
+
+        nd = root / "demo" / "nodes"
+        for nid, typ, rels in (("p1", "论文", ("p2",)), ("p2", "论文", ()),
+                               ("p3", "论文", ()), ("c1", "代码", ("c2",)),
+                               ("c2", "代码", ()), ("c3", "代码", ())):
+            _mk(nd, nid, typ, rels)
+
+        # ⑳ 76 喂料后能问，且每支有 did（客户端靠它下钻）
+        st1, b1, hd1 = _req("GET", "/demo/ask", {"require": "type=论文"})
+        d1 = _json.loads(b1) if st1 == 200 else {}
+        ok("★ [agent] 76 喂料后能问：200，n_answer=3，每一支都有 did，且带协议头",
+           st1 == 200 and d1.get("n_answer") == 3 and d1.get("nodes")
+           and all("did" in x for x in d1["nodes"])
+           and {k.lower(): v for k, v in hd1.items()}.get("x-ldv-protocol") == "ldv-http/1",
+           f"{st1}｜n_answer={d1.get('n_answer')}｜支={[x.get('did') for x in d1.get('nodes') or []]}")
+
+        # ⑳ 77 结构外 vs 参数错
+        st2, b2, _ = _req("GET", "/demo/ask", {"require": "type=会议"})
+        d2 = _json.loads(b2) if st2 == 200 else {}
+        ok("★ [agent] 77 结构里没有的键 ⇒ 200 + out_of_structure（不是 0 项了事）",
+           st2 == 200 and d2.get("out_of_structure") is True, f"{st2}")
+        st3, _, h3 = _req("GET", "/demo/ask", {"require": "type=论文", "bogus": "1"})
+        ok("★ [agent] 77 不认识的参数 ⇒ 400 + bad-request",
+           st3 == 400 and {k.lower(): v for k, v in h3.items()}.get("x-ldv-error")
+           == "bad-request", f"{st3}")
+
+        # ⑳ 78 分叉：问跨族的键 ⇒ 真的有多支
+        st4, b4, _ = _req("GET", "/demo/ask", {"require": "evidence_status=原始记录"})
+        d4 = _json.loads(b4) if st4 == 200 else {}
+        br = d4.get("nodes") or []
+        ok("★ [agent] 78 问全库 ⇒ 真的分叉（6 项 / ≥2 支），才谈得上「先看哪一支」",
+           st4 == 200 and d4.get("n_answer") == 6 and len(br) >= 2,
+           f"{st4}｜支={[(x.get('did'), x.get('n_answer')) for x in br]}")
+
+        # ⑳ 79 下钻：记下来了，且只改次序不改集合
+        target = br[-1]["did"] if br else ""
+        st5, b5, _ = _req("POST", "/demo/drill", {"did": target})
+        d5 = _json.loads(b5) if st5 == 200 else {}
+        usage = list((root / "demo" / "usage").rglob("*")) \
+            if (root / "demo" / "usage").is_dir() else []
+        ok("★ [agent] 79 下钻：200 + recorded=True，且 usage/ 下真的落了文件",
+           st5 == 200 and d5.get("recorded") is True and bool(usage),
+           f"{st5}｜recorded={d5.get('recorded')}｜usage {len(usage)} 个文件")
+        _s6, b6, _ = _req("GET", "/demo/ask", {"require": "evidence_status=原始记录"})
+        d6 = _json.loads(b6) if _s6 == 200 else {}
+        same = sorted(d4.get("answer_ids") or []) == sorted(d6.get("answer_ids") or [])
+        first = ((d6.get("nodes") or [{}])[0].get("did"))
+        ok("★ [agent] 79 下钻**只改次序**：集合不变、ordered_by=usage、首支=刚钻的那支",
+           same and d6.get("ordered_by") == "usage" and first == target,
+           f"集合不变={same}｜ordered_by={d6.get('ordered_by')}｜首支 {first} vs {target}")
+
+        # ⑳ 80 agent 不能判错
+        st7, _, h7 = _req("POST", "/demo/drill", {"did": target, "verdict": "wrong"})
+        ok("★ [agent] 80 agent 不能判错：verdict=wrong ⇒ 403（判错只能人来给）",
+           st7 == 403 and {k.lower(): v for k, v in h7.items()}.get("x-ldv-error")
+           == "forbidden", f"{st7}")
+
+        # ⑳ 81 议程
+        st8, b8, _ = _req("GET", "/demo/agenda", {"k": "0"})
+        d8 = _json.loads(b8) if st8 == 200 else {}
+        ok("★ [agent] 81 问议程：200，且 {到点, 未到, 阈值} 都在（答的是「轮到谁」）",
+           st8 == 200 and {"到点", "未到", "阈值"} <= set(d8), f"{st8}｜{sorted(d8)[:5]}")
+
+        # ⑳ 82 坏语料：**不许拖死连接**（返回码 0 = 连接被断，正是要防的那种）
+        (nd / "dup.md").write_text(
+            "\n".join(["---", 'id: "p1"', 'type: "论文"', "---", "", "x", ""]),
+            encoding="utf-8")
+        st9, b9, _ = _req("GET", "/demo/run", {"plugin": "keyset"})
+        ok("★ [agent] 82 坏语料：/run **500 + 说清是「重复的 id」**（以前是断连 ⇒ 返回 0）",
+           st9 == 500 and "重复的 id" in b9, f"返回码 {st9}｜{b9[:70]}")
+        st10, b10, _ = _req("GET", "/demo/ask", {"require": "type=论文"})
+        ok("★ [agent] 82 坏语料：/ask 同样 500（不是断连），报文指明原因",
+           st10 == 500 and "重复的 id" in b10, f"返回码 {st10}｜{b10[:70]}")
+
+        # ⑳ 83 readyz 不许说谎：失败之后必须 503 并指名
+        st11, b11, _ = _req("GET", "/readyz")
+        d11 = _json.loads(b11) if st11 in (200, 503) else {}
+        ok("★ [agent] 83 坏语料之后 /readyz ⇒ **503** 且列出是哪个租户（不是 200 敷衍）",
+           st11 == 503 and "demo" in (d11.get("已知装载失败") or {}),
+           f"{st11}｜已知装载失败 {list(d11.get('已知装载失败') or {})}")
+
+        # ⑳ 84 修好之后自己回来（不用重启、不用手动清状态）
+        (nd / "dup.md").unlink()
+        st12, _, _ = _req("GET", "/demo/run", {"plugin": "keyset"})
+        st13, _, _ = _req("GET", "/readyz")
+        ok("★ [agent] 84 修好之后自己回到 200 / ready（不用重启，也不用手动清故障表）",
+           st12 == 200 and st13 == 200, f"run {st12}｜readyz {st13}")
+    finally:
+        (serve.Handler.root, serve.Handler.store, serve.Handler.quota,
+         serve.Handler.quiet, serve.FAULTS) = saved
+        srv.shutdown()
+        srv.server_close()
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_clock() -> None:
+    """★ 内部时钟（`ldv/core/clock.py`）+ 时间推的 k（2026-10-29）。
+
+    这一组要防的**不是**「时钟会不会走」——那是 `datetime` 的事；
+    要防的是**接线接错**：k 从时间推之后，`到点 / 未到` 的**集合**有没有被悄悄改掉。
+    所以最后一条是**反向对照**：同样的 k，两条路（人手给 K / 时钟推）必须逐字相同；
+    只有一个来源不同时，才允许它们不同。
+    """
+    import shutil
+    from datetime import datetime, timedelta
+
+    from ldv.checks._fixtures import load, make_keyset_root
+    from ldv.core import agenda as AG
+    from ldv.core import clock as CLK
+
+    loaded = load()
+    if loaded is None:
+        PASS.append("★ [时钟]（**跳过**：语料读不到）")
+        return
+    nodes, _e, _d = loaded
+    kern = make_keyset_root(nodes)()
+    base = datetime(2026, 10, 29, 9, 0, 0)
+    tmp = Path(tempfile.mkdtemp(prefix="ldv-clk-"))
+    store = tmp / "nodes"
+    store.mkdir(parents=True, exist_ok=True)
+    try:
+        # ㊾ 冻结 ⇒ now() 恒定（不随时间走）
+        with CLK.frozen(base):
+            a, b = CLK.now(), CLK.now()
+        ok("★ [时钟] ㊾ 冻结后 now() 恒定（同一时刻取两次相等）",
+           a == b == base, f"{a} vs {b}")
+
+        # ㊿ 年龄口径：前进 1 天 ⇒ age_days 正好 +1
+        d0 = CLK.age_days(base, base)
+        d1 = CLK.age_days(base, base + timedelta(days=1))
+        ok("★ [时钟] ㊿ age_days 以天为单位且可加（+1 天 ⇒ +1.0）",
+           abs(d1 - d0 - 1.0) < 1e-9, f"{d0} → {d1}")
+
+        # 51 没有基线 ⇒ k=0（不许假装闲过）
+        ok("★ [时钟] 51 账本没有 seen ⇒ k=0（没有基线就不假装闲过）",
+           AG.idle_rounds(store, now=base) == 0,
+           f"k={AG.idle_rounds(store, now=base)}")
+
+        # 埋基线后：30 分钟 ⇒ k=1，90 分钟 ⇒ k=3
+        AG.append_record(store, kind="seen", keys=["__x__"], now=base)
+        k30 = AG.idle_rounds(store, now=base + timedelta(minutes=30))
+        k90 = AG.idle_rounds(store, now=base + timedelta(minutes=90))
+        ok("★ [时钟] 52 由时间推 k：30 分钟 ⇒ 1，90 分钟 ⇒ 3",
+           (k30, k90) == (1, 3), f"k30={k30} k90={k90}")
+
+        # 53 上限：快进 10 天也只到 IDLE_CAP（门槛不许无限降）
+        kbig = AG.idle_rounds(store, now=base + timedelta(days=10))
+        # ⚠️ 断言名**不用 f-string**：静态扫描把它记成「动态标签」，
+        #    而「动态标签数」是冻结的（保证 ③）—— 多一个就红。
+        ok("★ [时钟] 53 上限生效：快进 10 天 ⇒ k 顶到 IDLE_CAP（不无限降门槛）",
+           kbig == AG.IDLE_CAP, f"k={kbig} cap={AG.IDLE_CAP}")
+
+        # 54 时钟回拨 ⇒ k=0（不推成负数、也不假装闲）
+        kback = AG.idle_rounds(store, now=base - timedelta(days=1))
+        ok("★ [时钟] 54 时钟回拨 ⇒ k=0（不推负、不假装闲）",
+           kback == 0, f"k={kback}")
+
+        # 55 tick 会把「摆出来的」记进账本，且 ts 用的是时钟那一刻
+        n_before = len(AG.agenda_path(store).read_text(encoding="utf-8").splitlines())
+        with CLK.frozen(base + timedelta(minutes=30)):
+            out = AG.tick(kern, store)
+        lines = AG.agenda_path(store).read_text(encoding="utf-8").splitlines()
+        last = json.loads(lines[-1]) if len(lines) > n_before else {}
+        ok("★ [时钟] 55 tick 记 `seen`：账本 +1 行，ts = 时钟那一刻，k 落在记录里",
+           len(lines) > n_before and last.get("kind") == "seen"
+           and last.get("ts") == (base + timedelta(minutes=30)).isoformat(timespec="seconds")
+           and last.get("k") == 1,
+           f"末行 {last}")
+
+        # 56 ★ 反向对照：同一 k，两条路（人手给 K / 时钟推）⇒ 集合逐字相同
+        # ⚠️ 账本落在 `nodes_dir.parent` ⇒ 两条对照必须**各自的父目录**，
+        #    否则会共用同一个 `agenda.jsonl`（第一版就是这么红的：k 被前一条 tick 抬高了）
+        store2 = tmp / "b" / "nodes"
+        store2.mkdir(parents=True, exist_ok=True)
+        AG.append_record(store2, kind="seen", keys=["__x__"], now=base)
+        with CLK.frozen(base + timedelta(minutes=90)):
+            via_clock = AG.tick(kern, store2, record=False)
+        via_hand = AG.agenda(kern, k=3)
+        sig = lambda o: ([r["键"] for r in o["到点"]], [r["键"] for r in o["未到"]],
+                         o["阈值"])
+        ok("★ [时钟] 56 反向对照：k=3 由时钟推 与 由人手给，到点/未到/阈值 逐字相同",
+           sig(via_clock) == sig(via_hand), f"{sig(via_clock)} vs {sig(via_hand)}")
+
+        # 57 reset 之后回到系统时钟（不是还冻着）
+        CLK.reset()
+        gap = abs((CLK.now() - datetime.now()).total_seconds())
+        ok("★ [时钟] 57 reset 后回到系统时钟（与 datetime.now 差 < 5 秒）",
+           gap < 5, f"差 {gap:.1f}s")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_clock_takeover() -> None:
+    """★ 时间压缩的前提：判定路径上的「现在」只有一个来源（2026-11-02）。
+
+    为什么单独一组：`test_clock` 测的是「时钟自己会走、能推 k」；
+    这一组测的是**别的模块有没有绕过时钟**。绕过的后果不是「偏一点」：
+
+        写入用真实时间、读取用虚拟时间 ⇒ 年龄为**负** ⇒ `0.5 ** (负/30) > 1`
+        ⇒ 权重**反向增长**，曲线是炸的不是平的，而且**不会报错**。
+
+    ★ 最后一条是**反向对照**：接管路径的结果必须与「显式传 at / now」逐字相同 ——
+      否则「接管」就成了第二条真值路径（本仓库最忌的那种）。
+    """
+    import ast
+    import shutil
+    import tempfile
+    from datetime import datetime, timedelta
+
+    from ldv.core import clock as CLK
+    from ldv.tools import usage_store as US
+
+    tmp = Path(tempfile.mkdtemp(prefix="ldv-clk2-"))
+    t0 = datetime(2026, 1, 1, 9, 0, 0)
+    try:
+        # 58 写入的 `at` 来自冻结时钟（原来 4 处里的第 1 处）
+        d1 = tmp / "a"
+        with CLK.frozen(t0):
+            US.append(d1, did="D1", outcome=1.0, propensity=1.0, qfp="q58")
+        at58 = next(l[4:] for l in next((d1 / "usage").glob("*.md"))
+                    .read_text(encoding="utf-8").splitlines() if l.startswith("at: "))
+        ok("★ [时钟接管] 58 写入的 `at` 取自冻结时钟（不是 wall clock）",
+           at58 == t0.isoformat(timespec="microseconds"), f"at={at58}")
+
+        # 59 读数也跟冻结时钟：30 天 = 正好一个半衰期 ⇒ 0.5
+        with CLK.frozen(t0 + timedelta(days=30)):
+            aged59 = US.aged_tendency(d1)
+        ok("★ [时钟接管] 59 读数跟冻结时钟走：30 天后 aged_tendency = 0.5",
+           abs(aged59.get("D1", -1.0) - 0.5) < 1e-9, f"{aged59}")
+
+        # 60 `promote` 那一跳（`at` 唯一的来源 —— 原来它**没有**这个参数）
+        d2 = tmp / "b"
+        t1 = datetime(2026, 2, 1, 10, 30, 0)
+        with CLK.frozen(t1):
+            US.stage(d2, qfp="q60", shown=["D2"])
+            US.promote(d2, qfp="q60", did="D2", propensity=1.0)
+        at60 = next(l[4:] for l in next((d2 / "usage").glob("*.md"))
+                    .read_text(encoding="utf-8").splitlines() if l.startswith("at: "))
+        ok("★ [时钟接管] 60 `promote` 的时间可注入（缓冲→正式那一跳不再绕不过去）",
+           at60 == t1.isoformat(timespec="microseconds"), f"at={at60}")
+
+        # 61 负年龄**夹到 0**，不许放大权重（写入晚于「现在」= 时钟回拨）
+        d3 = tmp / "c"
+        future = (t0 + timedelta(days=10)).isoformat(timespec="microseconds")
+        US.append(d3, did="D3", outcome=1.0, propensity=1.0, qfp="q61", at=future)
+        w61 = US.decay_weight(future, now=t0)
+        ok("★ [时钟接管] 61 写入晚于「现在」⇒ 权重夹到 1.0（不许 >1 反向增长）",
+           w61 == 1.0 and US.aged_tendency(d3, now=t0).get("D3") == 1.0,
+           f"w={w61}")
+
+        # 62 默认行为逐字不变：reset 后不传 at ⇒ 仍是系统时钟
+        CLK.reset()
+        d4 = tmp / "d"
+        US.append(d4, did="D4", outcome=1.0, propensity=1.0, qfp="q62")
+        at62 = next(l[4:] for l in next((d4 / "usage").glob("*.md"))
+                    .read_text(encoding="utf-8").splitlines() if l.startswith("at: "))
+        gap = abs((datetime.fromisoformat(at62) - datetime.now()).total_seconds())
+        ok("★ [时钟接管] 62 不冻结时仍走系统时钟（默认行为零变化，差 < 5 秒）",
+           gap < 5, f"差 {gap:.1f}s｜at={at62}")
+
+        # 63 静态：判定路径上不许再有裸 `datetime.now()`
+        #    ⚠️ 白名单只两条，各有理由：
+        #       clock.py   —— 默认源本身（它就是 datetime.now）；
+        #       cli.py     —— `--agenda N` 造的是**人工给的演示历史**，是输入不是判定。
+        root = Path(__file__).resolve().parents[2]
+        bad = []
+        for p in sorted((root / "ldv").rglob("*.py")) + [root / "entry.py"]:
+            if "tests" in p.parts or p.name in ("clock.py", "cli.py"):
+                continue
+            try:
+                tree = ast.parse(p.read_text(encoding="utf-8"))
+            except SyntaxError:
+                continue
+            for node in ast.walk(tree):
+                if (isinstance(node, ast.Call)
+                        and isinstance(node.func, ast.Attribute)
+                        and node.func.attr == "now"
+                        and isinstance(node.func.value, ast.Name)
+                        and node.func.value.id == "datetime"):
+                    bad.append(f"{p.relative_to(root)}:{node.lineno}")
+        ok("★ [时钟接管] 63 判定路径上没有裸 `datetime.now()`（唯一来源是 clock.py）",
+           not bad, f"漏回墙钟：{bad}")
+
+        # 64 ★ 反向对照：接管路径 ≡ 显式传参路径（逐字相同）
+        dA, dB = tmp / "e", tmp / "f"
+        with CLK.frozen(t0):
+            US.append(dA, did="D9", outcome=1.0, propensity=1.0, qfp="q64")
+        US.append(dB, did="D9", outcome=1.0, propensity=1.0, qfp="q64",
+                  at=t0.isoformat(timespec="microseconds"))
+        with CLK.frozen(t0 + timedelta(days=7)):
+            a64 = US.aged_tendency(dA)
+        b64 = US.aged_tendency(dB, now=t0 + timedelta(days=7))
+        ok("★ [时钟接管] 64 反向对照：接管路径与显式传参路径逐字相同（不是第二条真值）",
+           bool(a64) and a64 == b64, f"{a64} vs {b64}")
+    finally:
+        CLK.reset()
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def main() -> int:
     for fn in (test_tri, test_loader, test_kernel, test_exposure_model, test_selfopt,
                test_sequence, test_flows, test_emergence, test_divergence,
@@ -10965,6 +13396,7 @@ def main() -> int:
                test_versioning,
                test_reusable_build, test_lock_scope,
                test_service_shell, test_service_failure_paths,
+               test_service_p1, test_service_agent_http,
                test_incremental_random, test_service_consumption,
                test_derived_rollback, test_b_known_answers, test_guarantee_matrix,
                test_predicates,
@@ -10983,8 +13415,15 @@ def main() -> int:
                test_session,
                test_combine_budget,
                test_predicate_naming,
+               test_clock,
+               test_clock_takeover,
+               test_selfask,
+               test_compose,
+               test_value_predicates,
+               test_chain_projection,
                test_dimension_values,
                test_version_spots,
+               test_agenda,
                test_evidence,
                test_quotes_evidence,
                test_entry, test_protocol,

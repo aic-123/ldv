@@ -44,6 +44,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -56,6 +57,7 @@ from checks import lock as L                    # noqa: E402
 from checks import session as SESS             # noqa: E402
 from checks import validate as V                # noqa: E402
 from spec_store import store as S               # noqa: E402
+from ldv.core import declare as DECL           # noqa: E402  （写进去就要查得到）
 
 #: 产品自己的 store（可用环境变量覆盖）
 STORE = Path(os.environ.get("LDV_MCP_STORE", str(HERE / "store")))
@@ -324,6 +326,47 @@ def _key_list(v, field: str) -> list[str]:
     if not isinstance(v, (list, tuple)):
         raise ValueError(f"{field} 要是字符串列表，得到 {type(v).__name__}")
     return [str(x) for x in v]
+
+
+#: 每个工具都认的三个参数（不写进各自 schema 也允许）。
+#: `corpus` 是语料选择，`actor` 是演员声明，`session` 是归账/回执的作用域。
+_COMMON_ARGS = frozenset({"corpus", "actor", "session"})
+
+#: 常见误投参数的**指路**（错了要说「该去哪」，不能只说「不认识」）。
+_ROUTE_HINT = {
+    "装配": "「装配」是**独立工具** `assemble`（只读、不排先后）—— ask 只做键检索",
+    "名称": "装配的目标名要传给 `assemble` 的「名称」，不是 ask 的参数",
+}
+
+
+def _arg_keys(name: str) -> set[str]:
+    """这个工具的**公开参数名** = 它 schema 里声明的 + 三个通用参数。"""
+    for t in TOOLS:
+        if t["name"] == name:
+            return set(((t.get("inputSchema") or {}).get("properties") or {})) \
+                | set(_COMMON_ARGS)
+    return set()
+
+
+def _unknown_args(name: str, args: dict) -> dict | None:
+    """不认识的参数 ⇒ **当场拒**，不静默丢掉（2026-11-09，桥接实测）。
+
+    ⚠️ 为什么必须挡：agent 最自然的译法是把「装配」当查询发进来
+       —— `ask({"装配": {"名称": "图书催还目标"}})`。旧版把它**静默丢掉**，
+       `require` 退回空 ⇒ 空查询命中**整库**、`ok:true`、一个字的提示都没有：
+       调用方以为问对了，实际拿到整库（3145 字符）而不是装配单（1116 字符）。
+       **静默改变语义是最坏的一种**（同 `lens_conflict`、同 `max_chars=0`）。
+    ⚠️ 与 `serve.py` 的「不认识的查询参数 ⇒ 400」是同一条纪律 —— 只是这一层原来缺闸。
+    """
+    bad = sorted(set(args or {}) - _arg_keys(name))
+    if not bad:
+        return None
+    hints = [_ROUTE_HINT[k] for k in bad if k in _ROUTE_HINT]
+    return {"ok": False, "bad_args": bad,
+            "error": (f"`{name}` 不认识参数 {bad} —— 可用：{sorted(_arg_keys(name))}。"
+                      "参数**没有被静默忽略**：被丢掉的话，这次查询就悄悄变成了另一件事"),
+            "next_step": hints + ["去掉不认识的参数重来",
+                                  "要看全部工具与参数：tools/list"]}
 
 
 #: 只有「人」有资格授予的**状态**（2026-10-26 用户定）。
@@ -621,12 +664,36 @@ def _tool_orient(a: dict) -> dict:
 
 
 
+#: 账本里的 `qfp` 与日志里的 `qfp` **不是同一种键** —— 这就是 S13 从 v0.2.21 起恒红的原因。
+#:
+#:   * 日志（`drill` 的 summary）：`app._last_qfp` = **查询指纹** `<语料指纹>|<键&键>`
+#:   * 账本（`usage/*.md`）：`event_qfp` = **事件指纹** `<查询指纹>@<YYYYmmddTHHMMSSffffff>`
+#:     ——v0.1.87「每次被消费的调用都是一次巩固」，同一查询消费两次是两条记录。
+#:
+#: ⇒ 直连 `(qfp, did)` join **一条也对不上**（0 恒 0，看起来像「agent 从没下钻过」）。
+#: 这里按**写入端保证的形状**还原（`entry.App.drill` 的 `strftime('%Y%m%dT%H%M%S%f')`），
+#: 不做 `split("@")[0]` 那种粗暴切法 —— 键里出现 `@` 时那种切法会静默切错。
+#: ⚠️ 还原只丢掉**事件戳**那一截：账本里若本来就没有戳（v0.1.87 之前的记录）⇒ 原样返回。
+_EVENT_QFP = re.compile(r"^(?P<base>.+)@\d{8}T\d{12}$")
+
+
+def _query_qfp(qfp: str) -> str:
+    """事件指纹 → 查询指纹；不是事件指纹 ⇒ 原样返回。"""
+    m = _EVENT_QFP.match(str(qfp or ""))
+    return m.group("base") if m else str(qfp or "")
+
+
 def _actor_split(app) -> dict:
     """正式记录里多少条来自 agent 声明的下钻（读数，不打分不拦截）。
 
     ⚠️ **语义上要全量**（分解是整个历史，不是最近几条）⇒ 不能只倒读尾巴。
        2026-11-02 改成增量：历史在 `_LOG["actor"]` 里累积，新增行才解析。
        语义与全量扫描逐字相同（判据 `S35b` 对拍），只是不重复劳动。
+    ⚠️ join 键的两侧**要先换成同一个口径**（2026-11-10，`S13` 修复）：
+       日志存查询指纹、账本存事件指纹 ⇒ 见 `_EVENT_QFP` 上面的那段。
+    ⚠️ 键仍是 `(查询指纹, did)`，**不是**「哪一次事件」 —— 同一个键若被 agent 和人
+       各钻一次（同一语料+同一组键 ⇒ 同一查询指纹），两条记录**都会算进 agent**。
+       这是键的粒度所限，如实记着；要逐次归属得让 drill 把事件指纹也交出来。
     """
     from ldv.tools import usage_store as US
 
@@ -634,7 +701,8 @@ def _actor_split(app) -> dict:
     _scan_log()
     agent_q = _LOG["actor"]
     rows = US.load(app._usage_dir)
-    n_agent = sum(1 for r in rows if (r.get("qfp", ""), r.get("did", "")) in agent_q)
+    n_agent = sum(1 for r in rows
+                  if (_query_qfp(r.get("qfp", "")), r.get("did", "")) in agent_q)
     return {"记录数": len(rows), "agent 声明的下钻": n_agent,
             "其余（人 / 未声明）": len(rows) - n_agent,
             "note": "actor 是调用方**声明**的，服务器不验（同 filled_by）"}
@@ -881,6 +949,40 @@ def _tool_ask(a: dict) -> dict:
     return out
 
 
+def _tool_assemble(a: dict) -> dict:
+    """把一个**教过的目标**装成一张装配单 —— 只读，只摆，不排先后、不发明零件。
+
+    ★ 为什么它该是一件独立工具（2026-11-09，桥接实测）：`ask` 只认
+      require/forbid/plugin，把「装配」当查询发进去会被**静默丢掉**（现在会当场拒）。
+      而装配恰恰是 agent 最需要的一步：一张 1116 字符的装配单，比 3145 字符的
+      「整库命中」有用得多 —— 前者说「这条判据靠哪块砖顶着」，后者什么都没说。
+    ★ **只读**：不传 `记账`（写台账是另一件事），不改任何节点。
+    ★ **弱/缺原样报**：那是「交人判」的信号，不许在这一层补成「有」。
+    """
+    app, _in_store = _app(a.get("corpus", ""))
+    name = str(a.get("名称") or a.get("name") or "").strip()
+    if not name:
+        return {"ok": False,
+                "error": "装配要「名称」—— 装哪件事的目标（**教过的原名**，不是描述）",
+                "next_step": ["orient 看语料里有哪些条目（fields.name）",
+                              "或 ask(require=[...]) 先把目标找出来"]}
+    r = app.query({"装配": {"名称": name}})
+    if not r.get("ok"):
+        return {**r,
+                "next_step": ["核对目标名：要教过的**原名**，不是描述",
+                              "目标正文必须有分条判据（①②③）—— 没有判据就装不了"]}
+    sheet = r.get("装配单") or {}
+    return {"ok": True, "corpus": app.corpus_name, "actor": _actor(a),
+            "装配单": sheet,
+            "n_gaps": len(sheet.get("缺口") or []),
+            "不写的东西": r.get("不写的东西"),
+            "局限": r.get("局限"),
+            "依据": r.get("依据"),
+            "note": ("判据逐条摆开、覆盖三态（有/弱/缺），**不排先后**（先后是执行的事，"
+                     "不是装配的事）。「弱」「缺」原样报 —— 那是交人判的信号，"
+                     "**别在这里补成「有」**；要补就补语料，再装一遍")}
+
+
 def _tool_remember(a: dict) -> dict:
     """agent 往**自己的**私人语料写一个节点 —— 主体性的落点。
 
@@ -916,9 +1018,32 @@ def _tool_remember(a: dict) -> dict:
     if not wrote:
         return {"ok": False, "written": False,
                 "why": f"已有一条 id={nid} 的记忆 —— 只追加不覆写；要补充就换一个 id"}
-    return {"ok": True, "written": True, "path": str(p), "id": nid,
-            "filled_by": filled_by,
-            "note": "语料变了 ⇒ 透镜指纹可能不符，下次 orient 会报 stale"}
+    # ★ 写成功顺手开词（2026-11-10，v0.2.23）—— 与内核 `App.taught` 的自动开词对齐。
+    #   不补这一步，写进去的节点在词汇表里**没有名字** ⇒ `ask` 一律
+    #   `out_of_structure`：写得进、查不到，而工具描述却写着「直接能查能用」。
+    #   实测：这条缺口让 agent 以为存好了，实际一条也查不回来（路径 C）。
+    #   ⚠️ 只补**声明**，不调 `taught`：那条路会顺带写 usage 教学链（11 条），
+    #      把「agent 存的一条」记成「教过的一条」，污染倾向排序。
+    #   ⚠️ 声明写在 predicates.json，**下一次装载生效**（`_app` 每次新建，故下一个
+    #      调用就生效）；本进程若已建过 App 也不会脏 —— 它只读不缓存。
+    opened: list[str] = []
+    nm = str(fields.get("name") or "").strip()
+    if nm:
+        key = f"name={nm}"
+        d = DECL.add(nodes.parent, key,
+                     why="remember 自动开词（与教导开词对齐：写进去就要查得到）",
+                     by=_actor(a))
+        if d.get("ok") and not d.get("already"):
+            opened.append(key)
+    out = {"ok": True, "written": True, "path": str(p), "id": nid,
+           "filled_by": filled_by,
+           "note": "语料变了 ⇒ 透镜指纹可能不符，下次 orient 会报 stale"}
+    if opened:
+        out["开词"] = opened
+    elif nm:
+        out["开词"] = []
+        out["开词说明"] = f"{key} 已在词汇表里，不重复开"
+    return out
 
 
 def _tool_drill(a: dict) -> dict:
@@ -1484,6 +1609,10 @@ def _tool_next(a: dict) -> dict:
             # ⚠️ 不写 `下一轮`：那是调度器的事；MCP 这一层只回答「现在轮到谁」。
             "说明": ag["说明"],
         }
+        # 自问层 tick 内嵌（docs/自问层设计.md 裁定 #1）：问「现在轮到谁」的同时
+        # 得到「我想做什么」。I5 式加字段：删掉 `自问句`，其余逐字不变。
+        from ldv.core import selfask as SF
+        out["议程"]["自问句"] = SF.report(k, nodes_dir=nodes, cap=3)["问句"]
     return out
 
 TOOLS = [
@@ -1529,7 +1658,10 @@ TOOLS = [
                          "limit": {"type": "integer",
                                    "description": "with_body 时最多几项（默认 5）"},
                          "max_chars": {"type": "integer",
-                                       "description": "with_body 时每项正文最多几字（默认 2000）"}},
+                                       "description": "with_body 时每项正文最多几字（默认 2000）"},
+                         "force": {"type": "boolean",
+                                   "description": "已有冻结透镜时显式换掉它（换透镜会让切分变，"
+                                                  "新旧答案不可比）—— 不传就是拒"}},
                      "required": ["require"]}},
     {"name": "remember",
      "description": "往自己的私人语料写一个节点（只追加不覆写）。"
@@ -1624,6 +1756,8 @@ TOOLS = [
                      "properties": {
                          "corpus": {"type": "string"},
                          "id": {"type": "string", "description": "要删来看后果的项"},
+                         "did": {"type": "string",
+                                 "description": "支 id（与 id 二选一：删这一支看后果）"},
                          "n": {"type": "integer",
                                "description": "缓冲顺序编号：删第 n 条（与 id 二选一；超出则回「顺序不记了」）"},
                          "require": {"type": "array", "items": {"type": "string"}},
@@ -1647,12 +1781,23 @@ TOOLS = [
                                                  "只是「轮到它了」，不是「必须做」"},
                          "limit": {"type": "integer",
                                    "description": "每档最多列几条（默认 5）"}}}},
+    {"name": "assemble",
+     "description": ("把一个**教过的目标**装成装配单：正文里的①②③逐条摆开，"
+                     "每条去库里找零件，三态 有/弱/缺。只读 —— 不排先后、不发明零件；"
+                     "弱/缺原样报（那是「交人判」的信号）。"),
+     "inputSchema": {"type": "object",
+                     "properties": {
+                         "corpus": {"type": "string"},
+                         "名称": {"type": "string",
+                                  "description": "教过的目标名（原名，不是描述）"}},
+                     "required": ["名称"]}},
 ]
 
 _IMPL = {"orient": _tool_orient, "ask": _tool_ask,
          "remember": _tool_remember, "drill": _tool_drill,
          "derive": _tool_derive, "remember_answer": _tool_remember_answer,
-         "undo": _tool_undo, "next": _tool_next}
+         "undo": _tool_undo, "next": _tool_next,
+         "assemble": _tool_assemble}
 
 
 # ── JSON-RPC 骨架（零依赖：手写，不引第三方） ───────────────────────────────
@@ -1701,6 +1846,19 @@ def _handle(msg: dict) -> None:
         fn = _IMPL.get(name)
         if fn is None:
             _error(mid, -32602, f"没有这个工具 {name!r}（有 {sorted(_IMPL)}）")
+            return
+        # ★ 参数名守卫（2026-11-09）：不认识的参数**当场拒**，绝不静默丢掉。
+        #   放在 `fn(args)` 之前 —— 进了函数再发现就晚了（查询已经跑成另一件事）。
+        #   拒本身也落日志：这类调用是**可数的**（"agent 把装配发进了 ask"多少次），
+        #   否则只能靠人读对话猜。
+        _bad = _unknown_args(name, args)
+        if _bad is not None:
+            _log_call(name, args, _actor(args),
+                      {"ok": False, "bad_args": _bad["bad_args"], "rejected": "args"})
+            _result(mid, {"content": [{"type": "text",
+                                       "text": json.dumps(_bad, ensure_ascii=False,
+                                                          indent=1)}],
+                          "isError": True})
             return
         try:
             out = fn(args)

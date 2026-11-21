@@ -904,8 +904,11 @@ class Handler(BaseHTTPRequestHandler):
 
             nodes_dir = Path(self.root) / tenant / "nodes"
             kern = make_keyset_root(load_nodes(nodes_dir))()
+            from ldv.core import selfask as SF
             out = (AG.tick(kern, nodes_dir, k=k) if want_tick
                    else AG.agenda(kern, k=k))
+            # 自问层 tick 内嵌（docs/自问层设计.md 裁定 #1）：I5 式加字段
+            out = SF.attach(out, kern, nodes_dir=nodes_dir)
         except Exception as exc:               # noqa: BLE001
             FAULTS.note(tenant, f"{type(exc).__name__}: {exc}")
             self._send(500, f"500：{type(exc).__name__}: {exc}", error="internal")

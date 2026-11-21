@@ -42,9 +42,33 @@ EMPTY: Payload = (frozenset(), frozenset())
 
 
 class KeysetPlugin:
-    """§I1–§I7 的七个方法。"""
+    """§I1–§I7 的七个方法。
+
+    ## 停层参数 `min_leaf`（方向函数外生参数，2026-11-02 敲定）
+
+    切开后**任一侧成员数 < `min_leaf`** ⇒ 这一 层不建（返回 `None`，走
+    「插件声明分不开」路径，账本照记）。默认 `1` = 现状（每侧非空即可，
+    也就是 §K2 的字面）—— 不给这个参数，一切行为逐字不变。
+
+        `min_leaf=2`（「叶<2 即停」）禁止切出单件叶：切到 1+5 就停，
+        单件留在父叶里。树变浅、叶变大 —— 这**不是**「分不开」的谎报：
+        键确实分得开，是**停层规则**选择不建。归因走 `by="plugin"`，
+        理由里的 `members` 照实记。
+
+    ⚠️ 为什么在**这里**判而不是改内核的 §K2 非平凡判据：
+        「每侧非空」是内核对所有方向的一致底线（改它会动 B15 / emergence
+        的一整片基线）；「切出多小的叶值得建」是**方向 A 自己的分辨率选择**
+        —— 归插件，不归内核。选键已经保证 `best` 是把两侧最小值**最大化**
+        的键（`best` 最小化 `|cnt/n − 1/2|`），所以只查 `best` 就够：
+        它都停，其余键更停。
+    """
 
     name = "keyset"
+
+    def __init__(self, *, min_leaf: int = 1) -> None:
+        if min_leaf < 1:
+            raise ValueError(f"min_leaf 必须 ≥ 1，得到 {min_leaf}")
+        self.min_leaf = int(min_leaf)
 
     # --- §I2 合并 ---------------------------------------------------------
 
@@ -174,6 +198,11 @@ class KeysetPlugin:
         for ks in keysets:
             counts.update(ks)
         best = min(candidates, key=lambda k: (abs(counts.get(k, 0) / n - 0.5), k))
+        # ★ 停层（外生参数）：切开后任一侧 < min_leaf ⇒ 这一 层不建。
+        #   `best` 已把两侧最小值最大化 ⇒ 它都停，其余键更停（见类 docstring）。
+        _cnt = counts.get(best, 0)
+        if min(_cnt, n - _cnt) < self.min_leaf:
+            return None
         # ★ 两个字段都**只从父续**。这样 `覆盖(父) ⊆ 覆盖(子1) ∪ 覆盖(子2)` 是
         #   **结构上成立**的：x 满足父 ⇒ 要么有 `best`（落子 1，代价 0），
         #   要么没有（落子 2，代价 0）—— 两半合起来恰好是父的覆盖。

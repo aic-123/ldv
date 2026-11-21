@@ -93,6 +93,15 @@ def matches(node: Any, field: str, op: str, raw: str) -> bool | None:
     v = _cell(node, field)
     if v is None:
         return None
+    if isinstance(v, list):
+        # 多值字段（行内列表，如 人物: [这边,孩子,猫]）：`=` 即成员包含。
+        # 数值算子对列表**不可比较**（返回 None，不猜）——与缺字段同一待遇。
+        members = [str(x) for x in v]
+        if op == "=":
+            return str(raw) in members
+        if op == "!=":
+            return str(raw) not in members
+        return None
     if op in ("=", "!="):
         same = str(v) == str(raw)
         return same if op == "=" else (not same)
@@ -116,7 +125,8 @@ def evidence(nodes: dict[str, Any], key: str, *, top: int = 5) -> dict[str, Any]
         if v is None:
             continue
         have += 1
-        dist[str(v)] = dist.get(str(v), 0) + 1
+        for s in ([str(x) for x in v] if isinstance(v, list) else [str(v)]):
+            dist[s] = dist.get(s, 0) + 1
         m = matches(n, field, op, raw)
         if m is None:
             skipped += 1

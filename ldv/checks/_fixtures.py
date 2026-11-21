@@ -208,10 +208,10 @@ def reach_queries(nodes: dict[str, Node], edges: dict[str, frozenset[str]]) -> l
 
 # --- 内核装配 ---------------------------------------------------------------
 
-def build_keyset(nodes: dict[str, Node]) -> tuple[Kernel, Any]:
+def build_keyset(nodes: dict[str, Node], *, min_leaf: int = 1) -> tuple[Kernel, Any]:
     from ..plugins.keyset import KeysetPlugin
 
-    plug = KeysetPlugin()
+    plug = KeysetPlugin(min_leaf=min_leaf)
     k = Kernel(plug, items(nodes))
     k.build(plug.merge([]))              # 根 = (∅, ∅)：最外层意图不约束键
     for nid in sorted(nodes):
